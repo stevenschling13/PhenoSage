@@ -32,7 +32,7 @@ jobs:
       (github.event.deployment_status.state == 'success' &&
        github.event.deployment_status.environment == 'Production')
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
 
       - name: Resolve target URL
         id: target
@@ -54,7 +54,7 @@ jobs:
 
       - name: Open issue on failure
         if: failure() && github.event_name == 'deployment_status'
-        uses: actions/github-script@v7
+        uses: actions/github-script@v9
         with:
           script: |
             const url = "${{ steps.target.outputs.url }}";
