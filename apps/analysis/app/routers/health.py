@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import os
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 from fastapi import APIRouter, status
 from fastapi.responses import JSONResponse
@@ -19,7 +19,7 @@ async def health_check() -> JSONResponse:
             "status": "ok",
             "service": "phenosage-analysis",
             "env": settings.app_env,
-            "timestamp": datetime.now(timezone.utc).isoformat(),
+            "timestamp": datetime.now(UTC).isoformat(),
         }
     )
 
@@ -43,7 +43,7 @@ async def readiness_check() -> JSONResponse:
         "status": "ok" if all(checks.values()) else "not_ready",
         "service": "phenosage-analysis",
         "env": settings.app_env,
-        "timestamp": datetime.now(timezone.utc).isoformat(),
+        "timestamp": datetime.now(UTC).isoformat(),
         "checks": checks,
         "commit": os.environ.get("RAILWAY_GIT_COMMIT_SHA")
         or os.environ.get("GIT_COMMIT_SHA")
