@@ -20,10 +20,20 @@ Affected paths:
 Paste the output (or summary) of:
 
 - [ ] `pnpm run validate`
-- [ ] `pnpm run type-check`
-- [ ] `pnpm run lint`
-- [ ] `pnpm run build`
-- [ ] (If `apps/analysis` changed) `ruff check . && mypy app/ && pytest`
+- [ ] `pnpm turbo run type-check lint test`
+- [ ] `pnpm turbo run build`
+- [ ] `pnpm run security:routes`
+- [ ] (If `apps/analysis` changed) `ruff check . && mypy app/ && pytest --cov=app`
+
+## Test evidence
+
+<!-- Paste test output, new test names added, coverage delta, or a link
+     to a Playwright preview run. -->
+
+## Observability impact
+
+<!-- Does this change add/remove log lines? Introduce a new Sentry event
+     category? Change an SLI? If "no impact", say so. -->
 
 ## Architecture & Forbidden Changes
 

@@ -54,6 +54,13 @@ jobs:
       - name: Format check
         run: pnpm run format:check
         continue-on-error: true
+      - name: PR guardian (file/line caps)
+        if: github.event_name == 'pull_request'
+        run: pnpm run pr:guardian
+        env:
+          BASE: origin/${{ github.base_ref }}
+          GUARDIAN_OVERRIDE: ${{ contains(github.event.pull_request.labels.*.name, 'guardian:approved') && '1' || '0' }}
+        continue-on-error: true
 
   test-web:
     name: Web — Lint, Type, Test, Build

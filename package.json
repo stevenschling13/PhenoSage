@@ -19,6 +19,7 @@
     "check:scope": "node scripts/check-changed-scope.mjs",
     "security:routes": "node scripts/check-route-security.mjs",
     "security:audit": "node scripts/security-audit.mjs",
+    "pr:guardian": "node scripts/pr-guardian.mjs",
     "validate": "pnpm run check:env && pnpm run check:routes && pnpm run check:imports",
     "prepare": "husky"
   },
