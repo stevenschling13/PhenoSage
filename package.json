@@ -1,0 +1,18 @@
+{
+  "name": "phenosage",
+  "version": "0.1.0",
+  "private": true,
+  "description": "AI-powered cannabis grow operating system",
+  "scripts": {
+    "dev": "pnpm --filter web dev",
+    "build": "pnpm --filter web build",
+    "lint": "pnpm --filter web lint",
+    "type-check": "pnpm --filter web type-check && pnpm --filter shared type-check",
+    "clean": "pnpm --filter web clean && pnpm --filter shared clean"
+  },
+  "engines": {
+    "node": ">=20",
+    "pnpm": ">=9"
+  },
+  "packageManager": "pnpm@9.0.0"
+}
