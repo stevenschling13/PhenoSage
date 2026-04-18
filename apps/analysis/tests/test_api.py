@@ -43,7 +43,7 @@ async def test_analyze_stub_returns_response() -> None:
     ) as client:
         response = await client.post(
             "/analyze",
-            headers={"Authorization": f"Bearer {settings.api_key}"},
+            headers={"Authorization": f"Bearer {settings.analysis_service_api_key}"},
             json={
                 "plant_id": "plant-1",
                 "image_id": "img-1",

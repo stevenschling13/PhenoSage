@@ -13,7 +13,7 @@ def verify_api_key(
     credentials: HTTPAuthorizationCredentials = Security(bearer),
 ) -> None:
     """Verify the shared secret from the Next.js proxy."""
-    if credentials.credentials != settings.api_key:
+    if credentials.credentials != settings.analysis_service_api_key:
         raise HTTPException(status_code=401, detail="Invalid API key")
 
 

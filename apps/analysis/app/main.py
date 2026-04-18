@@ -1,6 +1,7 @@
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
+from app.config import settings
 from app.routers.analyze import router as analyze_router
 from app.routers.health import router as health_router
 
@@ -12,16 +13,14 @@ app = FastAPI(
         "The browser must never call this service directly."
     ),
     version="0.1.0",
-    # Disable the default docs in production — internal service
-    docs_url="/docs" if True else None,
+    docs_url="/docs" if settings.app_env != "production" else None,
     redoc_url=None,
 )
 
-# CORS: Only allow requests from the Next.js proxy.
-# In production, set ALLOWED_ORIGINS to your Vercel domain.
+# CORS: only the configured origins (the Vercel app URL in production).
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:3000"],
+    allow_origins=settings.allowed_origins_list,
     allow_credentials=False,
     allow_methods=["GET", "POST"],
     allow_headers=["Authorization", "Content-Type"],
