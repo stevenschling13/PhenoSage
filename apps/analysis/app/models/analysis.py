@@ -1,12 +1,12 @@
 from __future__ import annotations
 
 from datetime import datetime
-from enum import Enum
+from enum import StrEnum
 
 from pydantic import BaseModel, ConfigDict, Field
 
 
-class FindingCategory(str, Enum):
+class FindingCategory(StrEnum):
     nutrient_deficiency = "nutrient_deficiency"
     nutrient_toxicity = "nutrient_toxicity"
     pest = "pest"
@@ -17,7 +17,7 @@ class FindingCategory(str, Enum):
     positive = "positive"
 
 
-class FindingSeverity(str, Enum):
+class FindingSeverity(StrEnum):
     info = "info"
     low = "low"
     medium = "medium"
