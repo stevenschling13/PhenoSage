@@ -6,20 +6,37 @@ on:
   pull_request:
     branches: [main, develop]
 
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+env:
+  NODE_VERSION: "22"
+  PNPM_VERSION: "9"
+  PYTHON_VERSION: "3.12"
+  TURBO_TOKEN: ${{ secrets.TURBO_TOKEN }}
+  TURBO_TEAM: ${{ vars.TURBO_TEAM }}
+
 jobs:
   validate:
     name: Repo — Guardrails
     runs-on: ubuntu-latest
     steps:
+      - uses: step-security/harden-runner@v2
+        with:
+          egress-policy: audit
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
       - uses: pnpm/action-setup@v3
         with:
-          version: 9
+          version: ${{ env.PNPM_VERSION }}
       - uses: actions/setup-node@v4
         with:
-          node-version: "20"
+          node-version: ${{ env.NODE_VERSION }}
           cache: "pnpm"
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
@@ -29,44 +46,42 @@ jobs:
         run: pnpm run check:routes
       - name: Import / smoke
         run: pnpm run check:imports
+      - name: Route security audit
+        run: pnpm run security:routes
       - name: Changed-scope (advisory)
         run: pnpm run check:scope -- --base=origin/${{ github.base_ref || 'main' }}
         continue-on-error: true
+      - name: Format check
+        run: pnpm run format:check
+        continue-on-error: true
 
-  web:
-    name: Web — Lint & Type Check
+  test-web:
+    name: Web — Lint, Type, Test, Build
     runs-on: ubuntu-latest
     needs: validate
-    defaults:
-      run:
-        working-directory: apps/web
-
     steps:
+      - uses: step-security/harden-runner@v2
+        with:
+          egress-policy: audit
       - uses: actions/checkout@v4
-
       - uses: pnpm/action-setup@v3
         with:
-          version: 9
-
+          version: ${{ env.PNPM_VERSION }}
       - uses: actions/setup-node@v4
         with:
-          node-version: "20"
+          node-version: ${{ env.NODE_VERSION }}
           cache: "pnpm"
-
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
-        working-directory: .
-
       - name: Type check
-        run: pnpm type-check
-
+        run: pnpm --filter web type-check
       - name: Lint
-        run: pnpm lint
-
+        run: pnpm --filter web lint
+      - name: Unit tests (vitest)
+        run: pnpm --filter web test
       - name: Build
-        run: pnpm build
+        run: pnpm --filter web build
         env:
-          # Provide stub values so Next.js build doesn't fail on missing env
           NEXT_PUBLIC_SUPABASE_URL: https://stub.supabase.co
           NEXT_PUBLIC_SUPABASE_ANON_KEY: stub-anon-key
           NEXT_PUBLIC_APP_URL: http://localhost:3000
@@ -74,53 +89,102 @@ jobs:
           ANALYSIS_SERVICE_URL: http://localhost:8000
           ANALYSIS_SERVICE_API_KEY: stub-api-key
           OPENAI_API_KEY: stub-openai-key
+      - name: Bundle size summary
+        if: always()
+        run: |
+          if [ -d apps/web/.next ]; then
+            echo "## Next.js bundle size" >> "$GITHUB_STEP_SUMMARY"
+            echo "" >> "$GITHUB_STEP_SUMMARY"
+            total=$(du -sh apps/web/.next 2>/dev/null | awk '{print $1}')
+            server=$(du -sh apps/web/.next/server 2>/dev/null | awk '{print $1}' || echo "n/a")
+            static=$(du -sh apps/web/.next/static 2>/dev/null | awk '{print $1}' || echo "n/a")
+            echo "| segment | size |" >> "$GITHUB_STEP_SUMMARY"
+            echo "|---------|------|" >> "$GITHUB_STEP_SUMMARY"
+            echo "| total (.next) | $total |" >> "$GITHUB_STEP_SUMMARY"
+            echo "| .next/server | $server |" >> "$GITHUB_STEP_SUMMARY"
+            echo "| .next/static | $static |" >> "$GITHUB_STEP_SUMMARY"
+          fi
+      - name: Upload coverage
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: web-coverage
+          path: apps/web/coverage
+          if-no-files-found: ignore
+          retention-days: 7
 
-  analysis:
-    name: Analysis — Lint & Type Check
+  test-shared:
+    name: Shared — Type & Test
     runs-on: ubuntu-latest
+    needs: validate
+    steps:
+      - uses: step-security/harden-runner@v2
+        with:
+          egress-policy: audit
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v3
+        with:
+          version: ${{ env.PNPM_VERSION }}
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: "pnpm"
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+      - name: Type check
+        run: pnpm --filter @phenosage/shared type-check
+      - name: Tests (vitest)
+        run: pnpm --filter @phenosage/shared test
+
+  test-analysis:
+    name: Analysis — Lint, Type, Test, Audit
+    runs-on: ubuntu-latest
+    needs: validate
     defaults:
       run:
         working-directory: apps/analysis
-
     steps:
+      - uses: step-security/harden-runner@v2
+        with:
+          egress-policy: audit
       - uses: actions/checkout@v4
-
       - uses: actions/setup-python@v5
         with:
-          python-version: "3.12"
+          python-version: ${{ env.PYTHON_VERSION }}
           cache: "pip"
           cache-dependency-path: apps/analysis/requirements.txt
-
       - name: Install dependencies
         run: pip install -r requirements.txt
-
       - name: Lint (ruff)
         run: ruff check .
-
       - name: Type check (mypy)
         run: mypy app/
+      - name: Tests (pytest + coverage)
+        run: pytest --cov=app --cov-report=xml --cov-report=term
+      - name: Dependency audit (pip-audit)
+        run: pip-audit -r requirements.txt
+        continue-on-error: true
+      - name: Upload coverage
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: analysis-coverage
+          path: apps/analysis/coverage.xml
+          if-no-files-found: ignore
+          retention-days: 7
 
-      - name: Tests (pytest)
-        run: pytest -q
-
-  shared:
-    name: Shared — Type Check
+  ci-status:
+    name: CI — All green
     runs-on: ubuntu-latest
-
+    needs: [validate, test-web, test-shared, test-analysis]
+    if: always()
     steps:
-      - uses: actions/checkout@v4
-
-      - uses: pnpm/action-setup@v3
-        with:
-          version: 9
-
-      - uses: actions/setup-node@v4
-        with:
-          node-version: "20"
-          cache: "pnpm"
-
-      - name: Install dependencies
-        run: pnpm install --frozen-lockfile
-
-      - name: Type check
-        run: pnpm --filter shared type-check
+      - name: Fail if any upstream job failed
+        run: |
+          if [ "${{ needs.validate.result }}" != "success" ] || \
+             [ "${{ needs.test-web.result }}" != "success" ] || \
+             [ "${{ needs.test-shared.result }}" != "success" ] || \
+             [ "${{ needs.test-analysis.result }}" != "success" ]; then
+            echo "One or more upstream jobs failed"
+            exit 1
+          fi
