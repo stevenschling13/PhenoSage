@@ -1,19 +1,41 @@
 import type { Metadata } from "next";
 import Link from "next/link";
+import { redirect } from "next/navigation";
+import { getServerUser } from "@/lib/server/auth";
+import { signOutAction } from "../auth/actions";
 
 export const metadata: Metadata = { title: "Dashboard" };
+export const dynamic = "force-dynamic";
 
-export default function DashboardPage() {
+export default async function DashboardPage() {
+  const user = await getServerUser();
+  if (!user) redirect("/auth?next=/dashboard");
+
   return (
     <main className="mx-auto max-w-5xl px-6 py-10">
-      <div className="mb-8 flex items-center justify-between">
-        <h1 className="text-2xl font-bold text-gray-900">Dashboard</h1>
-        <Link
-          href="/grows"
-          className="rounded-lg bg-brand-600 px-4 py-2 text-sm font-semibold text-white hover:bg-brand-700"
-        >
-          My Grows
-        </Link>
+      <div className="mb-8 flex items-center justify-between gap-4">
+        <div>
+          <h1 className="text-2xl font-bold text-gray-900">Dashboard</h1>
+          <p className="text-sm text-gray-500">
+            Signed in as {user.email ?? user.id}
+          </p>
+        </div>
+        <div className="flex items-center gap-2">
+          <Link
+            href="/grows"
+            className="rounded-lg bg-brand-600 px-4 py-2 text-sm font-semibold text-white hover:bg-brand-700"
+          >
+            My Grows
+          </Link>
+          <form action={signOutAction}>
+            <button
+              type="submit"
+              className="rounded-lg border px-4 py-2 text-sm font-semibold text-gray-700 hover:bg-gray-50"
+            >
+              Sign out
+            </button>
+          </form>
+        </div>
       </div>
 
       {/* Quick stats */}
@@ -25,7 +47,9 @@ export default function DashboardPage() {
         ].map((stat) => (
           <div key={stat.label} className="rounded-xl border bg-white p-6">
             <p className="text-sm text-gray-500">{stat.label}</p>
-            <p className="mt-1 text-3xl font-bold text-gray-900">{stat.value}</p>
+            <p className="mt-1 text-3xl font-bold text-gray-900">
+              {stat.value}
+            </p>
           </div>
         ))}
       </div>
@@ -49,7 +73,9 @@ export default function DashboardPage() {
             className="flex flex-col items-center rounded-xl border bg-white p-6 text-center hover:bg-gray-50"
           >
             <span className="mb-2 text-2xl">{link.icon}</span>
-            <span className="text-sm font-medium text-gray-700">{link.label}</span>
+            <span className="text-sm font-medium text-gray-700">
+              {link.label}
+            </span>
           </Link>
         ))}
       </div>
@@ -61,5 +87,5 @@ const navLinks = [
   { href: "/grows", icon: "🌱", label: "Grows" },
   { href: "/assistant", icon: "💬", label: "Assistant" },
   { href: "/settings", icon: "⚙️", label: "Settings" },
-  { href: "/auth", icon: "👤", label: "Account" },
+  { href: "/plants", icon: "🌿", label: "Plants" },
 ];
