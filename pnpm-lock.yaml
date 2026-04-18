@@ -19,8 +19,8 @@ importers:
         specifier: workspace:*
         version: link:../../packages/shared
       '@supabase/ssr':
-        specifier: ^0.4.0
-        version: 0.4.1(@supabase/supabase-js@2.103.3)
+        specifier: ^0.10.2
+        version: 0.10.2(@supabase/supabase-js@2.103.3)
       '@supabase/supabase-js':
         specifier: ^2.43.1
         version: 2.103.3
@@ -349,11 +349,6 @@ packages:
     resolution: {integrity: sha512-nn5ozdjYQpUCZlWGuxcJY/KpxkWQs4DcbMCmKojjyrYDEAGy4Ce19NN4v5MduafTwJlbKc99UA8YhSVqq9yPZA==}
     engines: {node: '>=12.4.0'}
 
-  '@rollup/rollup-linux-x64-gnu@4.60.2':
-    resolution: {integrity: sha512-UQjrkIdWrKI626Du8lCQ6MJp/6V1LAo2bOK9OTu4mSn8GGXIkPXk/Vsp4bLHCd9Z9Iz2OTEaokUE90VweJgIYQ==}
-    cpu: [x64]
-    os: [linux]
-
   '@rtsao/scc@1.1.0':
     resolution: {integrity: sha512-zt6OdqaDoOnJ1ZYsCYGt9YmWzDXl4vQdKTyJev62gFhRGKdx7mcT54V9KIjg+d2wi9EXsPvAPKe7i7WjfVWB8g==}
 
@@ -379,10 +374,10 @@ packages:
     resolution: {integrity: sha512-fUvKtSXMUk1BkApVwAurWtHF4Vzbb0UB9aC/fQXrRBek7Ta3Kaora+wHf/fGwFNQs7uRz+mvjIVpzLfpR32VXA==}
     engines: {node: '>=20.0.0'}
 
-  '@supabase/ssr@0.4.1':
-    resolution: {integrity: sha512-000i7y4ITXjXU0T1JytZYU33VbUNklX9YN47hCweaLKsTBAEigJJJCeq3G+/IiwEggBt58Vu0KQ3UGXON7OmDQ==}
+  '@supabase/ssr@0.10.2':
+    resolution: {integrity: sha512-JFbchN63CXLFHJRNT7udec4/RoD9PmXkSGko3QSO6vUuqGBtSzdmxR7FPfQNr7SuFd65I7Xv46q66ALjEN1cgQ==}
     peerDependencies:
-      '@supabase/supabase-js': ^2.43.4
+      '@supabase/supabase-js': ^2.102.1
 
   '@supabase/storage-js@2.103.3':
     resolution: {integrity: sha512-5bAIEubrw5keHcdKR2RTois0O1M2Ilx4UYuzOzc07G6mLGCPS/8t1nbC6Vq451pnxR3sK+rmtFHWb9CY/OPjAw==}
@@ -2279,9 +2274,6 @@ snapshots:
 
   '@nolyfill/is-core-module@1.0.39': {}
 
-  '@rollup/rollup-linux-x64-gnu@4.60.2':
-    optional: true
-
   '@rtsao/scc@1.1.0': {}
 
   '@rushstack/eslint-patch@1.16.1': {}
@@ -2310,12 +2302,10 @@ snapshots:
       - bufferutil
       - utf-8-validate
 
-  '@supabase/ssr@0.4.1(@supabase/supabase-js@2.103.3)':
+  '@supabase/ssr@0.10.2(@supabase/supabase-js@2.103.3)':
     dependencies:
       '@supabase/supabase-js': 2.103.3
       cookie: 1.1.1
-    optionalDependencies:
-      '@rollup/rollup-linux-x64-gnu': 4.60.2
 
   '@supabase/storage-js@2.103.3':
     dependencies:
