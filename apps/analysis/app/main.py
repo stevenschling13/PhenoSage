@@ -4,6 +4,9 @@ from fastapi.middleware.cors import CORSMiddleware
 from app.config import settings
 from app.routers.analyze import router as analyze_router
 from app.routers.health import router as health_router
+from app.telemetry import init_all as init_telemetry
+
+init_telemetry()
 
 app = FastAPI(
     title="PhenoSage Analysis Service",

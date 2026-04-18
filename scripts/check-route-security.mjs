@@ -26,6 +26,7 @@ const API_ROOT = join(ROOT, "apps", "web", "src", "app", "api");
 const PUBLIC_ROUTES = new Set([
   // path relative to apps/web/src/app/api, with leading slash
   "/health",
+  "/ready",
 ]);
 
 const errors = [];

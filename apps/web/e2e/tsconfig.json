@@ -1,0 +1,12 @@
+{
+  "extends": "../../../tsconfig.base.json",
+  "compilerOptions": {
+    "lib": ["dom", "dom.iterable", "esnext"],
+    "module": "esnext",
+    "jsx": "preserve",
+    "noEmit": true,
+    "skipLibCheck": true,
+    "types": ["node"]
+  },
+  "include": ["**/*.ts", "../playwright.config.ts"]
+}
