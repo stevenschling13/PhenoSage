@@ -1,6 +1,6 @@
 [build]
 builder = "DOCKERFILE"
-dockerfilePath = "Dockerfile"
+dockerfilePath = "apps/analysis/Dockerfile"
 watchPatterns = ["app/**", "requirements.txt"]
 
 [deploy]
