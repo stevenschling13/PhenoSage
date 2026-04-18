@@ -10,3 +10,25 @@ ignore = ["E501"]
 python_version = "3.12"
 strict = true
 ignore_missing_imports = true
+
+[tool.pytest.ini_options]
+minversion = "8.0"
+testpaths = ["tests"]
+addopts = ["-ra", "--strict-markers"]
+asyncio_mode = "strict"
+
+[tool.coverage.run]
+source = ["app"]
+branch = true
+omit = ["app/__init__.py"]
+
+[tool.coverage.report]
+precision = 2
+show_missing = true
+skip_covered = false
+exclude_lines = [
+  "pragma: no cover",
+  "raise NotImplementedError",
+  "if __name__ == .__main__.:",
+  "if TYPE_CHECKING:",
+]
