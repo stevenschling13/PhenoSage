@@ -1,14 +1,17 @@
 import { NextRequest, NextResponse } from "next/server";
 
-// POST /api/internal/cron/daily-summary
-// Triggered by Vercel Cron (see vercel.json) once per day.
-// Generates daily grow summaries and queues proactive alerts.
-// Protected by CRON_SECRET — never called by the browser.
-export async function POST(request: NextRequest) {
+export const dynamic = "force-dynamic";
+export const runtime = "nodejs";
+
+// GET /api/internal/cron/daily-summary
+// Vercel Cron always issues a GET request and signs it with
+// `Authorization: Bearer ${CRON_SECRET}` (set in Vercel project settings).
+// Never invoked by the browser.
+export async function GET(request: NextRequest) {
   const authHeader = request.headers.get("authorization");
   const cronSecret = process.env["CRON_SECRET"];
 
-  if (cronSecret && authHeader !== `Bearer ${cronSecret}`) {
+  if (!cronSecret || authHeader !== `Bearer ${cronSecret}`) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
 

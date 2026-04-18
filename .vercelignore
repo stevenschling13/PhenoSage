@@ -1,0 +1,26 @@
+# Files Vercel never needs to upload for the web build.
+# rootDirectory is set to `apps/web`, but Vercel uploads the whole repo first
+# so that pnpm workspace install can resolve `@phenosage/shared`.
+
+apps/analysis/
+supabase/
+docs/
+.github/
+scripts/
+**/__pycache__/
+**/.pytest_cache/
+**/*.py
+**/*.pyc
+
+# Local dev artifacts
+.env
+.env.local
+.env.*.local
+**/.next/
+**/node_modules/
+
+# OS / editor
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
