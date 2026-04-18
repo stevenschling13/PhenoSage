@@ -1,24 +1,28 @@
 import type { Metadata } from "next";
+import { AuthForm } from "@/components/AuthForm";
+import { getServerSession } from "@/lib/server/auth";
+import { redirect } from "next/navigation";
 
 export const metadata: Metadata = { title: "Sign In" };
 
-export default function AuthPage() {
-  return (
-    <main className="flex min-h-screen items-center justify-center px-4">
-      <div className="w-full max-w-sm rounded-2xl border bg-white p-8 shadow-sm">
-        <h1 className="mb-2 text-2xl font-bold text-gray-900">
-          Welcome to PhenoSage
-        </h1>
-        <p className="mb-8 text-sm text-gray-500">
-          Sign in or create your account to get started.
-        </p>
+export default async function AuthPage() {
+  const session = await getServerSession();
 
-        {/* TODO: Replace with Supabase Auth UI or custom auth form */}
-        <div className="rounded-lg border-2 border-dashed border-gray-200 p-6 text-center text-sm text-gray-400">
-          Auth form placeholder
-          <br />
-          Connect Supabase Auth here
+  if (session) {
+    redirect("/dashboard");
+  }
+
+  return (
+    <main className="flex min-h-screen items-center justify-center px-4 bg-gray-50">
+      <div className="w-full max-w-sm rounded-2xl border bg-white p-8 shadow-md">
+        <div className="text-center mb-8">
+          <h1 className="text-3xl font-bold text-green-700">PhenoSage</h1>
+          <p className="mt-2 text-sm text-gray-500">
+            Your AI-powered grow operating system.
+          </p>
         </div>
+
+        <AuthForm />
       </div>
     </main>
   );

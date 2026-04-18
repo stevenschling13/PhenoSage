@@ -1,32 +1,40 @@
 import Link from "next/link";
+import { getServerSession } from "@/lib/server/auth";
+import { redirect } from "next/navigation";
 
-export default function LandingPage() {
+export default async function LandingPage() {
+  const session = await getServerSession();
+
+  if (session) {
+    redirect("/dashboard");
+  }
+
   return (
     <main className="flex min-h-screen flex-col">
       {/* Hero */}
       <section className="flex flex-1 flex-col items-center justify-center px-6 py-24 text-center">
-        <div className="mb-4 inline-flex items-center rounded-full border border-brand-200 bg-brand-50 px-3 py-1 text-sm text-brand-700">
+        <div className="mb-4 inline-flex items-center rounded-full border border-green-200 bg-green-50 px-3 py-1 text-sm text-green-700">
           Web-first AI grow OS
         </div>
         <h1 className="mb-6 text-5xl font-bold tracking-tight text-gray-900 sm:text-6xl">
           Your plants deserve
           <br />
-          <span className="text-brand-600">professional intelligence</span>
+          <span className="text-green-600">professional intelligence</span>
         </h1>
         <p className="mb-10 max-w-2xl text-xl text-gray-600">
-          PhenoSage combines visual AI diagnosis, longitudinal plant tracking,
-          a grow-aware chatbot, and proactive alerts — all in one web app.
+          PhenoSage combines visual AI diagnosis, longitudinal plant tracking, a
+          grow-aware chatbot, and proactive alerts — all in one web app.
         </p>
         <div className="flex flex-col gap-4 sm:flex-row">
           <Link
             href="/auth"
-            className="rounded-lg bg-brand-600 px-8 py-3 text-lg font-semibold text-white shadow-sm hover:bg-brand-700 focus:outline-none focus:ring-2 focus:ring-brand-500"
+            className="rounded-lg bg-green-600 px-8 py-3 text-lg font-semibold text-white shadow-sm hover:bg-green-700 focus:outline-none focus:ring-2 focus:ring-green-500"
           >
             Get started free
           </Link>
           <Link
-            href="/dashboard"
-            className="rounded-lg border border-gray-300 px-8 py-3 text-lg font-semibold text-gray-700 hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-brand-500"
+            href="/auth"
+            className="rounded-lg border border-gray-300 px-8 py-3 text-lg font-semibold text-gray-700 hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-green-500"
           >
             View demo
           </Link>

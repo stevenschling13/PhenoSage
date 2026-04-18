@@ -1,3 +1,6 @@
+import path from "node:path";
+import { fileURLToPath } from "node:url";
+
 /**
  * @type {import('next').NextConfig}
  *
@@ -8,6 +11,8 @@
  *  - Modern Cross-Origin policies (COOP / COEP-relaxed for images / CORP)
  *  - Referrer + Permissions Policy restricting sensors
  */
+
+const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
 function parseOrigin(value) {
   if (!value) return null;
@@ -44,6 +49,7 @@ function buildCSP() {
 const nextConfig = {
   reactStrictMode: true,
   poweredByHeader: false,
+  outputFileTracingRoot: path.join(__dirname, "../.."),
   serverExternalPackages: [],
   images: {
     remotePatterns: [
