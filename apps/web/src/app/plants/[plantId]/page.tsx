@@ -4,11 +4,11 @@ import Link from "next/link";
 export const metadata: Metadata = { title: "Plant Detail" };
 
 interface Props {
-  params: { plantId: string };
+  params: Promise<{ plantId: string }>;
 }
 
-export default function PlantPage({ params }: Props) {
-  const { plantId } = params;
+export default async function PlantPage({ params }: Props) {
+  const { plantId } = await params;
 
   return (
     <main className="mx-auto max-w-5xl px-6 py-10">

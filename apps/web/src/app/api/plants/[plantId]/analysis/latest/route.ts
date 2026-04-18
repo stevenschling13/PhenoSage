@@ -3,7 +3,7 @@ import { getServerSession } from "@/lib/server/auth";
 import { callAnalysisService } from "@/lib/server/analysis-proxy";
 
 interface RouteParams {
-  params: { plantId: string };
+  params: Promise<{ plantId: string }>;
 }
 
 // GET /api/plants/[plantId]/analysis/latest
@@ -18,7 +18,7 @@ export async function GET(
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
 
-  const { plantId } = params;
+  const { plantId } = await params;
 
   // TODO: Look up the latest plant_image for this plant from DB
   // TODO: Call analysis service via proxy if a new image is pending

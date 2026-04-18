@@ -3,7 +3,7 @@ import { getServerSession } from "@/lib/server/auth";
 import { getDbClient } from "@/lib/server/db";
 
 interface RouteParams {
-  params: { plantId: string };
+  params: Promise<{ plantId: string }>;
 }
 
 // GET /api/plants/[plantId]/timeline
@@ -17,7 +17,7 @@ export async function GET(
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
 
-  const { plantId } = params;
+  const { plantId } = await params;
   const db = getDbClient();
 
   // TODO: Verify user has access to this plant via grow_members RLS

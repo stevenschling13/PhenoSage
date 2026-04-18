@@ -7,8 +7,8 @@ import { cookies } from "next/headers";
  * Use this to access the authenticated user's session.
  * Never import this in client components.
  */
-export function createSupabaseServerClient() {
-  const cookieStore = cookies();
+export async function createSupabaseServerClient() {
+  const cookieStore = await cookies();
 
   return createServerClient(
     process.env["NEXT_PUBLIC_SUPABASE_URL"]!,
@@ -39,7 +39,7 @@ export function createSupabaseServerClient() {
  * Returns the current authenticated session, or null if unauthenticated.
  */
 export async function getServerSession() {
-  const supabase = createSupabaseServerClient();
+  const supabase = await createSupabaseServerClient();
   const {
     data: { session },
   } = await supabase.auth.getSession();
@@ -50,7 +50,7 @@ export async function getServerSession() {
  * Returns the current user, or null if unauthenticated.
  */
 export async function getServerUser() {
-  const supabase = createSupabaseServerClient();
+  const supabase = await createSupabaseServerClient();
   const {
     data: { user },
   } = await supabase.auth.getUser();
