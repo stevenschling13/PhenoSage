@@ -1,0 +1,34 @@
+name: Feature request
+description: Propose a new capability or improvement.
+title: "feat: <short summary>"
+labels: ["enhancement", "triage"]
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem
+      description: What user / operator pain does this solve? Be concrete.
+    validations: { required: true }
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposed solution
+      description: How should it work? Include UX or API sketch if relevant.
+    validations: { required: true }
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives considered
+    validations: { required: false }
+  - type: dropdown
+    id: scope
+    attributes:
+      label: Scope
+      options:
+        - apps/web (Next.js)
+        - apps/analysis (FastAPI)
+        - packages/shared
+        - supabase / data model
+        - tooling / CI
+        - docs
+    validations: { required: true }

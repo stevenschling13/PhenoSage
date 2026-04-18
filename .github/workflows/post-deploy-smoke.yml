@@ -1,0 +1,75 @@
+name: Post-deploy smoke test
+
+# Runs scripts/smoke-test-prod.ps1 against production whenever a Vercel
+# deploy_status event marks the production environment as success.
+# Also runnable on demand against any URL.
+
+on:
+  deployment_status:
+  workflow_dispatch:
+    inputs:
+      target_url:
+        description: "Override URL to smoke-test (defaults to the deployment URL)"
+        required: false
+        type: string
+
+permissions:
+  contents: read
+  deployments: read
+  issues: write
+
+concurrency:
+  group: smoke-${{ github.event.deployment_status.environment_url || github.event.inputs.target_url || 'manual' }}
+  cancel-in-progress: false
+
+jobs:
+  smoke:
+    name: Smoke
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    if: |
+      github.event_name == 'workflow_dispatch' ||
+      (github.event.deployment_status.state == 'success' &&
+       github.event.deployment_status.environment == 'Production')
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Resolve target URL
+        id: target
+        shell: bash
+        run: |
+          URL="${{ github.event.inputs.target_url }}"
+          if [ -z "$URL" ]; then
+            URL="${{ github.event.deployment_status.environment_url }}"
+          fi
+          if [ -z "$URL" ]; then
+            URL="https://pheno-sage-web.vercel.app"
+          fi
+          echo "url=$URL" >> "$GITHUB_OUTPUT"
+          echo "Smoke target: $URL"
+
+      - name: Run smoke tests
+        shell: pwsh
+        run: pwsh scripts/smoke-test-prod.ps1 -Base "${{ steps.target.outputs.url }}"
+
+      - name: Open issue on failure
+        if: failure() && github.event_name == 'deployment_status'
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const url = "${{ steps.target.outputs.url }}";
+            const sha = context.payload.deployment.sha || context.sha;
+            const runUrl = `${context.serverUrl}/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId}`;
+            await github.rest.issues.create({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              title: `Production smoke test failed for ${url}`,
+              body: [
+                `**Deployment SHA:** \`${sha}\``,
+                `**Target URL:** ${url}`,
+                `**Workflow run:** ${runUrl}`,
+                "",
+                "Investigate and either roll back the deployment or fix forward."
+              ].join("\n"),
+              labels: ["bug", "production", "smoke-test"]
+            });

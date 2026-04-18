@@ -1,0 +1,34 @@
+name: Dependabot auto-merge
+
+# Auto-approve and squash-merge Dependabot PRs for safe (patch + minor dev-only) updates.
+# Major bumps and runtime-dep minors still require manual review.
+
+on: pull_request_target
+
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  automerge:
+    if: github.actor == 'dependabot[bot]'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Fetch Dependabot metadata
+        id: meta
+        uses: dependabot/fetch-metadata@v2
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Approve & enable auto-merge (patch, or dev-dep minor)
+        if: >-
+          steps.meta.outputs.update-type == 'version-update:semver-patch' ||
+          (steps.meta.outputs.update-type == 'version-update:semver-minor' &&
+           steps.meta.outputs.dependency-type == 'direct:development')
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          PR_URL: ${{ github.event.pull_request.html_url }}
+        run: |
+          gh pr review "$PR_URL" --approve -b "Auto-approved: ${{ steps.meta.outputs.update-type }} (${{ steps.meta.outputs.dependency-type }})"
+          gh pr merge "$PR_URL" --auto --squash

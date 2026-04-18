@@ -1,0 +1,17 @@
+# Code owners — auto-requested for review on every PR.
+# Order matters: later patterns override earlier ones.
+# Docs: https://docs.github.com/en/repositories/managing-your-repositorys-settings-and-features/customizing-your-repository/about-code-owners
+
+* @stevenschling13
+
+# Security-sensitive surfaces require explicit review.
+/.github/                                    @stevenschling13
+/.github/workflows/                          @stevenschling13
+/supabase/migrations/                        @stevenschling13
+/apps/web/src/app/api/                       @stevenschling13
+/apps/web/src/app/api/internal/              @stevenschling13
+/apps/web/src/lib/server/                    @stevenschling13
+/apps/analysis/                              @stevenschling13
+/scripts/                                    @stevenschling13
+SECURITY.md                                  @stevenschling13
+LICENSE                                      @stevenschling13

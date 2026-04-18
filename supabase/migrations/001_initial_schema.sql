@@ -3,7 +3,7 @@
 -- Run via: supabase db push
 
 -- ─── Extensions ──────────────────────────────────────────────────────────────
-create extension if not exists "uuid-ossp";
+create extension if not exists "pgcrypto";
 -- pgvector ready — uncomment when enabling semantic search
 -- create extension if not exists "vector";
 
@@ -62,7 +62,7 @@ create policy "profiles: owner update"
 
 -- ─── grows ────────────────────────────────────────────────────────────────────
 create table grows (
-  id                  uuid primary key default uuid_generate_v4(),
+  id                  uuid primary key default gen_random_uuid(),
   owner_id            uuid not null references auth.users(id) on delete cascade,
   name                text not null,
   description         text,
@@ -77,6 +77,18 @@ create table grows (
 );
 
 alter table grows enable row level security;
+
+-- ─── grow_members ─────────────────────────────────────────────────────────────
+-- Created before grows policies so RLS can reference it.
+create table grow_members (
+  grow_id    uuid not null references grows(id) on delete cascade,
+  user_id    uuid not null references auth.users(id) on delete cascade,
+  role       grow_role not null default 'viewer',
+  created_at timestamptz not null default now(),
+  primary key (grow_id, user_id)
+);
+
+alter table grow_members enable row level security;
 
 -- Owner + collaborators/viewers via grow_members
 create policy "grows: member read"
@@ -93,17 +105,6 @@ create policy "grows: owner write"
   on grows for all
   using (auth.uid() = owner_id);
 
--- ─── grow_members ─────────────────────────────────────────────────────────────
-create table grow_members (
-  grow_id    uuid not null references grows(id) on delete cascade,
-  user_id    uuid not null references auth.users(id) on delete cascade,
-  role       grow_role not null default 'viewer',
-  created_at timestamptz not null default now(),
-  primary key (grow_id, user_id)
-);
-
-alter table grow_members enable row level security;
-
 create policy "grow_members: grow owner manage"
   on grow_members for all
   using (
@@ -119,7 +120,7 @@ create policy "grow_members: self read"
 
 -- ─── plants ───────────────────────────────────────────────────────────────────
 create table plants (
-  id          uuid primary key default uuid_generate_v4(),
+  id          uuid primary key default gen_random_uuid(),
   grow_id     uuid not null references grows(id) on delete cascade,
   name        text not null,
   strain      text,
@@ -156,7 +157,7 @@ create policy "plants: grow owner write"
 -- Images are stored in private Supabase Storage buckets.
 -- storage_path is the Supabase Storage object path; signed URLs are generated server-side.
 create table plant_images (
-  id           uuid primary key default uuid_generate_v4(),
+  id           uuid primary key default gen_random_uuid(),
   plant_id     uuid not null references plants(id) on delete cascade,
   grow_id      uuid not null references grows(id) on delete cascade,
   user_id      uuid not null references auth.users(id),
@@ -186,7 +187,7 @@ create policy "plant_images: uploader write"
 
 -- ─── plant_observations ───────────────────────────────────────────────────────
 create table plant_observations (
-  id          uuid primary key default uuid_generate_v4(),
+  id          uuid primary key default gen_random_uuid(),
   plant_id    uuid not null references plants(id) on delete cascade,
   grow_id     uuid not null references grows(id) on delete cascade,
   user_id     uuid not null references auth.users(id),
@@ -216,7 +217,7 @@ create policy "plant_observations: author write"
 -- ─── plant_findings ───────────────────────────────────────────────────────────
 -- AI-generated or manually recorded findings for a plant.
 create table plant_findings (
-  id             uuid primary key default uuid_generate_v4(),
+  id             uuid primary key default gen_random_uuid(),
   plant_id       uuid not null references plants(id) on delete cascade,
   grow_id        uuid not null references grows(id) on delete cascade,
   image_id       uuid references plant_images(id) on delete set null,
@@ -247,7 +248,7 @@ create policy "plant_findings: grow member read"
 
 -- ─── grow_events ──────────────────────────────────────────────────────────────
 create table grow_events (
-  id          uuid primary key default uuid_generate_v4(),
+  id          uuid primary key default gen_random_uuid(),
   grow_id     uuid not null references grows(id) on delete cascade,
   plant_id    uuid references plants(id) on delete set null,
   user_id     uuid not null references auth.users(id),
@@ -284,7 +285,7 @@ create policy "grow_events: member write"
 
 -- ─── chat_threads ─────────────────────────────────────────────────────────────
 create table chat_threads (
-  id         uuid primary key default uuid_generate_v4(),
+  id         uuid primary key default gen_random_uuid(),
   user_id    uuid not null references auth.users(id) on delete cascade,
   grow_id    uuid references grows(id) on delete set null,
   title      text,
@@ -300,7 +301,7 @@ create policy "chat_threads: owner only"
 
 -- ─── chat_messages ────────────────────────────────────────────────────────────
 create table chat_messages (
-  id        uuid primary key default uuid_generate_v4(),
+  id        uuid primary key default gen_random_uuid(),
   thread_id uuid not null references chat_threads(id) on delete cascade,
   role      message_role not null,
   content   text not null,

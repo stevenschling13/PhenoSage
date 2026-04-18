@@ -1,0 +1,83 @@
+version: 2
+# Dependabot keeps npm, pip, and GitHub Actions deps current.
+# Updates are grouped to reduce PR noise; security updates are always individual.
+# Docs: https://docs.github.com/en/code-security/dependabot/dependabot-version-updates/configuration-options-for-the-dependabot.yml-file
+
+updates:
+  # ───────────── pnpm workspace (root) ─────────────
+  - package-ecosystem: "npm"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+      time: "06:00"
+      timezone: "America/Chicago"
+    open-pull-requests-limit: 10
+    versioning-strategy: "increase"
+    labels: ["dependencies", "javascript"]
+    commit-message:
+      prefix: "chore(deps)"
+      include: "scope"
+    groups:
+      next:
+        patterns: ["next", "@next/*", "eslint-config-next"]
+      react:
+        patterns: ["react", "react-dom", "@types/react", "@types/react-dom"]
+      typescript:
+        patterns: ["typescript", "@typescript-eslint/*", "ts-node", "tsx"]
+      tailwind:
+        patterns: ["tailwindcss", "@tailwindcss/*", "postcss", "autoprefixer"]
+      supabase:
+        patterns: ["@supabase/*", "supabase"]
+      openai:
+        patterns: ["openai", "@openai/*"]
+      types:
+        patterns: ["@types/*"]
+        exclude-patterns: ["@types/react", "@types/react-dom"]
+      dev-tooling:
+        dependency-type: "development"
+        patterns: ["*"]
+        exclude-patterns:
+          ["typescript", "@typescript-eslint/*", "tailwindcss", "@types/*"]
+
+  # ───────────── analysis service ─────────────
+  - package-ecosystem: "pip"
+    directory: "/apps/analysis"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+      time: "06:00"
+      timezone: "America/Chicago"
+    open-pull-requests-limit: 10
+    labels: ["dependencies", "python"]
+    commit-message:
+      prefix: "chore(deps-py)"
+      include: "scope"
+    groups:
+      fastapi:
+        patterns: ["fastapi", "uvicorn*", "starlette", "python-multipart"]
+      pydantic:
+        patterns: ["pydantic*"]
+      ai:
+        patterns: ["openai", "tiktoken", "anthropic"]
+      supabase:
+        patterns: ["supabase", "gotrue", "postgrest", "storage3", "realtime"]
+      dev-tooling:
+        patterns: ["pytest*", "ruff", "mypy", "httpx", "types-*"]
+
+  # ───────────── GitHub Actions ─────────────
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+      time: "06:00"
+      timezone: "America/Chicago"
+    open-pull-requests-limit: 5
+    labels: ["dependencies", "github-actions"]
+    commit-message:
+      prefix: "chore(actions)"
+      include: "scope"
+    groups:
+      actions:
+        patterns: ["*"]
