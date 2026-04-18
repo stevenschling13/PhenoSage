@@ -1,0 +1,10 @@
+node_modules
+.next
+dist
+build
+coverage
+.turbo
+pnpm-lock.yaml
+*.md.bak
+apps/analysis/**
+supabase/migrations/**

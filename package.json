@@ -2,24 +2,47 @@
   "name": "phenosage",
   "version": "0.1.0",
   "private": true,
-  "description": "AI-powered cannabis grow operating system",
+  "description": "Plant-health AI: visual doctor, longitudinal intelligence, chat, alerts",
   "scripts": {
-    "dev": "pnpm --filter web dev",
-    "build": "pnpm --filter web build",
-    "lint": "pnpm --filter web lint",
-    "type-check": "pnpm --filter web type-check && pnpm --filter shared type-check",
-    "clean": "pnpm --filter web clean && pnpm --filter shared clean",
+    "dev": "turbo run dev",
+    "build": "turbo run build",
+    "lint": "turbo run lint",
+    "type-check": "turbo run type-check",
+    "test": "turbo run test",
+    "test:e2e": "turbo run test:e2e",
+    "clean": "turbo run clean && rm -rf .turbo",
+    "format": "prettier --write .",
+    "format:check": "prettier --check .",
     "check:env": "node scripts/check-env-contract.mjs",
     "check:routes": "node scripts/check-route-boundaries.mjs",
     "check:imports": "node scripts/check-imports.mjs",
     "check:scope": "node scripts/check-changed-scope.mjs",
-    "validate": "pnpm run check:env && pnpm run check:routes && pnpm run check:imports"
+    "security:routes": "node scripts/check-route-security.mjs",
+    "security:audit": "node scripts/security-audit.mjs",
+    "validate": "pnpm run check:env && pnpm run check:routes && pnpm run check:imports",
+    "prepare": "husky"
   },
   "engines": {
-    "node": ">=20",
+    "node": ">=22",
     "pnpm": ">=9"
   },
   "packageManager": "pnpm@9.0.0",
+  "devDependencies": {
+    "@commitlint/cli": "^19.6.1",
+    "@commitlint/config-conventional": "^19.6.0",
+    "husky": "^9.1.7",
+    "lint-staged": "^15.3.0",
+    "prettier": "^3.4.2",
+    "turbo": "^2.3.3"
+  },
+  "lint-staged": {
+    "*.{ts,tsx,js,mjs,cjs,json,md,yml,yaml}": [
+      "prettier --write"
+    ],
+    "apps/web/**/*.{ts,tsx}": [
+      "pnpm --filter web exec eslint --fix --max-warnings=0"
+    ]
+  },
   "pnpm": {
     "overrides": {
       "minimatch@>=9.0.0 <9.0.7": ">=9.0.7",
