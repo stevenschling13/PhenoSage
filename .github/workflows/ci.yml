@@ -132,6 +132,7 @@ jobs:
     if: always()
     permissions:
       contents: read
+      statuses: write
     steps:
       - name: notify vercel
         uses: vercel/repository-dispatch/actions/status@v1
