@@ -109,6 +109,9 @@ export function SignInForm({
     null,
   );
 
+  const tabId = (id: Mode) => `auth-tab-${id}`;
+  const panelId = (id: Mode) => `auth-panel-${id}`;
+
   return (
     <div className="space-y-5">
       <div
@@ -121,9 +124,12 @@ export function SignInForm({
           return (
             <button
               key={tab.id}
+              id={tabId(tab.id)}
               role="tab"
               type="button"
               aria-selected={active}
+              aria-controls={panelId(tab.id)}
+              tabIndex={active ? 0 : -1}
               onClick={() => setMode(tab.id)}
               className={cn(
                 "flex-1 rounded-sm px-3 py-1.5 text-sm font-medium transition-colors",
@@ -140,7 +146,13 @@ export function SignInForm({
       </div>
 
       {mode === "sign-in" && (
-        <form action={signInFormAction} className="space-y-4">
+        <form
+          action={signInFormAction}
+          className="space-y-4"
+          role="tabpanel"
+          id={panelId("sign-in")}
+          aria-labelledby={tabId("sign-in")}
+        >
           <EmailField />
           <PasswordField autoComplete="current-password" />
           <Feedback state={signInState} initialError={initialError} />
@@ -149,7 +161,13 @@ export function SignInForm({
       )}
 
       {mode === "sign-up" && (
-        <form action={signUpFormAction} className="space-y-4">
+        <form
+          action={signUpFormAction}
+          className="space-y-4"
+          role="tabpanel"
+          id={panelId("sign-up")}
+          aria-labelledby={tabId("sign-up")}
+        >
           <EmailField />
           <PasswordField autoComplete="new-password" />
           <Feedback state={signUpState} />
@@ -158,7 +176,13 @@ export function SignInForm({
       )}
 
       {mode === "magic-link" && (
-        <form action={otpFormAction} className="space-y-4">
+        <form
+          action={otpFormAction}
+          className="space-y-4"
+          role="tabpanel"
+          id={panelId("magic-link")}
+          aria-labelledby={tabId("magic-link")}
+        >
           <EmailField />
           <Feedback state={otpState} />
           <SubmitButton label="Send magic link" />

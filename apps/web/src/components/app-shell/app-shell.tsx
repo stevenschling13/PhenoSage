@@ -66,7 +66,7 @@ export function AppShell({ user, children }: AppShellProps) {
           <main
             id="main-content"
             tabIndex={-1}
-            className="flex-1 pb-20 outline-none md:pb-0"
+            className="flex flex-1 flex-col pb-20 outline-none md:pb-0"
           >
             {children}
           </main>

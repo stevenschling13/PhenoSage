@@ -23,7 +23,7 @@ export default async function AssistantPage() {
 
   return (
     <AppShell user={{ email: user.email ?? user.id }}>
-      <div className="flex h-[calc(100vh-4rem)] flex-col">
+      <div className="flex min-h-0 flex-1 flex-col">
         {/* Page header strip */}
         <div className="border-b border-border bg-card">
           <Container
