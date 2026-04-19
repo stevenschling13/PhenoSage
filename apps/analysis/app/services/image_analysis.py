@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import logging
+import re
 from datetime import UTC, datetime
 from typing import Any
 
@@ -17,7 +18,6 @@ from app.models.analysis import (
     FindingCategory,
     FindingSeverity,
 )
-from app.services.image_comparison import compare_images
 from app.services.prompts import SYSTEM_PROMPT, build_analysis_prompt
 from app.services.scoring import compute_health_score
 from app.services.storage import (
@@ -32,6 +32,10 @@ logger = logging.getLogger(__name__)
 MODEL_NAME = "gpt-4o"
 MODEL_VERSION = "gpt-4o-2024-08-06"
 FALLBACK_MODEL_VERSION = "phenosage-fallback-0.1"
+JSON_CODE_BLOCK_RE = re.compile(
+    r"```(?:json)?\s*(?P<body>[\s\S]*?)\s*```",
+    re.IGNORECASE,
+)
 
 
 class AnalysisError(RuntimeError):
@@ -86,6 +90,8 @@ async def run_analysis(request: AnalyzeRequest) -> AnalyzeResponse:
     comparison_summary: str | None = None
     if request.previous_image_id and request.previous_storage_path:
         try:
+            from app.services.image_comparison import compare_images
+
             text = await compare_images(
                 request.image_id,
                 request.storage_path,
@@ -140,14 +146,43 @@ async def _call_vision(data_url: str, user_prompt: str) -> dict[str, Any]:
     if not content:
         raise AnalysisError("OpenAI returned an empty response")
 
-    try:
-        parsed = json.loads(content)
-    except json.JSONDecodeError as exc:
-        raise AnalysisError(f"OpenAI response was not valid JSON: {exc}") from exc
+    return _parse_json_object(content)
 
-    if not isinstance(parsed, dict):
-        raise AnalysisError("OpenAI response was not a JSON object")
-    return parsed
+
+def _parse_json_object(content: str) -> dict[str, Any]:
+    candidates: list[str] = []
+    stripped = content.strip()
+    if stripped:
+        candidates.append(stripped)
+
+    if match := JSON_CODE_BLOCK_RE.search(content):
+        fenced = match.group("body").strip()
+        if fenced:
+            candidates.append(fenced)
+
+    start = stripped.find("{")
+    end = stripped.rfind("}")
+    if 0 <= start < end:
+        candidates.append(stripped[start : end + 1].strip())
+
+    seen: set[str] = set()
+    last_error: json.JSONDecodeError | None = None
+    for candidate in candidates:
+        if not candidate or candidate in seen:
+            continue
+        seen.add(candidate)
+        try:
+            parsed = json.loads(candidate)
+        except json.JSONDecodeError as exc:
+            last_error = exc
+            continue
+        if not isinstance(parsed, dict):
+            raise AnalysisError("OpenAI response was not a JSON object")
+        return parsed
+
+    if last_error is not None:
+        raise AnalysisError(f"OpenAI response was not valid JSON: {last_error}") from last_error
+    raise AnalysisError("OpenAI response was not valid JSON")
 
 
 def _parse_findings(parsed: dict[str, Any]) -> list[AnalysisFinding]:

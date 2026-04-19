@@ -1,5 +1,7 @@
 import logging
 import sys
+from collections.abc import AsyncIterator
+from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
@@ -8,6 +10,7 @@ from app.config import settings
 from app.middleware import CorrelationIdMiddleware
 from app.routers.analyze import router as analyze_router
 from app.routers.health import router as health_router
+from app.services.storage import close_http_client
 from app.telemetry import init_all as init_telemetry
 
 
@@ -25,6 +28,14 @@ _configure_logging()
 init_telemetry()
 
 
+@asynccontextmanager
+async def lifespan(_: FastAPI) -> AsyncIterator[None]:
+    try:
+        yield
+    finally:
+        await close_http_client()
+
+
 app = FastAPI(
     title="PhenoSage Analysis Service",
     description=(
@@ -35,6 +46,7 @@ app = FastAPI(
     version="0.1.0",
     docs_url="/docs" if settings.app_env != "production" else None,
     redoc_url=None,
+    lifespan=lifespan,
 )
 
 # CORS: only the configured origins (the Vercel app URL in production).

@@ -164,6 +164,30 @@ async def test_run_analysis_malformed_json_returns_fallback(
 
 
 @pytest.mark.asyncio
+async def test_run_analysis_accepts_fenced_json(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    async def fake_fetch(path: str, timeout_s: float = 20.0) -> bytes:
+        return b"bytes"
+
+    monkeypatch.setattr(image_analysis, "fetch_image_bytes", fake_fetch)
+    monkeypatch.setattr(
+        image_analysis,
+        "get_openai_client",
+        lambda: _FakeClient(
+            """```json
+{"overall_health_score": 82, "summary": "Stable canopy.", "findings": []}
+```"""
+        ),
+    )
+
+    response = await image_analysis.run_analysis(_request())
+
+    assert response.model_version == image_analysis.MODEL_VERSION
+    assert response.summary == "Stable canopy."
+
+
+@pytest.mark.asyncio
 async def test_run_analysis_coerces_unknown_category(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

@@ -8,6 +8,7 @@ through ``httpx`` (already a direct dependency) — no supabase-py needed.
 from __future__ import annotations
 
 import base64
+import re
 from urllib.parse import quote
 
 import httpx
@@ -15,10 +16,49 @@ import httpx
 from app.config import settings
 
 BUCKET = "plant-images"
+_VALID_PATH_RE = re.compile(r"^[A-Za-z0-9._/-]+$")
+_http_client: httpx.AsyncClient | None = None
 
 
 class StorageFetchError(RuntimeError):
     """Raised when fetching a private object from Supabase Storage fails."""
+
+
+def _normalize_storage_path(storage_path: str) -> str:
+    clean_path = storage_path.strip().lstrip("/")
+    if clean_path.startswith(f"{BUCKET}/"):
+        clean_path = clean_path[len(BUCKET) + 1 :]
+
+    if not clean_path:
+        raise StorageFetchError("storage path is empty")
+    if "://" in clean_path or clean_path.startswith(("http:", "https:")):
+        raise StorageFetchError("storage path must be relative")
+    if "\\" in clean_path or clean_path.startswith("/"):
+        raise StorageFetchError("storage path is invalid")
+    if not _VALID_PATH_RE.fullmatch(clean_path):
+        raise StorageFetchError("storage path contains invalid characters")
+
+    parts = clean_path.split("/")
+    if any(part in {"", ".", ".."} for part in parts):
+        raise StorageFetchError("storage path is invalid")
+
+    return clean_path
+
+
+def get_http_client(timeout_s: float = 20.0) -> httpx.AsyncClient:
+    global _http_client
+    if _http_client is None or _http_client.is_closed:
+        _http_client = httpx.AsyncClient(timeout=timeout_s)
+    else:
+        _http_client.timeout = httpx.Timeout(timeout_s)
+    return _http_client
+
+
+async def close_http_client() -> None:
+    global _http_client
+    if _http_client is not None and not _http_client.is_closed:
+        await _http_client.aclose()
+    _http_client = None
 
 
 async def fetch_image_bytes(storage_path: str, timeout_s: float = 20.0) -> bytes:
@@ -29,10 +69,7 @@ async def fetch_image_bytes(storage_path: str, timeout_s: float = 20.0) -> bytes
     if not settings.supabase_url or not settings.supabase_service_role_key:
         raise StorageFetchError("Supabase credentials not configured")
 
-    # Strip a leading bucket prefix if the caller passed one.
-    clean_path = storage_path.lstrip("/")
-    if clean_path.startswith(f"{BUCKET}/"):
-        clean_path = clean_path[len(BUCKET) + 1 :]
+    clean_path = _normalize_storage_path(storage_path)
 
     base = settings.supabase_url.rstrip("/")
     url = f"{base}/storage/v1/object/{BUCKET}/{quote(clean_path, safe='/')}"
@@ -41,8 +78,8 @@ async def fetch_image_bytes(storage_path: str, timeout_s: float = 20.0) -> bytes
         "apikey": settings.supabase_service_role_key,
     }
     try:
-        async with httpx.AsyncClient(timeout=timeout_s) as client:
-            response = await client.get(url, headers=headers)
+        client = get_http_client(timeout_s)
+        response = await client.get(url, headers=headers)
     except httpx.HTTPError as exc:
         raise StorageFetchError(f"storage network error: {exc}") from exc
 

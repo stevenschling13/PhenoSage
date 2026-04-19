@@ -76,6 +76,17 @@ async def test_health_does_not_require_auth() -> None:
 
 
 @pytest.mark.asyncio
+async def test_health_preserves_inbound_request_id() -> None:
+    async with AsyncClient(
+        transport=ASGITransport(app=app), base_url="http://test"
+    ) as client:
+        response = await client.get("/health", headers={"x-request-id": "req-123"})
+
+    assert response.status_code == 200
+    assert response.headers["x-request-id"] == "req-123"
+
+
+@pytest.mark.asyncio
 async def test_analyze_rejects_wrong_bearer_token() -> None:
     """A syntactically-valid but incorrect token must be rejected."""
     async with AsyncClient(

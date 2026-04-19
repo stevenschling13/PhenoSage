@@ -13,6 +13,8 @@ const MAX_MESSAGE_LEN = 4_000;
 const MAX_HISTORY_MESSAGES = 20;
 const MAX_CONTEXT_PLANTS = 8;
 const MAX_CONTEXT_FINDINGS = 20;
+const UUID_RE =
+  /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 interface ChatBody {
   message: unknown;
@@ -81,12 +83,19 @@ export async function POST(request: NextRequest) {
 
   const threadIdIn =
     typeof body.threadId === "string" && body.threadId.length > 0
-      ? body.threadId
+      ? body.threadId.trim()
       : null;
   const growIdIn =
     typeof body.growId === "string" && body.growId.length > 0
-      ? body.growId
+      ? body.growId.trim()
       : null;
+
+  if (threadIdIn && !UUID_RE.test(threadIdIn)) {
+    return errJson("threadId must be a uuid", 400, requestId);
+  }
+  if (growIdIn && !UUID_RE.test(growIdIn)) {
+    return errJson("growId must be a uuid", 400, requestId);
+  }
 
   const db = getDbClient();
 
@@ -98,13 +107,23 @@ export async function POST(request: NextRequest) {
       .from("chat_threads")
       .select("id, user_id, grow_id")
       .eq("id", threadIdIn)
+      .eq("user_id", user.id)
       .maybeSingle();
     if (error || !thread) return errJson("Thread not found", 404, requestId);
-    if (thread.user_id !== user.id) {
-      return errJson("Thread not found", 404, requestId);
-    }
     threadId = thread.id as string;
     threadGrowId = (thread.grow_id as string | null) ?? null;
+    if (
+      growIdIn &&
+      ((threadGrowId && growIdIn !== threadGrowId) ||
+        (!threadGrowId && growIdIn))
+    ) {
+      return errJson("growId does not match thread", 400, requestId);
+    }
+    if (threadGrowId) {
+      const grow = await authorizeGrowAccess(user.id, threadGrowId);
+      if (!grow) return errJson("Grow not found", 404, requestId);
+      threadGrowId = grow.growId;
+    }
   } else {
     let boundGrowId: string | null = null;
     if (growIdIn) {
@@ -239,9 +258,9 @@ async function loadThreadHistory(
     .from("chat_messages")
     .select("role, content, created_at")
     .eq("thread_id", threadId)
-    .order("created_at", { ascending: true })
+    .order("created_at", { ascending: false })
     .limit(MAX_HISTORY_MESSAGES);
-  return (data ?? []).map((m) => ({
+  return [...(data ?? [])].reverse().map((m) => ({
     role: m.role as string,
     content: m.content as string,
   }));
