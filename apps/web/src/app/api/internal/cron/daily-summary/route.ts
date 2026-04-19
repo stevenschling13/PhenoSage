@@ -1,29 +1,42 @@
 import { NextRequest, NextResponse } from "next/server";
+import { correlationIdFromRequest, createLogger } from "@/lib/server/logger";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
 
-// GET /api/internal/cron/daily-summary
-// Vercel Cron always issues a GET request and signs it with
-// `Authorization: Bearer ${CRON_SECRET}` (set in Vercel project settings).
-// Never invoked by the browser.
+/**
+ * GET /api/internal/cron/daily-summary
+ *
+ * Vercel Cron always issues a GET and signs it with
+ * `Authorization: Bearer ${CRON_SECRET}`. Never invoked by the browser.
+ */
 export async function GET(request: NextRequest) {
+  const requestId = correlationIdFromRequest(request);
+  const log = createLogger({ route: "api.cron.daily_summary", requestId });
+
   const authHeader = request.headers.get("authorization");
   const cronSecret = process.env["CRON_SECRET"];
 
   if (!cronSecret || authHeader !== `Bearer ${cronSecret}`) {
-    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+    log.warn("unauthorized cron invocation");
+    return NextResponse.json(
+      { error: "Unauthorized", requestId },
+      { status: 401, headers: { "x-request-id": requestId } },
+    );
   }
 
-  // TODO: Fetch all active grows
-  // TODO: For each grow, compile recent observations + findings
-  // TODO: Call AI to generate a daily summary
-  // TODO: Persist as grow_events with eventType = 'observation'
-  // TODO: Queue notifications (email / push) per user preferences
+  log.info("cron invoked");
 
-  return NextResponse.json({
-    status: "ok",
-    ran: new Date().toISOString(),
-    message: "TODO: Implement daily summary generation",
-  });
+  // TODO: Fetch all active grows, compile observations + findings, call AI,
+  // persist grow_events, queue notifications. Tracked separately; this route
+  // stays a no-op until that pipeline lands.
+  return NextResponse.json(
+    {
+      status: "ok",
+      ran: new Date().toISOString(),
+      message: "daily summary pipeline not yet implemented",
+      requestId,
+    },
+    { headers: { "x-request-id": requestId } },
+  );
 }

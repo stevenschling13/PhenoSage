@@ -1,9 +1,8 @@
-"""
-Tests for `app.services.image_comparison`.
+"""Tests for ``app.services.image_comparison``.
 
-The implementation is currently a stub. These tests lock in the public
-signature and the placeholder behaviour so any future wiring to the OpenAI
-Vision API is a deliberate, observable change.
+The real implementation calls OpenAI Vision; these tests exercise the contract
+(coroutine, stable signature, graceful degradation when storage is not
+configured) without hitting the network.
 """
 
 from __future__ import annotations
@@ -17,7 +16,12 @@ from app.services.image_comparison import compare_images
 
 
 @pytest.mark.asyncio
-async def test_compare_images_returns_string() -> None:
+async def test_compare_images_returns_empty_string_without_storage() -> None:
+    """Without Supabase credentials the helper degrades gracefully.
+
+    Settings are pulled from env at process start; in the test harness they
+    are empty strings, so the internal storage fetch raises and we return "".
+    """
     result = await compare_images(
         image_id_a="img-a",
         storage_path_a="plants/p/img-a.jpg",
@@ -25,24 +29,11 @@ async def test_compare_images_returns_string() -> None:
         storage_path_b="plants/p/img-b.jpg",
     )
     assert isinstance(result, str)
-    assert result  # non-empty
-
-
-@pytest.mark.asyncio
-async def test_compare_images_current_stub_marker() -> None:
-    """
-    The stub returns a known sentinel string. When the real implementation
-    lands this test should be replaced — its failure is the intended signal.
-    """
-    result = await compare_images("a", "p/a", "b", "p/b")
-    assert "not yet implemented" in result.lower()
+    assert result == ""
 
 
 def test_compare_images_signature_is_stable() -> None:
-    """
-    The signature is part of the internal contract used by `image_analysis`.
-    Renames here must be coordinated with that caller.
-    """
+    """Part of the internal contract used by ``image_analysis``."""
     sig = inspect.signature(compare_images)
     assert list(sig.parameters) == [
         "image_id_a",

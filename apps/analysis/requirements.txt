@@ -6,6 +6,13 @@ httpx==0.28.1
 python-multipart==0.0.26
 openai==2.32.0
 
+# Observability — activated only when SENTRY_DSN or OTEL_EXPORTER_OTLP_ENDPOINT is set.
+sentry-sdk[fastapi]==2.34.1
+opentelemetry-api==1.30.0
+opentelemetry-sdk==1.30.0
+opentelemetry-instrumentation-fastapi==0.51b0
+opentelemetry-exporter-otlp-proto-http==1.30.0
+
 # Linting & type checking (dev)
 ruff==0.15.11
 mypy==1.20.1

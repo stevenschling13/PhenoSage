@@ -26,16 +26,16 @@ Supabase         Railway
 
 ## Tech Stack
 
-| Layer | Technology |
-|---|---|
-| Web app | Next.js 14 App Router, TypeScript strict, Tailwind CSS |
-| Analysis service | FastAPI (Python 3.12) |
-| Shared types | TypeScript package |
-| Auth | Supabase Auth |
-| Database | Supabase Postgres (pgvector-ready) |
-| Storage | Supabase Storage (private buckets) |
-| Web deploy | Vercel |
-| Analysis deploy | Railway |
+| Layer            | Technology                                             |
+| ---------------- | ------------------------------------------------------ |
+| Web app          | Next.js 15 App Router, TypeScript strict, Tailwind CSS |
+| Analysis service | FastAPI (Python 3.12)                                  |
+| Shared types     | TypeScript package                                     |
+| Auth             | Supabase Auth                                          |
+| Database         | Supabase Postgres (pgvector-ready)                     |
+| Storage          | Supabase Storage (private buckets)                     |
+| Web deploy       | Vercel                                                 |
+| Analysis deploy  | Railway                                                |
 
 ## Monorepo Structure
 
@@ -57,7 +57,7 @@ phenosage/
 
 ### Prerequisites
 
-- Node.js >= 20
+- Node.js >= 22
 - pnpm >= 9
 - Python >= 3.12
 - Docker (for analysis service)
