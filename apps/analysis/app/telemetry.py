@@ -21,8 +21,8 @@ def init_sentry() -> None:
     if not dsn:
         return
     try:
-        import sentry_sdk  # type: ignore[import-not-found]
-        from sentry_sdk.integrations.fastapi import (  # type: ignore[import-not-found]
+        import sentry_sdk
+        from sentry_sdk.integrations.fastapi import (
             FastApiIntegration,
         )
     except ImportError:
@@ -48,13 +48,13 @@ def init_otel() -> None:
         logger.info("OTEL_ENABLED=true but OTEL_EXPORTER_OTLP_ENDPOINT not set")
         return
     try:
-        from opentelemetry import trace  # type: ignore[import-not-found]
-        from opentelemetry.exporter.otlp.proto.http.trace_exporter import (  # type: ignore[import-not-found]
+        from opentelemetry import trace
+        from opentelemetry.exporter.otlp.proto.http.trace_exporter import (
             OTLPSpanExporter,
         )
-        from opentelemetry.sdk.resources import Resource  # type: ignore[import-not-found]
-        from opentelemetry.sdk.trace import TracerProvider  # type: ignore[import-not-found]
-        from opentelemetry.sdk.trace.export import (  # type: ignore[import-not-found]
+        from opentelemetry.sdk.resources import Resource
+        from opentelemetry.sdk.trace import TracerProvider
+        from opentelemetry.sdk.trace.export import (
             BatchSpanProcessor,
         )
     except ImportError:

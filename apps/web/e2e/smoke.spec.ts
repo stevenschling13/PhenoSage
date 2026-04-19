@@ -13,4 +13,12 @@ test.describe("PhenoSage smoke", () => {
     const response = await page.goto("/");
     expect(response?.ok()).toBeTruthy();
   });
+
+  test("auth bootstrap boundary renders", async ({ page }) => {
+    const response = await page.goto("/auth");
+    expect(response?.ok()).toBeTruthy();
+    await expect(
+      page.getByRole("heading", { name: /welcome to phenosage/i }),
+    ).toBeVisible();
+  });
 });

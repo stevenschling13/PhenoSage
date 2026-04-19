@@ -4,19 +4,25 @@
 
 ## Services Overview
 
-| Service | Platform | Purpose |
-|---|---|---|
-| `apps/web` | Vercel | Next.js web app — the only public origin |
-| `apps/analysis` | Railway | FastAPI analysis service — private, never browser-callable |
-| Database | Supabase (Postgres) | All application data with RLS |
-| Storage | Supabase Storage | Private plant images |
-| Auth | Supabase Auth | User accounts and sessions |
+| Service         | Platform            | Purpose                                                    |
+| --------------- | ------------------- | ---------------------------------------------------------- |
+| `apps/web`      | Vercel              | Next.js web app — the only public origin                   |
+| `apps/analysis` | Railway             | FastAPI analysis service — private, never browser-callable |
+| Database        | Supabase (Postgres) | All application data with RLS                              |
+| Storage         | Supabase Storage    | Private plant images                                       |
+| Auth            | Supabase Auth       | User accounts and sessions                                 |
 
 ---
 
 ## Guiding Principle
 
 > Vercel is the only public origin. The browser never calls Railway or uses the Supabase service role key.
+
+## Runtime Contract
+
+- Node.js: `20.x`
+- pnpm: `9.15.9`
+- Keep the root `package.json`, `apps/web/package.json`, CI workflow, and Vercel project setting aligned to this contract.
 
 ---
 
@@ -28,30 +34,36 @@ Set these in Vercel project settings → Environment Variables.
 
 Mark server-only variables as **Server** exposure only (not Preview/Production client-side).
 
-| Variable | Exposure | Description |
-|---|---|---|
-| `NEXT_PUBLIC_SUPABASE_URL` | Public | Supabase project URL |
-| `NEXT_PUBLIC_SUPABASE_ANON_KEY` | Public | Supabase anon/public key |
-| `NEXT_PUBLIC_APP_URL` | Public | App base URL (e.g. `https://phenosage.vercel.app`) |
-| `SUPABASE_SERVICE_ROLE_KEY` | **Server only** | Supabase service role — bypasses RLS |
-| `ANALYSIS_SERVICE_URL` | **Server only** | Railway analysis service base URL |
-| `ANALYSIS_SERVICE_API_KEY` | **Server only** | Shared secret for proxy auth |
-| `OPENAI_API_KEY` | **Server only** | OpenAI API key |
-| `CRON_SECRET` | **Server only** | Protects `/api/internal/cron/*` endpoints |
+| Variable                        | Exposure        | Description                                        |
+| ------------------------------- | --------------- | -------------------------------------------------- |
+| `NEXT_PUBLIC_SUPABASE_URL`      | Public          | Supabase project URL                               |
+| `NEXT_PUBLIC_SUPABASE_ANON_KEY` | Public          | Supabase anon/public key                           |
+| `NEXT_PUBLIC_APP_URL`           | Public          | App base URL (e.g. `https://phenosage.vercel.app`) |
+| `SUPABASE_SERVICE_ROLE_KEY`     | **Server only** | Supabase service role — bypasses RLS               |
+| `ANALYSIS_SERVICE_URL`          | **Server only** | Railway analysis service base URL                  |
+| `ANALYSIS_SERVICE_API_KEY`      | **Server only** | Shared secret for proxy auth                       |
+| `OPENAI_API_KEY`                | **Server only** | OpenAI API key                                     |
+| `CRON_SECRET`                   | **Server only** | Protects `/api/internal/cron/*` endpoints          |
 
 ### apps/analysis (Railway)
 
 Set these in Railway project → Variables.
 
-| Variable | Description |
-|---|---|
-| `API_KEY` | Shared secret — must match `ANALYSIS_SERVICE_API_KEY` in Vercel |
-| `OPENAI_API_KEY` | OpenAI API key for Vision analysis |
-| `SUPABASE_URL` | Supabase project URL |
-| `SUPABASE_SERVICE_ROLE_KEY` | Supabase service role (to fetch private images) |
-| `APP_ENV` | `production` |
-| `LOG_LEVEL` | `info` |
-| `PORT` | Set automatically by Railway |
+| Variable                    | Description                                                     |
+| --------------------------- | --------------------------------------------------------------- |
+| `API_KEY`                   | Shared secret — must match `ANALYSIS_SERVICE_API_KEY` in Vercel |
+| `OPENAI_API_KEY`            | OpenAI API key for Vision analysis                              |
+| `SUPABASE_URL`              | Supabase project URL                                            |
+| `SUPABASE_SERVICE_ROLE_KEY` | Supabase service role (to fetch private images)                 |
+| `APP_ENV`                   | `production`                                                    |
+| `LOG_LEVEL`                 | `info`                                                          |
+| `PORT`                      | Set automatically by Railway                                    |
+
+Run the env contract check before every PR and before promoting a deploy:
+
+```bash
+pnpm run check:env
+```
 
 ---
 
@@ -59,10 +71,11 @@ Set these in Railway project → Variables.
 
 1. Connect your GitHub repo to Vercel
 2. Set root directory to `apps/web`
-3. Set install command to `pnpm install --frozen-lockfile` (from repo root)
-4. Set build command to `pnpm build`
-5. Add all environment variables (server-only variables: mark as **Server** only)
-6. Deploy
+3. Set Node.js Version to `20.x`
+4. Set install command to `pnpm install --frozen-lockfile` (from repo root)
+5. Set build command to `pnpm build`
+6. Add all environment variables (server-only variables: mark as **Server** only)
+7. Deploy
 
 Vercel Cron is configured in `apps/web/vercel.json`:
 
@@ -137,8 +150,37 @@ docker run -p 8000:8000 --env-file .env phenosage-analysis
 
 The GitHub Actions workflow (`.github/workflows/ci.yml`) runs on every push/PR:
 
-- **Web**: type-check, lint, build
+- **Web**: type-check, lint, test, build
 - **Analysis**: ruff lint, mypy type-check, pytest
-- **Shared**: type-check
+- **Shared**: type-check, test
+
+Post-deploy smoke coverage must keep these baseline checks green:
+
+- `GET /`
+- `GET /api/health`
+- auth bootstrap at `GET /auth`
 
 Merging to `main` triggers automatic Vercel and Railway deployments.
+
+---
+
+## PR Acceptance Criteria
+
+Treat release PRs as failed unless all of the following are true:
+
+- `package.json`, `apps/web/package.json`, CI, and Vercel all target Node.js `20.x`
+- `pnpm install --frozen-lockfile` succeeds from the repo root
+- `pnpm run check:env`
+- `pnpm run check:routes`
+- `pnpm run check:imports`
+- `pnpm run security:routes`
+- `pnpm --filter web lint`
+- `pnpm --filter web type-check`
+- `pnpm --filter web test`
+- `pnpm --filter web build`
+- `python -m ruff check .`
+- `python -m mypy app/`
+- `python -m pytest --cov=app --cov-report=xml --cov-report=term`
+- smoke checks for `GET /`, `GET /api/health`, and `GET /auth`
+
+If Vercel or Railway deploy behavior changes, update this runbook in the same PR.
