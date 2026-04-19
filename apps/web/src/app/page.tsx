@@ -79,19 +79,21 @@ export default function LandingPage() {
           </Link>
           <div className="flex items-center gap-3">
             <ThemeToggle />
-            <Link href="/auth" className="hidden sm:block">
-              <Button variant="ghost" size="sm">
-                Sign in
-              </Button>
-            </Link>
-            <Link href="/auth">
-              <Button
-                size="sm"
-                rightIcon={<ArrowRightIcon width={14} height={14} />}
-              >
-                Get started
-              </Button>
-            </Link>
+            <Button
+              asChild
+              variant="ghost"
+              size="sm"
+              className="hidden sm:inline-flex"
+            >
+              <Link href="/auth">Sign in</Link>
+            </Button>
+            <Button
+              asChild
+              size="sm"
+              rightIcon={<ArrowRightIcon width={14} height={14} />}
+            >
+              <Link href="/auth">Get started</Link>
+            </Button>
           </div>
         </Container>
       </header>
@@ -117,19 +119,16 @@ export default function LandingPage() {
                 one fast web app.
               </p>
               <div className="mt-10 flex flex-col gap-3 sm:flex-row">
-                <Link href="/auth">
-                  <Button
-                    size="lg"
-                    rightIcon={<ArrowRightIcon width={16} height={16} />}
-                  >
-                    Get started free
-                  </Button>
-                </Link>
-                <Link href="/dashboard">
-                  <Button size="lg" variant="outline">
-                    View demo
-                  </Button>
-                </Link>
+                <Button
+                  asChild
+                  size="lg"
+                  rightIcon={<ArrowRightIcon width={16} height={16} />}
+                >
+                  <Link href="/auth">Get started free</Link>
+                </Button>
+                <Button asChild size="lg" variant="outline">
+                  <Link href="/dashboard">View demo</Link>
+                </Button>
               </div>
               <p className="mt-6 text-xs text-muted-foreground">
                 No credit card. RLS-secured. Cancel anytime.
@@ -207,14 +206,13 @@ export default function LandingPage() {
               seconds.
             </p>
             <div className="mt-6 flex justify-center">
-              <Link href="/auth">
-                <Button
-                  size="lg"
-                  rightIcon={<ArrowRightIcon width={16} height={16} />}
-                >
-                  Create your account
-                </Button>
-              </Link>
+              <Button
+                asChild
+                size="lg"
+                rightIcon={<ArrowRightIcon width={16} height={16} />}
+              >
+                <Link href="/auth">Create your account</Link>
+              </Button>
             </div>
           </Container>
         </section>

@@ -24,11 +24,9 @@ export default async function PlantsIndexPage() {
           title="Plants"
           description="Every plant across your grows, with their latest health snapshot."
           actions={
-            <Link href="/grows">
-              <Button leftIcon={<PlusIcon width={16} height={16} />}>
-                Add a plant
-              </Button>
-            </Link>
+            <Button asChild leftIcon={<PlusIcon width={16} height={16} />}>
+              <Link href="/grows">Add a plant</Link>
+            </Button>
           }
         />
 
@@ -37,11 +35,13 @@ export default async function PlantsIndexPage() {
           title="No plants yet"
           description="Plants live inside grows. Create a grow to add your first plant."
           action={
-            <Link href="/grows">
-              <Button size="sm" leftIcon={<PlusIcon width={14} height={14} />}>
-                Go to grows
-              </Button>
-            </Link>
+            <Button
+              asChild
+              size="sm"
+              leftIcon={<PlusIcon width={14} height={14} />}
+            >
+              <Link href="/grows">Go to grows</Link>
+            </Button>
           }
         />
       </Container>

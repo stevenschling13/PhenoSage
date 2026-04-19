@@ -35,11 +35,9 @@ export default async function GrowsPage() {
           title="No grows yet"
           description="Create your first grow to start tracking plants, photos, and AI findings."
           action={
-            <Link href="#">
-              <Button leftIcon={<PlusIcon width={16} height={16} />}>
-                Create your first grow
-              </Button>
-            </Link>
+            <Button asChild leftIcon={<PlusIcon width={16} height={16} />}>
+              <Link href="#">Create your first grow</Link>
+            </Button>
           }
         />
 

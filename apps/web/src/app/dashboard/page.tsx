@@ -86,23 +86,21 @@ export default async function DashboardPage() {
           description="Snapshot of your grow operation. Pick up where you left off."
           actions={
             <>
-              <Link href="/assistant">
-                <Button
-                  variant="outline"
-                  size="sm"
-                  leftIcon={<ChatIcon width={16} height={16} />}
-                >
-                  Ask copilot
-                </Button>
-              </Link>
-              <Link href="/grows">
-                <Button
-                  size="sm"
-                  leftIcon={<PlusIcon width={16} height={16} />}
-                >
-                  New grow
-                </Button>
-              </Link>
+              <Button
+                asChild
+                variant="outline"
+                size="sm"
+                leftIcon={<ChatIcon width={16} height={16} />}
+              >
+                <Link href="/assistant">Ask copilot</Link>
+              </Button>
+              <Button
+                asChild
+                size="sm"
+                leftIcon={<PlusIcon width={16} height={16} />}
+              >
+                <Link href="/grows">New grow</Link>
+              </Button>
             </>
           }
         />
@@ -154,15 +152,14 @@ export default async function DashboardPage() {
                 title="No activity yet"
                 description="Create a grow and upload a photo to start the timeline."
                 action={
-                  <Link href="/grows">
-                    <Button
-                      variant="primary"
-                      size="sm"
-                      rightIcon={<ArrowRightIcon width={14} height={14} />}
-                    >
-                      Create your first grow
-                    </Button>
-                  </Link>
+                  <Button
+                    asChild
+                    variant="primary"
+                    size="sm"
+                    rightIcon={<ArrowRightIcon width={14} height={14} />}
+                  >
+                    <Link href="/grows">Create your first grow</Link>
+                  </Button>
                 }
               />
             </CardContent>
@@ -223,15 +220,14 @@ export default async function DashboardPage() {
                 stage-aware reminders.
               </p>
             </div>
-            <Link href="/settings">
-              <Button
-                variant="outline"
-                size="sm"
-                leftIcon={<BellIcon width={14} height={14} />}
-              >
-                Configure
-              </Button>
-            </Link>
+            <Button
+              asChild
+              variant="outline"
+              size="sm"
+              leftIcon={<BellIcon width={14} height={14} />}
+            >
+              <Link href="/settings">Configure</Link>
+            </Button>
           </CardContent>
         </Card>
       </Container>

@@ -21,17 +21,16 @@ export default function NotFound() {
           back to the dashboard to keep going.
         </p>
         <div className="mt-8 flex justify-center gap-3">
-          <Link href="/">
-            <Button
-              variant="outline"
-              leftIcon={<ArrowLeftIcon width={16} height={16} />}
-            >
-              Home
-            </Button>
-          </Link>
-          <Link href="/dashboard">
-            <Button>Open dashboard</Button>
-          </Link>
+          <Button
+            asChild
+            variant="outline"
+            leftIcon={<ArrowLeftIcon width={16} height={16} />}
+          >
+            <Link href="/">Home</Link>
+          </Button>
+          <Button asChild>
+            <Link href="/dashboard">Open dashboard</Link>
+          </Button>
         </div>
       </Container>
     </main>
