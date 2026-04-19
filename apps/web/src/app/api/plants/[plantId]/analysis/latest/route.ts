@@ -9,10 +9,7 @@ interface RouteParams {
 // GET /api/plants/[plantId]/analysis/latest
 // Returns the most recent AnalysisResponse for a plant.
 // Proxied through Next.js — the browser never calls the analysis service directly.
-export async function GET(
-  request: NextRequest,
-  { params }: RouteParams,
-) {
+export async function GET(request: NextRequest, { params }: RouteParams) {
   const session = await getServerSession();
   if (!session) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });

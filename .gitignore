@@ -40,6 +40,8 @@ coverage/
 .nyc_output/
 .pytest_cache/
 htmlcov/
+playwright-report/
+test-results/
 
 # Python tool caches
 .mypy_cache/

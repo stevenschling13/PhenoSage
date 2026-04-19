@@ -1,7 +1,23 @@
 import type { Metadata } from "next";
+import { IBM_Plex_Mono, Manrope } from "next/font/google";
 import { Analytics } from "@vercel/analytics/next";
 import { SpeedInsights } from "@vercel/speed-insights/next";
 import "./globals.css";
+
+const sans = Manrope({
+  subsets: ["latin"],
+  display: "swap",
+  variable: "--font-sans",
+});
+
+const mono = IBM_Plex_Mono({
+  subsets: ["latin"],
+  display: "swap",
+  variable: "--font-mono",
+  weight: ["400", "500"],
+});
+
+const isVercelRuntime = process.env["VERCEL"] === "1";
 
 export const metadata: Metadata = {
   title: {
@@ -9,7 +25,7 @@ export const metadata: Metadata = {
     template: "%s | PhenoSage",
   },
   description:
-    "AI-powered cannabis grow operating system. Professional plant analysis, timeline tracking, proactive alerts, and grow-aware chatbot.",
+    "Cultivation intelligence platform for serious cannabis growers. Visual diagnostics, longitudinal tracking, proactive alerts, and a grow-aware copilot in one private workspace.",
 };
 
 export default function RootLayout({
@@ -19,10 +35,16 @@ export default function RootLayout({
 }) {
   return (
     <html lang="en">
-      <body className="min-h-screen bg-background antialiased">
+      <body
+        className={`${sans.variable} ${mono.variable} min-h-screen bg-background antialiased`}
+      >
         {children}
-        <Analytics />
-        <SpeedInsights />
+        {isVercelRuntime ? (
+          <>
+            <Analytics />
+            <SpeedInsights />
+          </>
+        ) : null}
       </body>
     </html>
   );

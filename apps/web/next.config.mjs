@@ -1,3 +1,6 @@
+import path from "node:path";
+import { fileURLToPath } from "node:url";
+
 /**
  * @type {import('next').NextConfig}
  *
@@ -8,6 +11,8 @@
  *  - Modern Cross-Origin policies (COOP / COEP-relaxed for images / CORP)
  *  - Referrer + Permissions Policy restricting sensors
  */
+
+const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
 function parseOrigin(value) {
   if (!value) return null;
@@ -21,6 +26,9 @@ function parseOrigin(value) {
 function buildCSP() {
   const supabase = parseOrigin(process.env.NEXT_PUBLIC_SUPABASE_URL);
   const appUrl = parseOrigin(process.env.NEXT_PUBLIC_APP_URL);
+  const shouldUpgradeInsecure =
+    process.env.VERCEL_ENV === "production" ||
+    (appUrl ? appUrl.startsWith("https://") : false);
   const extraConnect = [supabase, appUrl].filter(Boolean).join(" ");
 
   const directives = [
@@ -36,14 +44,19 @@ function buildCSP() {
     "form-action 'self'",
     "base-uri 'self'",
     "object-src 'none'",
-    "upgrade-insecure-requests",
   ];
+
+  if (shouldUpgradeInsecure) {
+    directives.push("upgrade-insecure-requests");
+  }
+
   return directives.join("; ");
 }
 
 const nextConfig = {
   reactStrictMode: true,
   poweredByHeader: false,
+  outputFileTracingRoot: path.join(__dirname, "../.."),
   serverExternalPackages: [],
   images: {
     remotePatterns: [

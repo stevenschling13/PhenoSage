@@ -8,10 +8,7 @@ interface RouteParams {
 
 // GET /api/plants/[plantId]/timeline
 // Returns the ordered list of plant images + observations for a plant.
-export async function GET(
-  request: NextRequest,
-  { params }: RouteParams,
-) {
+export async function GET(request: NextRequest, { params }: RouteParams) {
   const session = await getServerSession();
   if (!session) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });

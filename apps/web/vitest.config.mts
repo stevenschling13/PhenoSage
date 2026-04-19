@@ -1,9 +1,12 @@
 import { defineConfig } from "vitest/config";
 import path from "node:path";
+import react from "@vitejs/plugin-react";
 
 export default defineConfig({
+  plugins: [react()],
   test: {
-    environment: "node",
+    environment: "jsdom",
+    setupFiles: ["./vitest-setup.ts"],
     include: [
       "src/**/__tests__/**/*.test.ts",
       "src/**/__tests__/**/*.test.tsx",
@@ -12,7 +15,7 @@ export default defineConfig({
     coverage: {
       provider: "v8",
       reporter: ["text", "html", "lcov"],
-      include: ["src/lib/**/*.ts", "src/app/api/**/*.ts"],
+      include: ["src/lib/**/*.ts", "src/app/api/**/*.ts", "src/components/**/*.tsx"],
       exclude: ["src/**/__tests__/**", "src/**/*.d.ts", "src/**/types.ts"],
     },
   },
