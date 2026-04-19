@@ -2,6 +2,10 @@
 
 import { useActionState, useState } from "react";
 import { useFormStatus } from "react-dom";
+import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
+import { cn } from "@/lib/cn";
 import {
   signInAction,
   signUpAction,
@@ -20,32 +24,23 @@ const TABS: { id: Mode; label: string }[] = [
 function SubmitButton({ label }: { label: string }) {
   const { pending } = useFormStatus();
   return (
-    <button
-      type="submit"
-      disabled={pending}
-      className="w-full rounded-lg bg-brand-600 px-4 py-2.5 text-sm font-semibold text-white shadow-sm transition hover:bg-brand-700 focus:outline-none focus:ring-2 focus:ring-brand-500 disabled:cursor-not-allowed disabled:bg-brand-400"
-    >
+    <Button type="submit" loading={pending} fullWidth size="md">
       {pending ? "Please wait…" : label}
-    </button>
+    </Button>
   );
 }
 
 function EmailField() {
   return (
-    <div>
-      <label
-        htmlFor="email"
-        className="mb-1 block text-sm font-medium text-gray-700"
-      >
-        Email
-      </label>
-      <input
+    <div className="space-y-1.5">
+      <Label htmlFor="email">Email</Label>
+      <Input
         id="email"
         name="email"
         type="email"
         autoComplete="email"
+        placeholder="you@example.com"
         required
-        className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm text-gray-900 focus:border-brand-500 focus:outline-none focus:ring-1 focus:ring-brand-500"
       />
     </div>
   );
@@ -53,23 +48,18 @@ function EmailField() {
 
 function PasswordField({ autoComplete }: { autoComplete: string }) {
   return (
-    <div>
-      <label
-        htmlFor="password"
-        className="mb-1 block text-sm font-medium text-gray-700"
-      >
-        Password
-      </label>
-      <input
+    <div className="space-y-1.5">
+      <Label htmlFor="password">Password</Label>
+      <Input
         id="password"
         name="password"
         type="password"
         minLength={8}
         autoComplete={autoComplete}
+        placeholder="••••••••"
         required
-        className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm text-gray-900 focus:border-brand-500 focus:outline-none focus:ring-1 focus:ring-brand-500"
       />
-      <p className="mt-1 text-xs text-gray-500">Minimum 8 characters.</p>
+      <p className="text-xs text-muted-foreground">Minimum 8 characters.</p>
     </div>
   );
 }
@@ -87,11 +77,12 @@ function Feedback({
   return (
     <div
       role={isOk ? "status" : "alert"}
-      className={`rounded-lg border px-3 py-2 text-sm ${
+      className={cn(
+        "rounded-md border px-3 py-2 text-sm animate-fade-in",
         isOk
-          ? "border-green-200 bg-green-50 text-green-800"
-          : "border-red-200 bg-red-50 text-red-800"
-      }`}
+          ? "border-success/30 bg-success/10 text-success"
+          : "border-destructive/30 bg-destructive/10 text-destructive",
+      )}
     >
       {message}
     </div>
@@ -118,28 +109,50 @@ export function SignInForm({
     null,
   );
 
+  const tabId = (id: Mode) => `auth-tab-${id}`;
+  const panelId = (id: Mode) => `auth-panel-${id}`;
+
   return (
-    <div className="space-y-6">
-      <div role="tablist" className="flex rounded-lg border bg-gray-50 p-1">
-        {TABS.map((tab) => (
-          <button
-            key={tab.id}
-            role="tab"
-            aria-selected={mode === tab.id}
-            onClick={() => setMode(tab.id)}
-            className={`flex-1 rounded-md px-3 py-1.5 text-sm font-medium transition ${
-              mode === tab.id
-                ? "bg-white text-gray-900 shadow-sm"
-                : "text-gray-600 hover:text-gray-900"
-            }`}
-          >
-            {tab.label}
-          </button>
-        ))}
+    <div className="space-y-5">
+      <div
+        role="tablist"
+        aria-label="Authentication method"
+        className="flex rounded-md border border-border bg-muted/50 p-1"
+      >
+        {TABS.map((tab) => {
+          const active = mode === tab.id;
+          return (
+            <button
+              key={tab.id}
+              id={tabId(tab.id)}
+              role="tab"
+              type="button"
+              aria-selected={active}
+              aria-controls={panelId(tab.id)}
+              tabIndex={active ? 0 : -1}
+              onClick={() => setMode(tab.id)}
+              className={cn(
+                "flex-1 rounded-sm px-3 py-1.5 text-sm font-medium transition-colors",
+                "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-1 focus-visible:ring-offset-background",
+                active
+                  ? "bg-card text-foreground shadow-elevation-1"
+                  : "text-muted-foreground hover:text-foreground",
+              )}
+            >
+              {tab.label}
+            </button>
+          );
+        })}
       </div>
 
       {mode === "sign-in" && (
-        <form action={signInFormAction} className="space-y-4">
+        <form
+          action={signInFormAction}
+          className="space-y-4"
+          role="tabpanel"
+          id={panelId("sign-in")}
+          aria-labelledby={tabId("sign-in")}
+        >
           <EmailField />
           <PasswordField autoComplete="current-password" />
           <Feedback state={signInState} initialError={initialError} />
@@ -148,7 +161,13 @@ export function SignInForm({
       )}
 
       {mode === "sign-up" && (
-        <form action={signUpFormAction} className="space-y-4">
+        <form
+          action={signUpFormAction}
+          className="space-y-4"
+          role="tabpanel"
+          id={panelId("sign-up")}
+          aria-labelledby={tabId("sign-up")}
+        >
           <EmailField />
           <PasswordField autoComplete="new-password" />
           <Feedback state={signUpState} />
@@ -157,16 +176,22 @@ export function SignInForm({
       )}
 
       {mode === "magic-link" && (
-        <form action={otpFormAction} className="space-y-4">
+        <form
+          action={otpFormAction}
+          className="space-y-4"
+          role="tabpanel"
+          id={panelId("magic-link")}
+          aria-labelledby={tabId("magic-link")}
+        >
           <EmailField />
           <Feedback state={otpState} />
           <SubmitButton label="Send magic link" />
         </form>
       )}
 
-      <p className="text-center text-xs text-gray-500">
-        {mode === "sign-in" && "No account yet? Switch to Sign up."}
-        {mode === "sign-up" && "Already have one? Switch to Sign in."}
+      <p className="text-center text-xs text-muted-foreground">
+        {mode === "sign-in" && "No account yet? Switch to Sign up above."}
+        {mode === "sign-up" && "Already have one? Switch to Sign in above."}
         {mode === "magic-link" && "We'll email you a one-click sign-in link."}
       </p>
     </div>

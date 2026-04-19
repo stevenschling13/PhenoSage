@@ -1,15 +1,29 @@
-import type { Metadata } from "next";
+import type { Metadata, Viewport } from "next";
 import { Analytics } from "@vercel/analytics/next";
 import { SpeedInsights } from "@vercel/speed-insights/next";
+import { SkipLink } from "@/components/app-shell/skip-link";
+import { ThemeScript } from "@/components/app-shell/theme-script";
 import "./globals.css";
 
 export const metadata: Metadata = {
   title: {
-    default: "PhenoSage",
-    template: "%s | PhenoSage",
+    default: "PhenoSage — AI Grow Operating System",
+    template: "%s · PhenoSage",
   },
   description:
-    "AI-powered cannabis grow operating system. Professional plant analysis, timeline tracking, proactive alerts, and grow-aware chatbot.",
+    "AI-powered cannabis grow OS. Visual plant analysis, longitudinal tracking, proactive alerts, and a grow-aware copilot.",
+  applicationName: "PhenoSage",
+  authors: [{ name: "PhenoSage" }],
+  formatDetection: { email: false, telephone: false, address: false },
+};
+
+export const viewport: Viewport = {
+  width: "device-width",
+  initialScale: 1,
+  themeColor: [
+    { media: "(prefers-color-scheme: light)", color: "#fafdf9" },
+    { media: "(prefers-color-scheme: dark)", color: "#0f1411" },
+  ],
 };
 
 export default function RootLayout({
@@ -18,8 +32,12 @@ export default function RootLayout({
   children: React.ReactNode;
 }) {
   return (
-    <html lang="en">
-      <body className="min-h-screen bg-background antialiased">
+    <html lang="en" suppressHydrationWarning>
+      <head>
+        <ThemeScript />
+      </head>
+      <body className="min-h-screen bg-background text-foreground antialiased">
+        <SkipLink />
         {children}
         <Analytics />
         <SpeedInsights />

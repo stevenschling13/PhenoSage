@@ -1,61 +1,111 @@
 import type { Metadata } from "next";
-import Link from "next/link";
+import { redirect } from "next/navigation";
+import { AppShell } from "@/components/app-shell/app-shell";
+import { PageHeader } from "@/components/app-shell/page-header";
+import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
+import {
+  Card,
+  CardContent,
+  CardDescription,
+  CardHeader,
+  CardTitle,
+} from "@/components/ui/card";
+import { Container } from "@/components/ui/container";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
+import { getServerUser } from "@/lib/server/auth";
 
 export const metadata: Metadata = { title: "Settings" };
+export const dynamic = "force-dynamic";
 
-export default function SettingsPage() {
+export default async function SettingsPage() {
+  const user = await getServerUser();
+  if (!user) redirect("/auth?next=/settings");
+
   return (
-    <main className="mx-auto max-w-2xl px-6 py-10">
-      <h1 className="mb-8 text-2xl font-bold text-gray-900">Settings</h1>
+    <AppShell user={{ email: user.email ?? user.id }}>
+      <Container width="md" className="space-y-8 py-8 md:py-10">
+        <PageHeader
+          eyebrow="Account"
+          title="Settings"
+          description="Profile, notifications, and account controls."
+        />
 
-      <div className="space-y-6">
-        <section className="rounded-xl border bg-white p-6">
-          <h2 className="mb-4 text-lg font-semibold text-gray-900">Profile</h2>
-          <div className="space-y-3">
-            <div>
-              <label className="block text-sm font-medium text-gray-700">
-                Display name
-              </label>
-              {/* TODO: Wire to Supabase profiles table update */}
-              <input
+        <Card>
+          <CardHeader>
+            <CardTitle>Profile</CardTitle>
+            <CardDescription>How you appear inside PhenoSage.</CardDescription>
+          </CardHeader>
+          <CardContent className="space-y-4">
+            <div className="space-y-1.5">
+              <Label htmlFor="email">Email</Label>
+              <Input
+                id="email"
+                type="email"
+                value={user.email ?? ""}
+                readOnly
+                aria-readonly
+                className="bg-muted/40"
+              />
+              <p className="text-xs text-muted-foreground">
+                Used for login and alerts. Contact support to change.
+              </p>
+            </div>
+            <div className="space-y-1.5">
+              <Label htmlFor="display-name">Display name</Label>
+              <Input
+                id="display-name"
                 type="text"
-                className="mt-1 w-full rounded-lg border border-gray-200 px-3 py-2 text-sm focus:border-brand-400 focus:outline-none"
                 placeholder="Your name"
                 disabled
               />
             </div>
-          </div>
-        </section>
+            <div className="flex justify-end">
+              <Button disabled size="sm">
+                Save changes
+              </Button>
+            </div>
+          </CardContent>
+        </Card>
 
-        <section className="rounded-xl border bg-white p-6">
-          <h2 className="mb-4 text-lg font-semibold text-gray-900">
-            Notifications
-          </h2>
-          <p className="text-sm text-gray-400">
-            {/* TODO: Add notification preferences */}
-            Notification preferences coming in Milestone 2.
-          </p>
-        </section>
+        <Card>
+          <CardHeader>
+            <div className="flex items-center justify-between">
+              <div>
+                <CardTitle>Notifications</CardTitle>
+                <CardDescription>Daily summaries and alerts.</CardDescription>
+              </div>
+              <Badge variant="secondary">Milestone 2</Badge>
+            </div>
+          </CardHeader>
+          <CardContent>
+            <p className="text-sm text-muted-foreground">
+              Notification preferences land with the alerts cron. You&apos;ll be
+              able to choose summary cadence, severity threshold, and quiet
+              hours.
+            </p>
+          </CardContent>
+        </Card>
 
-        <section className="rounded-xl border bg-white p-6">
-          <h2 className="mb-4 text-lg font-semibold text-gray-900 text-red-600">
-            Danger Zone
-          </h2>
-          <p className="text-sm text-gray-400">
-            {/* TODO: Delete account flow */}
-            Account deletion coming soon.
-          </p>
-        </section>
-      </div>
-
-      <div className="mt-8">
-        <Link
-          href="/dashboard"
-          className="text-sm text-gray-500 hover:text-gray-700"
-        >
-          ← Back to dashboard
-        </Link>
-      </div>
-    </main>
+        <Card className="border-destructive/40">
+          <CardHeader>
+            <CardTitle className="text-destructive">Danger zone</CardTitle>
+            <CardDescription>
+              Irreversible actions on your account.
+            </CardDescription>
+          </CardHeader>
+          <CardContent className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+            <p className="text-sm text-muted-foreground">
+              Account deletion will be wired in once it has a confirmation flow
+              with two-factor verification.
+            </p>
+            <Button variant="destructive" size="sm" disabled>
+              Delete account
+            </Button>
+          </CardContent>
+        </Card>
+      </Container>
+    </AppShell>
   );
 }
