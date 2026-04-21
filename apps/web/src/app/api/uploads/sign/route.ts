@@ -37,17 +37,21 @@ export async function POST(request: NextRequest) {
   const storage = getStorageClient();
   const storagePath = `plants/${body.plantId}/${Date.now()}-${body.fileName}`;
 
-  // TODO: Replace with actual Supabase Storage createSignedUploadUrl call
-  // const { data, error } = await storage
-  //   .from("plant-images")
-  //   .createSignedUploadUrl(storagePath);
+  //   // Generate signed upload URL using Supabase Storage
+  const { data, error } = await storage
+    .from("plant-images")
+    .createSignedUploadUrl(storagePath);
 
-  void storage; // placeholder until wired
+  if (error) {
+    return NextResponse.json(
+      { error: error.message ?? "Failed to generate signed URL" },
+      { status: 500 },
+    );
+  }
 
   return NextResponse.json({
     storagePath,
-    // signedUrl: data.signedUrl,
-    // token: data.token,
-    message: "TODO: Wire Supabase Storage signed upload URL",
+    signedUrl: data.signedUrl,
+    token: data.token,
   });
 }
