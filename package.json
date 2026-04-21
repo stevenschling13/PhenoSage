@@ -29,10 +29,10 @@
   },
   "packageManager": "pnpm@9.0.0",
   "devDependencies": {
-    "@commitlint/cli": "^19.6.1",
-    "@commitlint/config-conventional": "^19.6.0",
+    "@commitlint/cli": "^20.5.0",
+    "@commitlint/config-conventional": "^20.5.0",
     "husky": "^9.1.7",
-    "lint-staged": "^15.3.0",
+    "lint-staged": "^16.4.0",
     "prettier": "^3.4.2",
     "turbo": "^2.3.3"
   },
