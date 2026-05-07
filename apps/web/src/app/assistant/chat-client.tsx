@@ -40,6 +40,9 @@ function newId(): string {
   if (cryptoApi?.randomUUID) {
     return cryptoApi.randomUUID();
   }
+  if (!cryptoApi?.getRandomValues) {
+    throw new Error("Web Crypto API unavailable");
+  }
   const values = new Uint32Array(4);
   cryptoApi.getRandomValues(values);
   return Array.from(values, (value) =>

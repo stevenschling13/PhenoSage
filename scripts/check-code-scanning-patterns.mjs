@@ -8,7 +8,7 @@ import { existsSync, readFileSync, readdirSync, statSync } from "node:fs";
 import { join, relative, sep } from "node:path";
 
 const ROOT = new URL("..", import.meta.url).pathname.replace(
-  /^\/([A-Za-z]:)/,
+  /^\/([A-Za-z]:)/i,
   "$1",
 );
 const errors = [];
