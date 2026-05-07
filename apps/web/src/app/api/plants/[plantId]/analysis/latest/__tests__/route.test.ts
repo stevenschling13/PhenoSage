@@ -2,13 +2,14 @@ import { beforeEach, describe, expect, it, vi, type Mock } from "vitest";
 import { NextRequest } from "next/server";
 
 const getServerSession = vi.fn();
-const callAnalysisService = vi.fn();
+const getLatestPlantAnalysis = vi.fn();
 
 vi.mock("@/lib/server/auth", () => ({
   getServerSession: (...args: unknown[]) => getServerSession(...args),
 }));
-vi.mock("@/lib/server/analysis-proxy", () => ({
-  callAnalysisService: (...args: unknown[]) => callAnalysisService(...args),
+vi.mock("@/lib/server/plants", () => ({
+  getLatestPlantAnalysis: (...args: unknown[]) =>
+    getLatestPlantAnalysis(...args),
 }));
 
 import { GET } from "../route";
@@ -24,29 +25,36 @@ function makeParams(plantId: string) {
 describe("GET /api/plants/[plantId]/analysis/latest", () => {
   beforeEach(() => {
     (getServerSession as Mock).mockReset();
-    (callAnalysisService as Mock).mockReset();
-    callAnalysisService.mockResolvedValue({});
+    (getLatestPlantAnalysis as Mock).mockReset();
   });
 
   it("returns 401 when unauthenticated", async () => {
     getServerSession.mockResolvedValue(null);
     const res = await GET(makeRequest(), makeParams("p1"));
     expect(res.status).toBe(401);
-    expect(await res.json()).toEqual({ error: "Unauthorized" });
-    expect(callAnalysisService).not.toHaveBeenCalled();
+    const body = await res.json();
+    expect(body.error).toBe("Unauthorized");
+    expect(getLatestPlantAnalysis).not.toHaveBeenCalled();
   });
 
-  it("returns the plantId in the body and proxies through callAnalysisService", async () => {
+  it("returns plantId and null analysis when none is found", async () => {
     getServerSession.mockResolvedValue({ user: { id: "u1" } });
+    getLatestPlantAnalysis.mockResolvedValue(null);
     const res = await GET(makeRequest(), makeParams("plant-xyz"));
     expect(res.status).toBe(200);
     const body = await res.json();
     expect(body.plantId).toBe("plant-xyz");
     expect(body.analysis).toBeNull();
-    expect(callAnalysisService).toHaveBeenCalledTimes(1);
-    expect(callAnalysisService).toHaveBeenCalledWith({
-      endpoint: "/plants/plant-xyz/analysis/latest",
-      method: "GET",
-    });
+    expect(getLatestPlantAnalysis).toHaveBeenCalledWith("plant-xyz");
+  });
+
+  it("returns the analysis payload when present", async () => {
+    getServerSession.mockResolvedValue({ user: { id: "u1" } });
+    getLatestPlantAnalysis.mockResolvedValue({ score: 0.87 });
+    const res = await GET(makeRequest(), makeParams("plant-xyz"));
+    expect(res.status).toBe(200);
+    const body = await res.json();
+    expect(body.plantId).toBe("plant-xyz");
+    expect(body.analysis).toEqual({ score: 0.87 });
   });
 });

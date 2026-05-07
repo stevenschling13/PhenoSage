@@ -159,6 +159,16 @@ export interface AnalysisResponse {
   comparisonSummary?: string;
   analyzedAt: string; // ISO timestamp
   modelVersion: string;
+  analysisMode?: "fallback" | "model";
+  isFallback?: boolean;
+  fallbackReason?: string;
+  requestId?: string;
+}
+
+export interface PlantAnalysis extends AnalysisResponse {
+  id: string;
+  growId: string;
+  createdAt: string;
 }
 
 // GrowEvent

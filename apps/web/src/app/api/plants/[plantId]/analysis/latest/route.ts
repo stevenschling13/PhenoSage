@@ -1,6 +1,11 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getServerSession } from "@/lib/server/auth";
-import { callAnalysisService } from "@/lib/server/analysis-proxy";
+import { getLatestPlantAnalysis } from "@/lib/server/plants";
+import {
+  attachRequestId,
+  getOrCreateRequestId,
+  logServerEvent,
+} from "@/lib/server/request-id";
 
 interface RouteParams {
   params: Promise<{ plantId: string }>;
@@ -9,29 +14,52 @@ interface RouteParams {
 // GET /api/plants/[plantId]/analysis/latest
 // Returns the most recent AnalysisResponse for a plant.
 // Proxied through Next.js — the browser never calls the analysis service directly.
-export async function GET(
-  request: NextRequest,
-  { params }: RouteParams,
-) {
+export async function GET(request: NextRequest, { params }: RouteParams) {
+  const requestId = getOrCreateRequestId(request);
   const session = await getServerSession();
   if (!session) {
-    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+    return attachRequestId(
+      NextResponse.json({ error: "Unauthorized", requestId }, { status: 401 }),
+      requestId,
+    );
   }
 
   const { plantId } = await params;
 
-  // TODO: Look up the latest plant_image for this plant from DB
-  // TODO: Call analysis service via proxy if a new image is pending
-  // TODO: Return cached PlantFinding rows if analysis already ran
+  try {
+    const analysis = await getLatestPlantAnalysis(plantId);
+    if (!analysis) {
+      return attachRequestId(
+        NextResponse.json(
+          { plantId, analysis: null, requestId },
+          { status: 200 },
+        ),
+        requestId,
+      );
+    }
 
-  void callAnalysisService({
-    endpoint: `/plants/${plantId}/analysis/latest`,
-    method: "GET",
-  });
-
-  return NextResponse.json({
-    plantId,
-    analysis: null,
-    message: "TODO: Wire DB + analysis service proxy",
-  });
+    return attachRequestId(
+      NextResponse.json({ plantId, analysis, requestId }),
+      requestId,
+    );
+  } catch (error) {
+    logServerEvent("error", "latest plant analysis fetch failed", {
+      requestId,
+      plantId,
+      error: error instanceof Error ? error.message : "unknown_error",
+    });
+    return attachRequestId(
+      NextResponse.json(
+        {
+          error:
+            error instanceof Error
+              ? error.message
+              : "Failed to load latest analysis",
+          requestId,
+        },
+        { status: 500 },
+      ),
+      requestId,
+    );
+  }
 }

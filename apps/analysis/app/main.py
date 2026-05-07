@@ -1,11 +1,15 @@
+import logging
+
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from app.config import settings
+from app.middleware import RequestContextMiddleware
 from app.routers.analyze import router as analyze_router
 from app.routers.health import router as health_router
 from app.telemetry import init_all as init_telemetry
 
+logging.basicConfig(level=getattr(logging, settings.log_level.upper(), logging.INFO))
 init_telemetry()
 
 app = FastAPI(
@@ -19,6 +23,7 @@ app = FastAPI(
     docs_url="/docs" if settings.app_env != "production" else None,
     redoc_url=None,
 )
+app.add_middleware(RequestContextMiddleware)
 
 # CORS: only the configured origins (the Vercel app URL in production).
 app.add_middleware(
