@@ -5,14 +5,10 @@
 // in this codebase.
 
 import { existsSync, readFileSync, readdirSync, statSync } from "node:fs";
-import { join, relative, sep } from "node:path";
+import { extname, join, relative, sep } from "node:path";
+import { fileURLToPath } from "node:url";
 
-// fileURLToPath would work too, but this mirrors the repository's existing
-// scripts while preserving Windows drive letters such as /c:/repo.
-const ROOT = new URL("..", import.meta.url).pathname.replace(
-  /^\/([A-Za-z]:)/i,
-  "$1",
-);
+const ROOT = fileURLToPath(new URL("..", import.meta.url));
 const errors = [];
 
 const ignoredDirs = new Set([
@@ -59,11 +55,6 @@ const rules = [
     help: "use spawnSync with an explicit argument array",
   },
 ];
-
-function extname(file) {
-  const idx = file.lastIndexOf(".");
-  return idx === -1 ? "" : file.slice(idx);
-}
 
 function* walk(dir) {
   if (!existsSync(dir)) return;

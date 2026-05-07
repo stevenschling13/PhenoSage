@@ -43,10 +43,10 @@ function newId(): string {
   if (!cryptoApi?.getRandomValues) {
     throw new Error("Web Crypto API unavailable");
   }
-  const values = new Uint32Array(4);
+  const values = new Uint32Array(2);
   cryptoApi.getRandomValues(values);
-  // Four uint32 values provide 128 bits of entropy; base-36 keeps the ID compact
-  // and 7-character padding preserves fixed-width segments for stable rendering.
+  // Two uint32 values provide 64 bits of entropy; base-36 keeps this UI-only ID
+  // compact and 7-character padding preserves fixed-width segments.
   return Array.from(values, (value) =>
     value.toString(36).padStart(7, "0"),
   ).join("");
