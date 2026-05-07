@@ -41,7 +41,9 @@ function newId(): string {
     return cryptoApi.randomUUID();
   }
   if (!cryptoApi?.getRandomValues) {
-    throw new Error("Web Crypto API unavailable");
+    throw new Error(
+      "Browser does not support Web Crypto API secure random generation",
+    );
   }
   const values = new Uint32Array(2);
   cryptoApi.getRandomValues(values);

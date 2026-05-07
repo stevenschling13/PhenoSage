@@ -36,12 +36,12 @@ const sourceExtensions = new Set([
 const rules = [
   {
     name: "inline HTML injection",
-    re: /dangerouslySetInnerHTML/,
+    re: /\bdangerouslySetInnerHTML\b/,
     help: "use a static asset or a typed React component instead",
   },
   {
     name: "insecure randomness",
-    re: /\bMath[.]random\s*\(/,
+    re: /\bMath\.random\s*\(/,
     help: "use Web Crypto or Node crypto",
   },
   {
