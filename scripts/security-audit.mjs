@@ -14,11 +14,20 @@
 import { spawnSync } from "node:child_process";
 
 const steps = [
-  { name: "env-contract", cmd: "pnpm run check:env" },
-  { name: "route-boundaries", cmd: "pnpm run check:routes" },
-  { name: "route-security", cmd: "pnpm run security:routes" },
-  { name: "imports", cmd: "pnpm run check:imports" },
-  { name: "pnpm audit", cmd: "pnpm audit --prod --audit-level=high" },
+  { name: "env-contract", cmd: "pnpm", args: ["run", "check:env"] },
+  { name: "route-boundaries", cmd: "pnpm", args: ["run", "check:routes"] },
+  { name: "route-security", cmd: "pnpm", args: ["run", "security:routes"] },
+  { name: "imports", cmd: "pnpm", args: ["run", "check:imports"] },
+  {
+    name: "code-scanning-patterns",
+    cmd: "pnpm",
+    args: ["run", "check:code-scanning"],
+  },
+  {
+    name: "pnpm audit",
+    cmd: "pnpm",
+    args: ["audit", "--prod", "--audit-level=high"],
+  },
 ];
 
 const results = [];
@@ -26,7 +35,7 @@ let hardFailed = false;
 
 for (const step of steps) {
   const start = Date.now();
-  const r = spawnSync(step.cmd, { shell: true, stdio: "inherit" });
+  const r = spawnSync(step.cmd, step.args, { stdio: "inherit" });
   const ms = Date.now() - start;
   const ok = r.status === 0;
   if (!ok && step.name !== "pnpm audit") hardFailed = true;

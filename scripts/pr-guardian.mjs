@@ -17,7 +17,7 @@
 //   0 — within caps (or override set)
 //   1 — over a cap; prints a table
 
-import { execSync } from "node:child_process";
+import { spawnSync } from "node:child_process";
 
 const BASE = process.env.BASE || "origin/main";
 const LIMIT_FILES = 30;
@@ -29,13 +29,19 @@ if (process.env.GUARDIAN_OVERRIDE === "1") {
   process.exit(0);
 }
 
-function sh(cmd) {
-  return execSync(cmd, { encoding: "utf8" }).trim();
+function gitDiff(args) {
+  const result = spawnSync("git", ["diff", ...args, "--"], {
+    encoding: "utf8",
+  });
+  if (result.status !== 0) {
+    throw new Error(result.stderr || result.stdout || "git diff failed");
+  }
+  return result.stdout.trim();
 }
 
 let numstat;
 try {
-  numstat = sh(`git diff --numstat ${BASE}...HEAD`);
+  numstat = gitDiff(["--numstat", `${BASE}...HEAD`]);
 } catch (err) {
   console.error(`pr-guardian: failed to diff against ${BASE}`);
   console.error(String(err));

@@ -12,7 +12,7 @@
 // Exits 0 (passes) but prints a structured summary. Set STRICT=1 to fail
 // when the boundary count exceeds the soft cap.
 
-import { execSync } from "node:child_process";
+import { spawnSync } from "node:child_process";
 
 const SOFT_FILE_CAP = 20;
 const SOFT_BOUNDARY_CAP = 3;
@@ -24,22 +24,36 @@ const args = Object.fromEntries(
   }),
 );
 
-const baseRef =
-  args.base || process.env.BASE_REF || "origin/main";
+const baseRef = args.base || process.env.BASE_REF || "origin/main";
 
 let diff = "";
+function gitChangedFiles(refArgs) {
+  const result = spawnSync("git", ["diff", "--name-only", ...refArgs, "--"], {
+    encoding: "utf8",
+  });
+  if (result.status !== 0) {
+    throw new Error(result.stderr || result.stdout || "git diff failed");
+  }
+  return result.stdout;
+}
+
 try {
-  diff = execSync(`git diff --name-only ${baseRef}...HEAD`, { encoding: "utf8" });
+  diff = gitChangedFiles([`${baseRef}...HEAD`]);
 } catch {
   try {
-    diff = execSync(`git diff --name-only ${baseRef}`, { encoding: "utf8" });
+    diff = gitChangedFiles([baseRef]);
   } catch {
-    console.log(`(check-changed-scope) Could not diff against ${baseRef}; skipping.`);
+    console.log(
+      `(check-changed-scope) Could not diff against ${baseRef}; skipping.`,
+    );
     process.exit(0);
   }
 }
 
-const files = diff.split("\n").map((s) => s.trim()).filter(Boolean);
+const files = diff
+  .split("\n")
+  .map((s) => s.trim())
+  .filter(Boolean);
 
 const BOUNDARIES = [
   { name: "shared-types", re: /^packages\/shared\// },

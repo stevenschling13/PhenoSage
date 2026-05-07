@@ -36,10 +36,22 @@ const WELCOME: Message = {
 };
 
 function newId(): string {
-  if (typeof crypto !== "undefined" && "randomUUID" in crypto) {
-    return crypto.randomUUID();
+  const cryptoApi = globalThis.crypto;
+  if (cryptoApi?.randomUUID) {
+    return cryptoApi.randomUUID();
   }
-  return Math.random().toString(36).slice(2);
+  if (!cryptoApi?.getRandomValues) {
+    throw new Error(
+      "Browser does not support Web Crypto API secure random generation",
+    );
+  }
+  const values = new Uint32Array(2);
+  cryptoApi.getRandomValues(values);
+  // Two uint32 values provide 64 bits of entropy. Base-36 keeps this UI-only ID
+  // compact; uint32 max is 7 base-36 chars, so padding fixes segment width.
+  return Array.from(values, (value) =>
+    value.toString(36).padStart(7, "0"),
+  ).join("");
 }
 
 export function AssistantChat() {
