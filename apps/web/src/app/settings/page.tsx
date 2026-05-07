@@ -12,9 +12,9 @@ import {
   CardTitle,
 } from "@/components/ui/card";
 import { Container } from "@/components/ui/container";
-import { Input } from "@/components/ui/input";
-import { Label } from "@/components/ui/label";
-import { getServerUser } from "@/lib/server/auth";
+import { createSupabaseServerClient, getServerUser } from "@/lib/server/auth";
+import { ProfileForm } from "./profile-form";
+import { signOutAction } from "@/app/auth/actions";
 
 export const metadata: Metadata = { title: "Settings" };
 export const dynamic = "force-dynamic";
@@ -22,6 +22,15 @@ export const dynamic = "force-dynamic";
 export default async function SettingsPage() {
   const user = await getServerUser();
   if (!user) redirect("/auth?next=/settings");
+
+  const supabase = await createSupabaseServerClient();
+  const { data: profile } = await supabase
+    .from("profiles")
+    .select("display_name")
+    .eq("id", user.id)
+    .maybeSingle();
+
+  const displayName = (profile?.display_name as string | null) ?? "";
 
   return (
     <AppShell user={{ email: user.email ?? user.id }}>
@@ -37,35 +46,11 @@ export default async function SettingsPage() {
             <CardTitle>Profile</CardTitle>
             <CardDescription>How you appear inside PhenoSage.</CardDescription>
           </CardHeader>
-          <CardContent className="space-y-4">
-            <div className="space-y-1.5">
-              <Label htmlFor="email">Email</Label>
-              <Input
-                id="email"
-                type="email"
-                value={user.email ?? ""}
-                readOnly
-                aria-readonly
-                className="bg-muted/40"
-              />
-              <p className="text-xs text-muted-foreground">
-                Used for login and alerts. Contact support to change.
-              </p>
-            </div>
-            <div className="space-y-1.5">
-              <Label htmlFor="display-name">Display name</Label>
-              <Input
-                id="display-name"
-                type="text"
-                placeholder="Your name"
-                disabled
-              />
-            </div>
-            <div className="flex justify-end">
-              <Button disabled size="sm">
-                Save changes
-              </Button>
-            </div>
+          <CardContent>
+            <ProfileForm
+              email={user.email ?? ""}
+              initialDisplayName={displayName}
+            />
           </CardContent>
         </Card>
 
@@ -85,6 +70,20 @@ export default async function SettingsPage() {
               able to choose summary cadence, severity threshold, and quiet
               hours.
             </p>
+          </CardContent>
+        </Card>
+
+        <Card>
+          <CardHeader>
+            <CardTitle>Session</CardTitle>
+            <CardDescription>Sign out of this device.</CardDescription>
+          </CardHeader>
+          <CardContent className="flex justify-end">
+            <form action={signOutAction}>
+              <Button type="submit" variant="outline" size="sm">
+                Sign out
+              </Button>
+            </form>
           </CardContent>
         </Card>
 

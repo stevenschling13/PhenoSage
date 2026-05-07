@@ -24,31 +24,10 @@ import {
   SparklesIcon,
   TrendIcon,
 } from "@/components/ui/icons";
-import { getServerUser } from "@/lib/server/auth";
+import { createSupabaseServerClient, getServerUser } from "@/lib/server/auth";
 
 export const metadata: Metadata = { title: "Dashboard" };
 export const dynamic = "force-dynamic";
-
-const STATS = [
-  {
-    label: "Active grows",
-    value: "—",
-    delta: null,
-    Icon: LeafIcon,
-  },
-  {
-    label: "Plants tracked",
-    value: "—",
-    delta: null,
-    Icon: ImageIcon,
-  },
-  {
-    label: "Health checks (7d)",
-    value: "—",
-    delta: null,
-    Icon: TrendIcon,
-  },
-];
 
 const QUICK_ACTIONS = [
   {
@@ -59,8 +38,8 @@ const QUICK_ACTIONS = [
   },
   {
     href: "/plants",
-    title: "Upload a photo",
-    description: "Trigger a visual analysis on your most recent shot.",
+    title: "Browse plants",
+    description: "See every plant across grows with their latest snapshot.",
     Icon: ImageIcon,
   },
   {
@@ -71,18 +50,77 @@ const QUICK_ACTIONS = [
   },
 ];
 
+function formatNumber(n: number | null): string {
+  if (n === null || Number.isNaN(n)) return "—";
+  return new Intl.NumberFormat().format(n);
+}
+
 export default async function DashboardPage() {
   const user = await getServerUser();
   if (!user) redirect("/auth?next=/dashboard");
 
-  const userEmail = user.email ?? user.id;
+  const supabase = await createSupabaseServerClient();
+
+  const sevenDaysAgo = new Date(
+    Date.now() - 7 * 24 * 60 * 60 * 1000,
+  ).toISOString();
+
+  const [profileRes, growsRes, plantsRes, findingsRes] = await Promise.all([
+    supabase
+      .from("profiles")
+      .select("display_name")
+      .eq("id", user.id)
+      .maybeSingle(),
+    supabase
+      .from("grows")
+      .select("id", { count: "exact", head: true })
+      .eq("is_archived", false),
+    supabase.from("plants").select("id", { count: "exact", head: true }),
+    supabase
+      .from("plant_findings")
+      .select("id", { count: "exact", head: true })
+      .gte("created_at", sevenDaysAgo),
+  ]);
+
+  const displayName = (profileRes.data?.display_name as string | null) ?? null;
+
+  const greetingName =
+    displayName?.trim() ||
+    (user.email ? user.email.split("@")[0] : null) ||
+    "grower";
+
+  const stats: {
+    label: string;
+    value: string;
+    Icon: typeof LeafIcon;
+    subtitle: string;
+  }[] = [
+    {
+      label: "Active grows",
+      value: formatNumber(growsRes.count ?? null),
+      Icon: LeafIcon,
+      subtitle: growsRes.error ? "Couldn't load" : "Not archived",
+    },
+    {
+      label: "Plants tracked",
+      value: formatNumber(plantsRes.count ?? null),
+      Icon: ImageIcon,
+      subtitle: plantsRes.error ? "Couldn't load" : "Across all grows",
+    },
+    {
+      label: "Findings (7d)",
+      value: formatNumber(findingsRes.count ?? null),
+      Icon: TrendIcon,
+      subtitle: findingsRes.error ? "Couldn't load" : "Last 7 days",
+    },
+  ];
 
   return (
-    <AppShell user={{ email: userEmail }}>
+    <AppShell user={{ email: user.email ?? user.id }}>
       <Container width="xl" className="space-y-8 py-8 md:py-10">
         <PageHeader
           eyebrow="Overview"
-          title={`Welcome back${user.email ? `, ${user.email.split("@")[0]}` : ""}`}
+          title={`Welcome back, ${greetingName}`}
           description="Snapshot of your grow operation. Pick up where you left off."
           actions={
             <>
@@ -105,20 +143,19 @@ export default async function DashboardPage() {
           }
         />
 
-        {/* Stats */}
         <section aria-label="Key metrics" className="grid gap-4 sm:grid-cols-3">
-          {STATS.map(({ label, value, Icon }) => (
+          {stats.map(({ label, value, Icon, subtitle }) => (
             <Card key={label}>
               <CardContent className="flex items-start justify-between p-5">
                 <div>
                   <p className="text-xs font-medium uppercase tracking-wider text-muted-foreground">
                     {label}
                   </p>
-                  <p className="mt-2 text-3xl font-semibold tracking-tight text-foreground">
+                  <p className="mt-2 text-3xl font-semibold tracking-tight text-foreground tabular-nums">
                     {value}
                   </p>
                   <p className="mt-1 text-xs text-muted-foreground">
-                    Awaiting first data
+                    {subtitle}
                   </p>
                 </div>
                 <span
@@ -132,7 +169,6 @@ export default async function DashboardPage() {
           ))}
         </section>
 
-        {/* Two-column: activity + quick actions */}
         <div className="grid gap-6 lg:grid-cols-3">
           <Card className="lg:col-span-2">
             <CardHeader>
@@ -175,7 +211,7 @@ export default async function DashboardPage() {
                 <Link
                   key={href}
                   href={href}
-                  className="group flex items-start gap-3 rounded-md border border-transparent p-3 transition-all hover:border-border hover:bg-muted"
+                  className="group flex items-start gap-3 rounded-md border border-transparent p-3 transition-all hover:border-border hover:bg-muted focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
                 >
                   <span
                     aria-hidden="true"
@@ -202,7 +238,6 @@ export default async function DashboardPage() {
           </Card>
         </div>
 
-        {/* Tips */}
         <Card className="border-primary/20 bg-accent/40">
           <CardContent className="flex flex-col items-start gap-4 p-5 sm:flex-row sm:items-center">
             <span

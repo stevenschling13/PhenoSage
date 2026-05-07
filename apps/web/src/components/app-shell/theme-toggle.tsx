@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState, type KeyboardEvent } from "react";
 import { Button } from "@/components/ui/button";
 import { MoonIcon, SunIcon, SystemIcon } from "@/components/ui/icons";
 import { cn } from "@/lib/cn";
@@ -26,9 +26,16 @@ function readTheme(): Theme {
   return saved === "light" || saved === "dark" ? saved : "system";
 }
 
+const OPTIONS: { value: Theme; label: string; Icon: typeof SunIcon }[] = [
+  { value: "light", label: "Light theme", Icon: SunIcon },
+  { value: "system", label: "Match system theme", Icon: SystemIcon },
+  { value: "dark", label: "Dark theme", Icon: MoonIcon },
+];
+
 export function ThemeToggle() {
   const [theme, setTheme] = useState<Theme>("system");
   const [mounted, setMounted] = useState(false);
+  const buttonsRef = useRef<(HTMLButtonElement | null)[]>([]);
 
   useEffect(() => {
     setTheme(readTheme());
@@ -48,7 +55,23 @@ export function ThemeToggle() {
     applyTheme(next);
   }
 
-  // Avoid hydration mismatch — render disabled placeholder on server
+  function onKeyDown(e: KeyboardEvent<HTMLButtonElement>, index: number): void {
+    let nextIndex: number;
+    if (e.key === "ArrowRight" || e.key === "ArrowDown")
+      nextIndex = (index + 1) % OPTIONS.length;
+    else if (e.key === "ArrowLeft" || e.key === "ArrowUp")
+      nextIndex = (index - 1 + OPTIONS.length) % OPTIONS.length;
+    else if (e.key === "Home") nextIndex = 0;
+    else if (e.key === "End") nextIndex = OPTIONS.length - 1;
+    else return;
+
+    e.preventDefault();
+    const option = OPTIONS[nextIndex];
+    if (!option) return;
+    pick(option.value);
+    buttonsRef.current[nextIndex]?.focus();
+  }
+
   if (!mounted) {
     return (
       <div
@@ -58,30 +81,29 @@ export function ThemeToggle() {
     );
   }
 
-  const options: { value: Theme; label: string; Icon: typeof SunIcon }[] = [
-    { value: "light", label: "Light theme", Icon: SunIcon },
-    { value: "system", label: "Match system theme", Icon: SystemIcon },
-    { value: "dark", label: "Dark theme", Icon: MoonIcon },
-  ];
-
   return (
     <div
       role="radiogroup"
       aria-label="Color theme"
       className="inline-flex items-center rounded-md border border-input bg-background p-0.5"
     >
-      {options.map(({ value, label, Icon }) => {
+      {OPTIONS.map(({ value, label, Icon }, index) => {
         const active = theme === value;
         return (
           <Button
             key={value}
+            ref={(el) => {
+              buttonsRef.current[index] = el;
+            }}
             type="button"
             role="radio"
             aria-checked={active}
             aria-label={label}
+            tabIndex={active ? 0 : -1}
             variant="ghost"
             size="sm"
             onClick={() => pick(value)}
+            onKeyDown={(e) => onKeyDown(e, index)}
             className={cn(
               "h-8 w-8 p-0",
               active && "bg-accent text-accent-foreground",
