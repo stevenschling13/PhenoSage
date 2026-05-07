@@ -7,6 +7,8 @@
 import { existsSync, readFileSync, readdirSync, statSync } from "node:fs";
 import { join, relative, sep } from "node:path";
 
+// fileURLToPath would work too, but this mirrors the repository's existing
+// scripts while preserving Windows drive letters such as /c:/repo.
 const ROOT = new URL("..", import.meta.url).pathname.replace(
   /^\/([A-Za-z]:)/i,
   "$1",
@@ -24,6 +26,7 @@ const ignoredDirs = new Set([
   "test-results",
 ]);
 
+// This script contains the blocked patterns as data, so it must not scan itself.
 const ignoredFiles = new Set(["scripts/check-code-scanning-patterns.mjs"]);
 const sourceExtensions = new Set([
   ".js",
@@ -37,7 +40,7 @@ const sourceExtensions = new Set([
 const rules = [
   {
     name: "inline HTML injection",
-    re: new RegExp("dangerouslySet" + "InnerHTML"),
+    re: /dangerouslySetInnerHTML/,
     help: "use a static asset or a typed React component instead",
   },
   {

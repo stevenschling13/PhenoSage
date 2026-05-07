@@ -45,6 +45,8 @@ function newId(): string {
   }
   const values = new Uint32Array(4);
   cryptoApi.getRandomValues(values);
+  // Four uint32 values provide 128 bits of entropy; base-36 keeps the ID compact
+  // and 7-character padding preserves fixed-width segments for stable rendering.
   return Array.from(values, (value) =>
     value.toString(36).padStart(7, "0"),
   ).join("");
