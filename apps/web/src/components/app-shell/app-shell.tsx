@@ -1,6 +1,7 @@
 import Link from "next/link";
 import type { ReactNode } from "react";
 import { LeafIcon } from "@/components/ui/icons";
+import { HealthIndicator } from "./health-indicator";
 import { MobileBottomNav, SidebarNav } from "./nav";
 import { ThemeToggle } from "./theme-toggle";
 import { UserMenu } from "./user-menu";
@@ -58,6 +59,7 @@ export function AppShell({ user, children }: AppShellProps) {
               <span>PhenoSage</span>
             </Link>
             <div className="flex flex-1 items-center justify-end gap-3">
+              <HealthIndicator />
               <ThemeToggle />
               <UserMenu email={user.email} />
             </div>

@@ -89,17 +89,21 @@ export function MobileBottomNav() {
                 aria-current={active ? "page" : undefined}
                 aria-label={label}
                 className={cn(
-                  "flex h-14 flex-col items-center justify-center gap-0.5 text-[11px]",
+                  "flex h-14 flex-col items-center justify-center gap-0.5 text-[11px] transition-colors",
+                  "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring",
                   active
                     ? "text-primary"
                     : "text-muted-foreground active:text-foreground",
                 )}
               >
-                <Icon
-                  width={20}
-                  height={20}
-                  className={cn(active && "drop-shadow")}
-                />
+                <span
+                  className={cn(
+                    "flex h-7 w-12 items-center justify-center rounded-full transition-colors",
+                    active && "bg-accent",
+                  )}
+                >
+                  <Icon width={20} height={20} />
+                </span>
                 <span className="leading-none">{label}</span>
               </Link>
             </li>

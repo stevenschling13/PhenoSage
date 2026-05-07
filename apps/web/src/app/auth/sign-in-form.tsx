@@ -1,6 +1,6 @@
 "use client";
 
-import { useActionState, useState } from "react";
+import { useActionState, useRef, useState, type KeyboardEvent } from "react";
 import { useFormStatus } from "react-dom";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -95,6 +95,11 @@ export function SignInForm({
   initialError?: string | undefined;
 }) {
   const [mode, setMode] = useState<Mode>("sign-in");
+  const tabRefs = useRef<Record<Mode, HTMLButtonElement | null>>({
+    "sign-in": null,
+    "sign-up": null,
+    "magic-link": null,
+  });
 
   const [signInState, signInFormAction] = useActionState<
     AuthFormState,
@@ -112,6 +117,21 @@ export function SignInForm({
   const tabId = (id: Mode) => `auth-tab-${id}`;
   const panelId = (id: Mode) => `auth-panel-${id}`;
 
+  function onTabKeyDown(e: KeyboardEvent<HTMLButtonElement>, index: number) {
+    let nextIndex = index;
+    if (e.key === "ArrowRight") nextIndex = (index + 1) % TABS.length;
+    else if (e.key === "ArrowLeft")
+      nextIndex = (index - 1 + TABS.length) % TABS.length;
+    else if (e.key === "Home") nextIndex = 0;
+    else if (e.key === "End") nextIndex = TABS.length - 1;
+    else return;
+    e.preventDefault();
+    const next = TABS[nextIndex];
+    if (!next) return;
+    setMode(next.id);
+    tabRefs.current[next.id]?.focus();
+  }
+
   return (
     <div className="space-y-5">
       <div
@@ -119,18 +139,22 @@ export function SignInForm({
         aria-label="Authentication method"
         className="flex rounded-md border border-border bg-muted/50 p-1"
       >
-        {TABS.map((tab) => {
+        {TABS.map((tab, index) => {
           const active = mode === tab.id;
           return (
             <button
               key={tab.id}
               id={tabId(tab.id)}
+              ref={(el) => {
+                tabRefs.current[tab.id] = el;
+              }}
               role="tab"
               type="button"
               aria-selected={active}
               aria-controls={panelId(tab.id)}
               tabIndex={active ? 0 : -1}
               onClick={() => setMode(tab.id)}
+              onKeyDown={(e) => onTabKeyDown(e, index)}
               className={cn(
                 "flex-1 rounded-sm px-3 py-1.5 text-sm font-medium transition-colors",
                 "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-1 focus-visible:ring-offset-background",
