@@ -19,7 +19,17 @@
 
 import { spawnSync } from "node:child_process";
 
-const BASE = process.env.BASE || "origin/main";
+const RAW_BASE = process.env.BASE || "origin/main";
+// Restrict BASE to ref-like characters so it can never be misinterpreted as
+// additional git arguments or shell metacharacters. Mirrors git's own
+// check-ref-format rules conservatively (alnum, dash, underscore, dot, slash).
+if (!/^[A-Za-z0-9._/-]+$/.test(RAW_BASE)) {
+  console.error(
+    `pr-guardian: refusing to use BASE=${JSON.stringify(RAW_BASE)} — must match /^[A-Za-z0-9._/-]+$/`,
+  );
+  process.exit(1);
+}
+const BASE = RAW_BASE;
 const LIMIT_FILES = 30;
 const LIMIT_TOTAL = 1500;
 const LIMIT_FILE = 500;
