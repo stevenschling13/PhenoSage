@@ -50,6 +50,13 @@ jobs:
 
       - name: Run smoke tests
         shell: pwsh
+        env:
+          # Optional: Vercel "Protection Bypass for Automation" token. When set,
+          # the smoke script sends `x-vercel-protection-bypass` so it can reach
+          # the real app behind Deployment Protection / SSO. Safe to leave unset:
+          # the script will then auto-skip public-page checks under SSO instead
+          # of failing (and noisily creating duplicate issues every deploy).
+          VERCEL_PROTECTION_BYPASS: ${{ secrets.VERCEL_PROTECTION_BYPASS }}
         run: pwsh scripts/smoke-test-prod.ps1 -Base "${{ steps.target.outputs.url }}"
 
       - name: Open issue on failure
