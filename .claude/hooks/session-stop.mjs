@@ -4,6 +4,5 @@
 
 import { spawnSync } from "node:child_process";
 
-const cmd = "pnpm run validate";
-const r = spawnSync(cmd, { shell: true, stdio: "inherit" });
+const r = spawnSync("pnpm", ["run", "validate"], { stdio: "inherit" });
 process.exit(r.status ?? 0);

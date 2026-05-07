@@ -16,15 +16,16 @@
     "check:env": "node scripts/check-env-contract.mjs",
     "check:routes": "node scripts/check-route-boundaries.mjs",
     "check:imports": "node scripts/check-imports.mjs",
+    "check:code-scanning": "node scripts/check-code-scanning-patterns.mjs",
     "check:scope": "node scripts/check-changed-scope.mjs",
     "security:routes": "node scripts/check-route-security.mjs",
     "security:audit": "node scripts/security-audit.mjs",
     "pr:guardian": "node scripts/pr-guardian.mjs",
-    "validate": "pnpm run check:env && pnpm run check:routes && pnpm run check:imports",
+    "validate": "pnpm run check:env && pnpm run check:routes && pnpm run check:imports && pnpm run check:code-scanning",
     "prepare": "husky"
   },
   "engines": {
-        "node": ">=20",
+    "node": ">=20",
     "pnpm": ">=9"
   },
   "packageManager": "pnpm@9.0.0",

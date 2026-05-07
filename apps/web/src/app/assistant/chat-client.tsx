@@ -36,10 +36,15 @@ const WELCOME: Message = {
 };
 
 function newId(): string {
-  if (typeof crypto !== "undefined" && "randomUUID" in crypto) {
-    return crypto.randomUUID();
+  const cryptoApi = globalThis.crypto;
+  if (cryptoApi?.randomUUID) {
+    return cryptoApi.randomUUID();
   }
-  return Math.random().toString(36).slice(2);
+  const values = new Uint32Array(4);
+  cryptoApi.getRandomValues(values);
+  return Array.from(values, (value) =>
+    value.toString(36).padStart(7, "0"),
+  ).join("");
 }
 
 export function AssistantChat() {
