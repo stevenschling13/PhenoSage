@@ -5,11 +5,13 @@ import { GET } from "../route";
 const ORIGINAL_ENV = process.env;
 
 function request(authorization?: string): NextRequest {
+  const init: RequestInit = {};
+  if (authorization) {
+    init.headers = { authorization };
+  }
   return new Request(
     "https://app.example.com/api/internal/cron/daily-summary",
-    {
-      headers: authorization ? { authorization } : undefined,
-    },
+    init,
   ) as NextRequest;
 }
 
