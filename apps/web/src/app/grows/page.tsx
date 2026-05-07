@@ -72,6 +72,9 @@ export default async function GrowsPage() {
     .eq("is_archived", false)
     .order("created_at", { ascending: false });
 
+  if (error) {
+    console.error("[grows] list query failed", error);
+  }
   const rows = ((grows ?? []) as GrowRow[]) ?? [];
 
   return (
@@ -90,7 +93,7 @@ export default async function GrowsPage() {
             role="alert"
             className="rounded-md border border-destructive/30 bg-destructive/10 px-3 py-2 text-sm text-destructive"
           >
-            Couldn&apos;t load grows: {error.message}
+            Couldn&apos;t load grows. Refresh to try again.
           </div>
         )}
 

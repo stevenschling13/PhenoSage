@@ -3,34 +3,36 @@
 import { useServiceHealth, type HealthStatus } from "@/hooks/useServiceHealth";
 import { cn } from "@/lib/cn";
 
+// Labels reflect what `/api/ready` actually checks (env config + auth wiring).
+// They do not measure live upstream availability.
 const TONE: Record<HealthStatus, { dot: string; label: string; ring: string }> =
   {
     ok: {
       dot: "bg-success",
-      label: "All systems normal",
+      label: "Web app ready (config + auth checks pass)",
       ring: "ring-success/30",
     },
     degraded: {
       dot: "bg-warning",
-      label: "Partial degradation",
+      label: "Web app reports a readiness check failure",
       ring: "ring-warning/30",
     },
     down: {
       dot: "bg-destructive",
-      label: "Service unavailable",
+      label: "Readiness endpoint unreachable",
       ring: "ring-destructive/30",
     },
     loading: {
       dot: "bg-muted-foreground/40",
-      label: "Checking service health…",
+      label: "Checking readiness…",
       ring: "ring-muted/30",
     },
   };
 
 const SHORT: Record<HealthStatus, string> = {
-  ok: "Online",
-  degraded: "Degraded",
-  down: "Offline",
+  ok: "Ready",
+  degraded: "Not ready",
+  down: "Unreachable",
   loading: "Checking",
 };
 

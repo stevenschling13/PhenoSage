@@ -28,6 +28,10 @@ function formatBytes(bytes: number): string {
   return `${(bytes / 1024 / 1024).toFixed(1)} MB`;
 }
 
+// HEIC is accepted for upload, but only Safari can render it in <img>.
+// We hide the preview thumbnail for HEIC and show a labeled placeholder.
+const PREVIEWABLE = ["image/jpeg", "image/png", "image/webp"];
+
 export function UploadCard({ plantId }: { plantId: string }) {
   const [file, setFile] = useState<File | null>(null);
   const [previewUrl, setPreviewUrl] = useState<string | null>(null);
@@ -35,8 +39,10 @@ export function UploadCard({ plantId }: { plantId: string }) {
   const [status, setStatus] = useState<Status>({ kind: "idle" });
   const inputRef = useRef<HTMLInputElement | null>(null);
 
+  const canPreview = file != null && PREVIEWABLE.includes(file.type);
+
   useEffect(() => {
-    if (!file) {
+    if (!file || !PREVIEWABLE.includes(file.type)) {
       setPreviewUrl(null);
       return;
     }
@@ -60,6 +66,10 @@ export function UploadCard({ plantId }: { plantId: string }) {
       if (!picked) return;
       const error = validate(picked);
       if (error) {
+        // Discard any previously-staged file so the next click of Upload
+        // can't accidentally send the old one.
+        setFile(null);
+        if (inputRef.current) inputRef.current.value = "";
         setStatus({ kind: "error", message: error });
         return;
       }
@@ -194,7 +204,7 @@ export function UploadCard({ plantId }: { plantId: string }) {
         </div>
       ) : (
         <div className="space-y-3">
-          {previewUrl && (
+          {canPreview && previewUrl ? (
             <div className="overflow-hidden rounded-md border border-border bg-muted/30">
               {/* eslint-disable-next-line @next/next/no-img-element */}
               <img
@@ -202,6 +212,20 @@ export function UploadCard({ plantId }: { plantId: string }) {
                 alt={file.name}
                 className="h-44 w-full object-cover"
               />
+            </div>
+          ) : (
+            <div className="flex h-44 flex-col items-center justify-center gap-1 rounded-md border border-border bg-muted/30 text-center">
+              <UploadIcon
+                width={22}
+                height={22}
+                className="text-muted-foreground"
+              />
+              <p className="text-xs font-medium text-foreground">
+                HEIC selected
+              </p>
+              <p className="text-[11px] text-muted-foreground">
+                Preview not supported in this browser. Upload still works.
+              </p>
             </div>
           )}
           <div className="flex items-center justify-between gap-2 text-xs text-muted-foreground">

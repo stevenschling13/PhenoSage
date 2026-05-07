@@ -41,13 +41,20 @@ export default async function PlantPage({ params }: Props) {
   const { plantId } = await params;
 
   const supabase = await createSupabaseServerClient();
-  const { data: plant } = await supabase
+  const { data: plant, error } = await supabase
     .from("plants")
     .select("id, name, strain, batch_label, notes, grow_id, grows(name)")
     .eq("id", plantId)
     .maybeSingle();
 
-  // RLS will return null if the user can't access this plant.
+  if (error) {
+    // Surface a real DB/network failure to the nearest error boundary
+    // rather than silently rendering a 404.
+    console.error("[plants/[plantId]] plant load failed", error);
+    throw new Error("Failed to load plant.");
+  }
+
+  // RLS returns null when the row is absent or the user can't access it.
   if (!plant) notFound();
 
   const row = plant as unknown as PlantRow;

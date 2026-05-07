@@ -56,7 +56,7 @@ export function ThemeToggle() {
   }
 
   function onKeyDown(e: KeyboardEvent<HTMLButtonElement>, index: number): void {
-    let nextIndex = index;
+    let nextIndex: number;
     if (e.key === "ArrowRight" || e.key === "ArrowDown")
       nextIndex = (index + 1) % OPTIONS.length;
     else if (e.key === "ArrowLeft" || e.key === "ArrowUp")

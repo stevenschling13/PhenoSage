@@ -51,7 +51,13 @@ export async function createGrowAction(
     .from("grows")
     .insert({ owner_id: user.id, name, stage });
 
-  if (error) return { ok: false, message: error.message };
+  if (error) {
+    console.error("[grows.create] insert failed", error);
+    return {
+      ok: false,
+      message: "Couldn't create the grow. Please try again.",
+    };
+  }
 
   revalidatePath("/grows");
   revalidatePath("/dashboard");

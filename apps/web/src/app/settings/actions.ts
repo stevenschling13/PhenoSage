@@ -31,19 +31,21 @@ export async function updateProfileAction(
     return { ok: false, message: "You're not signed in." };
   }
 
-  const { error } = await supabase
-    .from("profiles")
-    .upsert(
-      {
-        id: user.id,
-        display_name: displayName,
-        updated_at: new Date().toISOString(),
-      },
-      { onConflict: "id" },
-    );
+  const { error } = await supabase.from("profiles").upsert(
+    {
+      id: user.id,
+      display_name: displayName,
+      updated_at: new Date().toISOString(),
+    },
+    { onConflict: "id" },
+  );
 
   if (error) {
-    return { ok: false, message: error.message };
+    console.error("[settings.updateProfile] upsert failed", error);
+    return {
+      ok: false,
+      message: "Couldn't save your profile. Please try again.",
+    };
   }
 
   revalidatePath("/settings");

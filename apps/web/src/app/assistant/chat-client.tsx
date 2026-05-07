@@ -72,76 +72,82 @@ export function AssistantChat() {
     return () => abortRef.current?.abort();
   }, []);
 
-  const send = useCallback(
-    async (text: string) => {
-      const trimmed = text.trim();
-      if (!trimmed || streaming) return;
-      setError(null);
+  const send = useCallback(async (text: string) => {
+    const trimmed = text.trim();
+    if (!trimmed) return;
+    // Ref-based guard: state-based `streaming` updates async, so rapid clicks
+    // could otherwise enqueue concurrent streams.
+    if (abortRef.current) return;
+    setError(null);
 
-      const userMsg: Message = { id: newId(), role: "user", content: trimmed };
-      const assistantId = newId();
-      setMessages((m) => [
-        ...m,
-        userMsg,
-        { id: assistantId, role: "assistant", content: "" },
-      ]);
-      setInput("");
-      setStreaming(true);
+    const userMsg: Message = { id: newId(), role: "user", content: trimmed };
+    const assistantId = newId();
+    setMessages((m) => [
+      ...m,
+      userMsg,
+      { id: assistantId, role: "assistant", content: "" },
+    ]);
+    setInput("");
+    setStreaming(true);
 
-      const controller = new AbortController();
-      abortRef.current = controller;
+    const controller = new AbortController();
+    abortRef.current = controller;
 
-      try {
-        const res = await fetch("/api/chat", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ message: trimmed }),
-          signal: controller.signal,
-        });
+    try {
+      const res = await fetch("/api/chat", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ message: trimmed }),
+        signal: controller.signal,
+      });
 
-        if (!res.ok || !res.body) {
-          let detail = `Request failed with ${res.status}.`;
-          try {
-            const data = (await res.json()) as { error?: string };
-            if (data?.error) detail = data.error;
-          } catch {
-            /* ignore */
-          }
-          throw new Error(detail);
+      if (!res.ok || !res.body) {
+        let detail = `Request failed with ${res.status}.`;
+        try {
+          const data = (await res.json()) as { error?: string };
+          if (data?.error) detail = data.error;
+        } catch {
+          /* ignore */
         }
+        throw new Error(detail);
+      }
 
-        const reader = res.body.getReader();
-        const decoder = new TextDecoder();
-        let buffer = "";
+      const reader = res.body.getReader();
+      const decoder = new TextDecoder();
+      let buffer = "";
 
-        // eslint-disable-next-line no-constant-condition
-        while (true) {
-          const { value, done } = await reader.read();
-          if (done) break;
-          buffer += decoder.decode(value, { stream: true });
+      for (;;) {
+        const { value, done } = await reader.read();
+        const chunk = decoder.decode(value, { stream: !done });
+        if (chunk) {
+          buffer += chunk;
           setMessages((prev) =>
             prev.map((m) =>
               m.id === assistantId ? { ...m, content: buffer } : m,
             ),
           );
         }
-      } catch (err) {
-        const message =
-          err instanceof Error && err.name !== "AbortError"
-            ? err.message
-            : null;
-        if (message) {
-          setError(message);
-          // Drop the empty assistant placeholder if no content streamed.
-          setMessages((prev) => prev.filter((m) => m.id !== assistantId));
-        }
-      } finally {
-        setStreaming(false);
-        abortRef.current = null;
+        if (done) break;
       }
-    },
-    [streaming],
-  );
+    } catch (err) {
+      const aborted = err instanceof Error && err.name === "AbortError";
+      const message = aborted
+        ? null
+        : err instanceof Error
+          ? err.message
+          : "Something went wrong.";
+      if (message) setError(message);
+      // Always drop an empty placeholder — whether the user stopped early or
+      // the request errored before any content streamed. Preserve partial
+      // replies the user already saw.
+      setMessages((prev) =>
+        prev.filter((m) => m.id !== assistantId || m.content.length > 0),
+      );
+    } finally {
+      setStreaming(false);
+      abortRef.current = null;
+    }
+  }, []);
 
   const onSubmit = (e: FormEvent<HTMLFormElement>) => {
     e.preventDefault();

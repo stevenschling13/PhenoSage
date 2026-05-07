@@ -50,6 +50,10 @@ export default async function PlantsIndexPage({ searchParams }: Props) {
 
   const { data, error } = await query;
 
+  if (error) {
+    console.error("[plants] list query failed", error);
+  }
+
   // Supabase returns the joined relation as an object when there's one parent.
   const plants: PlantRow[] = ((data ?? []) as unknown as PlantRow[]) ?? [];
 
@@ -76,7 +80,7 @@ export default async function PlantsIndexPage({ searchParams }: Props) {
             role="alert"
             className="rounded-md border border-destructive/30 bg-destructive/10 px-3 py-2 text-sm text-destructive"
           >
-            Couldn&apos;t load plants: {error.message}
+            Couldn&apos;t load plants. Refresh to try again.
           </div>
         )}
 
