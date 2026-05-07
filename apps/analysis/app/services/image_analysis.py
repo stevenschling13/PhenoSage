@@ -4,12 +4,10 @@ from __future__ import annotations
 
 import json
 import logging
+import re
 from datetime import UTC, datetime
 from typing import Any
 
-from openai import AsyncOpenAI
-
-from app.config import settings
 from app.models.analysis import (
     AnalysisFinding,
     AnalyzeRequest,
@@ -17,7 +15,7 @@ from app.models.analysis import (
     FindingCategory,
     FindingSeverity,
 )
-from app.services.image_comparison import compare_images
+from app.services.openai_client import AnalysisError, get_openai_client
 from app.services.prompts import SYSTEM_PROMPT, build_analysis_prompt
 from app.services.scoring import compute_health_score
 from app.services.storage import (
@@ -33,21 +31,9 @@ MODEL_NAME = "gpt-4o"
 MODEL_VERSION = "gpt-4o-2024-08-06"
 FALLBACK_MODEL_VERSION = "phenosage-fallback-0.1"
 
+__all__ = ["AnalysisError", "get_openai_client", "run_analysis"]
 
-class AnalysisError(RuntimeError):
-    """Raised when the analysis pipeline cannot produce a structured response."""
-
-
-_client: AsyncOpenAI | None = None
-
-
-def get_openai_client() -> AsyncOpenAI:
-    global _client
-    if _client is None:
-        if not settings.openai_api_key:
-            raise AnalysisError("OPENAI_API_KEY not configured")
-        _client = AsyncOpenAI(api_key=settings.openai_api_key)
-    return _client
+_JSON_FENCE_RE = re.compile(r"^\s*```(?:json)?\s*(.*?)\s*```\s*$", re.DOTALL)
 
 
 async def run_analysis(request: AnalyzeRequest) -> AnalyzeResponse:
@@ -85,6 +71,10 @@ async def run_analysis(request: AnalyzeRequest) -> AnalyzeResponse:
 
     comparison_summary: str | None = None
     if request.previous_image_id and request.previous_storage_path:
+        # Lazy import: image_comparison depends on helpers from this module in
+        # older revisions; importing at call time keeps the module graph acyclic.
+        from app.services.image_comparison import compare_images
+
         try:
             text = await compare_images(
                 request.image_id,
@@ -140,8 +130,15 @@ async def _call_vision(data_url: str, user_prompt: str) -> dict[str, Any]:
     if not content:
         raise AnalysisError("OpenAI returned an empty response")
 
+    # Defensive: some models still wrap JSON in ```json fences even when the
+    # response_format is set to json_object. Strip them before parsing.
+    stripped = content.strip()
+    fence_match = _JSON_FENCE_RE.match(stripped)
+    if fence_match:
+        stripped = fence_match.group(1).strip()
+
     try:
-        parsed = json.loads(content)
+        parsed = json.loads(stripped)
     except json.JSONDecodeError as exc:
         raise AnalysisError(f"OpenAI response was not valid JSON: {exc}") from exc
 

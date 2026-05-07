@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import logging
 
+from app.services.openai_client import AnalysisError, get_openai_client
 from app.services.storage import (
     StorageFetchError,
     fetch_image_bytes,
@@ -33,10 +34,6 @@ async def compare_images(
     Falls back to a neutral message if either image cannot be fetched or the
     Vision call fails.
     """
-    # Import lazily so the main analysis path isn't held up if this module is
-    # only used occasionally; also avoids a circular import with image_analysis.
-    from app.services.image_analysis import AnalysisError, get_openai_client
-
     try:
         current = await fetch_image_bytes(storage_path_a)
         previous = await fetch_image_bytes(storage_path_b)
