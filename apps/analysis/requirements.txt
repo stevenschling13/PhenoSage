@@ -3,7 +3,7 @@ uvicorn[standard]==0.30.1
 pydantic==2.13.4
 pydantic-settings==2.14.0
 httpx==0.28.1
-python-multipart==0.0.26
+python-multipart==0.0.27
 openai==2.36.0
 
 # Linting & type checking (dev)
