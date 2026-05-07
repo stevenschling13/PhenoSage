@@ -14,6 +14,7 @@
     "format": "prettier --write .",
     "format:check": "prettier --check .",
     "check:env": "node scripts/check-env-contract.mjs",
+    "check:ready": "node scripts/check-runtime-readiness.mjs",
     "check:routes": "node scripts/check-route-boundaries.mjs",
     "check:imports": "node scripts/check-imports.mjs",
     "check:code-scanning": "node scripts/check-code-scanning-patterns.mjs",

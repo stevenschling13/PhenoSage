@@ -52,3 +52,8 @@ htmlcov/
 *.tsbuildinfo
 .turbo/
 .env*.local
+
+# Playwright + IDE
+playwright-report
+test-results
+.cursor

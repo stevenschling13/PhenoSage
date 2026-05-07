@@ -93,9 +93,10 @@ create trigger trg_grow_events_audit
 alter table plants
   add constraint unique_plant_name_per_grow unique(grow_id, name);
 
--- Prevent duplicate display names across profiles (partial: only when set).
-alter table profiles
-  add constraint unique_display_name unique(display_name) where display_name is not null;
+-- Prevent duplicate display names across profiles only when a name is set.
+create unique index if not exists idx_profiles_display_name_unique
+  on profiles(display_name)
+  where display_name is not null;
 
 -- ─── 5. Soft Delete Enforcement (RLS) ────────────────────────────────────────
 -- Archived grows and plants are excluded from default SELECT policies.

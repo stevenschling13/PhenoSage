@@ -1,22 +1,24 @@
-import {
-  afterEach,
-  beforeEach,
-  describe,
-  expect,
-  it,
-  vi,
-  type Mock,
-} from "vitest";
+import { beforeEach, describe, expect, it, vi, type Mock } from "vitest";
 import { NextRequest } from "next/server";
 
 const getServerSession = vi.fn();
-const getStorageClient = vi.fn();
+const getServerUser = vi.fn();
+const preparePlantImageUpload = vi.fn();
+const rateLimit = vi.fn();
+const rateLimitKeyFromRequest = vi.fn();
 
 vi.mock("@/lib/server/auth", () => ({
   getServerSession: (...args: unknown[]) => getServerSession(...args),
+  getServerUser: (...args: unknown[]) => getServerUser(...args),
 }));
-vi.mock("@/lib/server/storage", () => ({
-  getStorageClient: (...args: unknown[]) => getStorageClient(...args),
+vi.mock("@/lib/server/plants", () => ({
+  preparePlantImageUpload: (...args: unknown[]) =>
+    preparePlantImageUpload(...args),
+}));
+vi.mock("@/lib/server/rate-limit", () => ({
+  rateLimit: (...args: unknown[]) => rateLimit(...args),
+  rateLimitKeyFromRequest: (...args: unknown[]) =>
+    rateLimitKeyFromRequest(...args),
 }));
 
 import { POST } from "../route";
@@ -34,12 +36,20 @@ const SESSION_OK = { user: { id: "u1" } } as const;
 describe("POST /api/uploads/sign", () => {
   beforeEach(() => {
     (getServerSession as Mock).mockReset();
-    (getStorageClient as Mock).mockReset();
-    getStorageClient.mockReturnValue({ __storage: true });
-  });
-
-  afterEach(() => {
-    vi.useRealTimers();
+    (getServerUser as Mock).mockReset();
+    (preparePlantImageUpload as Mock).mockReset();
+    (rateLimit as Mock).mockReset();
+    (rateLimitKeyFromRequest as Mock).mockReset();
+    rateLimit.mockReturnValue({ ok: true });
+    rateLimitKeyFromRequest.mockReturnValue("k");
+    getServerUser.mockResolvedValue({ id: "u1" });
+    preparePlantImageUpload.mockImplementation(
+      async ({ plantId, fileName }: { plantId: string; fileName: string }) => ({
+        storagePath: `plants/${plantId}/${Date.now()}-${fileName}`,
+        signedUrl: "https://example.com/upload",
+        token: "signed-token",
+      }),
+    );
   });
 
   it("returns 401 when no session is present", async () => {
@@ -52,8 +62,8 @@ describe("POST /api/uploads/sign", () => {
       }),
     );
     expect(res.status).toBe(401);
-    expect(await res.json()).toEqual({ error: "Unauthorized" });
-    expect(getStorageClient).not.toHaveBeenCalled();
+    expect((await res.json()).error).toBe("Unauthorized");
+    expect(preparePlantImageUpload).not.toHaveBeenCalled();
   });
 
   it.each([
@@ -64,8 +74,7 @@ describe("POST /api/uploads/sign", () => {
     getServerSession.mockResolvedValue(SESSION_OK);
     const res = await POST(jsonRequest(body));
     expect(res.status).toBe(400);
-    const json = await res.json();
-    expect(json.error).toMatch(/required/);
+    expect((await res.json()).error).toMatch(/required/);
   });
 
   it("returns 415 for an unsupported content type", async () => {
@@ -78,14 +87,13 @@ describe("POST /api/uploads/sign", () => {
       }),
     );
     expect(res.status).toBe(415);
-    expect(await res.json()).toEqual({ error: "Unsupported content type" });
+    expect((await res.json()).error).toBe("Unsupported content type");
   });
 
   it.each(["image/jpeg", "image/png", "image/webp", "image/heic"])(
     "accepts content type %s",
     async (contentType) => {
       getServerSession.mockResolvedValue(SESSION_OK);
-      vi.useFakeTimers().setSystemTime(new Date("2026-04-01T00:00:00Z"));
       const res = await POST(
         jsonRequest({
           plantId: "plant-xyz",
@@ -96,12 +104,13 @@ describe("POST /api/uploads/sign", () => {
       expect(res.status).toBe(200);
       const body = await res.json();
       expect(body.storagePath).toMatch(/^plants\/plant-xyz\/\d+-leaf\.jpg$/);
-      expect(getStorageClient).toHaveBeenCalled();
+      expect(preparePlantImageUpload).toHaveBeenCalled();
     },
   );
 
-  it("derives a storage path scoped to the plantId", async () => {
+  it("returns 429 when rate-limited", async () => {
     getServerSession.mockResolvedValue(SESSION_OK);
+    rateLimit.mockReturnValue({ ok: false });
     const res = await POST(
       jsonRequest({
         plantId: "p1",
@@ -109,8 +118,19 @@ describe("POST /api/uploads/sign", () => {
         contentType: "image/png",
       }),
     );
-    const body = await res.json();
-    expect(body.storagePath.startsWith("plants/p1/")).toBe(true);
-    expect(body.storagePath.endsWith("-shot.png")).toBe(true);
+    expect(res.status).toBe(429);
+  });
+
+  it("returns 404 when prepare returns null", async () => {
+    getServerSession.mockResolvedValue(SESSION_OK);
+    preparePlantImageUpload.mockResolvedValueOnce(null);
+    const res = await POST(
+      jsonRequest({
+        plantId: "missing",
+        fileName: "shot.png",
+        contentType: "image/png",
+      }),
+    );
+    expect(res.status).toBe(404);
   });
 });

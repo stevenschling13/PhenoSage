@@ -45,7 +45,7 @@ describe("analysis-proxy", () => {
     expect(url).toBe("https://analysis.example.com/status");
     expect(init.method).toBe("GET");
     expect(init.body).toBeUndefined();
-    expect((init.headers as Record<string, string>).Authorization).toBe(
+    expect(new Headers(init.headers).get("Authorization")).toBe(
       "Bearer test-key",
     );
   });

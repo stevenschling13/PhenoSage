@@ -4,19 +4,25 @@
 
 ## Services Overview
 
-| Service | Platform | Purpose |
-|---|---|---|
-| `apps/web` | Vercel | Next.js web app — the only public origin |
-| `apps/analysis` | Railway | FastAPI analysis service — private, never browser-callable |
-| Database | Supabase (Postgres) | All application data with RLS |
-| Storage | Supabase Storage | Private plant images |
-| Auth | Supabase Auth | User accounts and sessions |
+| Service         | Platform            | Purpose                                                    |
+| --------------- | ------------------- | ---------------------------------------------------------- |
+| `apps/web`      | Vercel              | Next.js web app — the only public origin                   |
+| `apps/analysis` | Railway             | FastAPI analysis service — private, never browser-callable |
+| Database        | Supabase (Postgres) | All application data with RLS                              |
+| Storage         | Supabase Storage    | Private plant images                                       |
+| Auth            | Supabase Auth       | User accounts and sessions                                 |
 
 ---
 
 ## Guiding Principle
 
 > Vercel is the only public origin. The browser never calls Railway or uses the Supabase service role key.
+
+## Runtime Contract
+
+- Node.js: `20.x`
+- pnpm: `9.15.9`
+- `package.json#engines.node` is the source of truth for Vercel. Keep the Vercel project setting aligned with it rather than letting the dashboard drift to a newer default.
 
 ---
 
@@ -28,30 +34,37 @@ Set these in Vercel project settings → Environment Variables.
 
 Mark server-only variables as **Server** exposure only (not Preview/Production client-side).
 
-| Variable | Exposure | Description |
-|---|---|---|
-| `NEXT_PUBLIC_SUPABASE_URL` | Public | Supabase project URL |
-| `NEXT_PUBLIC_SUPABASE_ANON_KEY` | Public | Supabase anon/public key |
-| `NEXT_PUBLIC_APP_URL` | Public | App base URL (e.g. `https://phenosage.vercel.app`) |
-| `SUPABASE_SERVICE_ROLE_KEY` | **Server only** | Supabase service role — bypasses RLS |
-| `ANALYSIS_SERVICE_URL` | **Server only** | Railway analysis service base URL |
-| `ANALYSIS_SERVICE_API_KEY` | **Server only** | Shared secret for proxy auth |
-| `OPENAI_API_KEY` | **Server only** | OpenAI API key |
-| `CRON_SECRET` | **Server only** | Protects `/api/internal/cron/*` endpoints |
+| Variable                        | Exposure        | Description                                        |
+| ------------------------------- | --------------- | -------------------------------------------------- |
+| `NEXT_PUBLIC_SUPABASE_URL`      | Public          | Supabase project URL                               |
+| `NEXT_PUBLIC_SUPABASE_ANON_KEY` | Public          | Supabase anon/public key                           |
+| `NEXT_PUBLIC_APP_URL`           | Public          | App base URL (e.g. `https://phenosage.vercel.app`) |
+| `SUPABASE_SERVICE_ROLE_KEY`     | **Server only** | Supabase service role — bypasses RLS               |
+| `ANALYSIS_SERVICE_URL`          | **Server only** | Railway analysis service base URL                  |
+| `ANALYSIS_SERVICE_API_KEY`      | **Server only** | Shared secret for proxy auth                       |
+| `OPENAI_API_KEY`                | **Server only** | OpenAI API key                                     |
+| `CRON_SECRET`                   | **Server only** | Protects `/api/internal/cron/*` endpoints          |
+| `SENTRY_DSN`                    | **Server only** | Optional Sentry DSN for web error reporting        |
+| `SENTRY_TRACES_SAMPLE_RATE`     | **Server only** | Optional trace sample rate                         |
 
 ### apps/analysis (Railway)
 
 Set these in Railway project → Variables.
 
-| Variable | Description |
-|---|---|
-| `API_KEY` | Shared secret — must match `ANALYSIS_SERVICE_API_KEY` in Vercel |
-| `OPENAI_API_KEY` | OpenAI API key for Vision analysis |
-| `SUPABASE_URL` | Supabase project URL |
-| `SUPABASE_SERVICE_ROLE_KEY` | Supabase service role (to fetch private images) |
-| `APP_ENV` | `production` |
-| `LOG_LEVEL` | `info` |
-| `PORT` | Set automatically by Railway |
+| Variable                      | Description                                                     |
+| ----------------------------- | --------------------------------------------------------------- |
+| `ANALYSIS_SERVICE_API_KEY`    | Shared secret — must match `ANALYSIS_SERVICE_API_KEY` in Vercel |
+| `OPENAI_API_KEY`              | OpenAI API key for Vision analysis                              |
+| `SUPABASE_URL`                | Supabase project URL                                            |
+| `SUPABASE_SERVICE_ROLE_KEY`   | Supabase service role (to fetch private images)                 |
+| `APP_ENV`                     | `production`                                                    |
+| `LOG_LEVEL`                   | `info`                                                          |
+| `SENTRY_DSN`                  | Optional Sentry DSN                                             |
+| `SENTRY_TRACES_SAMPLE_RATE`   | Optional trace sample rate                                      |
+| `OTEL_ENABLED`                | Optional flag to enable OTLP export                             |
+| `OTEL_EXPORTER_OTLP_ENDPOINT` | Optional OTLP HTTP endpoint                                     |
+| `OTEL_SERVICE_NAME`           | Optional OTEL service name override                             |
+| `PORT`                        | Set automatically by Railway                                    |
 
 ---
 
@@ -59,10 +72,11 @@ Set these in Railway project → Variables.
 
 1. Connect your GitHub repo to Vercel
 2. Set root directory to `apps/web`
-3. Set install command to `pnpm install --frozen-lockfile` (from repo root)
-4. Set build command to `pnpm build`
-5. Add all environment variables (server-only variables: mark as **Server** only)
-6. Deploy
+3. Set Node.js Version to `20.x`
+4. Set install command to `pnpm install --frozen-lockfile` (from repo root)
+5. Set build command to `pnpm build`
+6. Add all environment variables (server-only variables: mark as **Server** only)
+7. Deploy
 
 Vercel Cron is configured in `apps/web/vercel.json`:
 
@@ -85,7 +99,7 @@ Vercel Cron is configured in `apps/web/vercel.json`:
 2. Add a service from GitHub → select the repo → set root directory to `apps/analysis`
 3. Railway will detect the `Dockerfile` automatically
 4. Add all environment variables (see table above)
-5. Set the `API_KEY` to a strong random secret
+5. Set `ANALYSIS_SERVICE_API_KEY` to a strong random secret
 6. Copy the Railway public URL → set as `ANALYSIS_SERVICE_URL` in Vercel
 7. Deploy
 
@@ -137,8 +151,41 @@ docker run -p 8000:8000 --env-file .env phenosage-analysis
 
 The GitHub Actions workflow (`.github/workflows/ci.yml`) runs on every push/PR:
 
-- **Web**: type-check, lint, build
+- **Web**: type-check, lint, test, build
 - **Analysis**: ruff lint, mypy type-check, pytest
 - **Shared**: type-check
 
-Merging to `main` triggers automatic Vercel and Railway deployments.
+Preview and production deploys should be considered ready only after `/api/ready` on the web app and `/ready` on the analysis service both return healthy responses with the expected request IDs in headers.
+
+Run the repo-level readiness check before the authenticated smoke so missing
+server env is caught immediately:
+
+```bash
+pnpm run check:ready -- --url https://phenosage-<deployment>.vercel.app
+```
+
+For a Vercel-protected preview, pass a full `/api/ready` URL that already
+includes your bypass or share query string instead of a bare base URL.
+
+If this fails on `ANALYSIS_SERVICE_API_KEY`, `SUPABASE_*`, or other server env,
+stop there and fix the deployment environment first. The authenticated smoke is
+meant to validate the functional slice after the deployment is actually ready,
+not to diagnose a broken env contract.
+
+For a higher-signal preview check, run the authenticated Playwright smoke in
+`apps/web/e2e/authenticated-workspace.spec.ts`. It seeds a temporary user,
+grow, and plant via the Supabase service role, signs in through `/auth`,
+uploads a test image, verifies persisted analysis through
+`/api/plants/[plantId]/analysis/latest` and `/timeline`, then confirms
+grounded chat thread/message persistence.
+
+Example:
+
+```bash
+E2E_BASE_URL=https://phenosage-<hash>-stevenschling13.vercel.app \
+E2E_SKIP_WEBSERVER=1 \
+E2E_AUTH_SMOKE=1 \
+NEXT_PUBLIC_SUPABASE_URL=https://<project>.supabase.co \
+SUPABASE_SERVICE_ROLE_KEY=<service-role> \
+pnpm --filter web test:e2e
+```

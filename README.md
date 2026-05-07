@@ -1,6 +1,6 @@
 # PhenoSage
 
-AI-powered cannabis grow operating system. Web-first, mobile-compatible, professional plant analysis, timeline tracking, proactive alerts, and grow-aware chatbot.
+AI-powered cannabis grow operating system. Web-first, mobile-compatible, with secure image upload, persisted plant analyses, timeline tracking, and a grow-aware chatbot that keeps its own thread history.
 
 ## What is PhenoSage?
 
@@ -26,16 +26,16 @@ Supabase         Railway
 
 ## Tech Stack
 
-| Layer | Technology |
-|---|---|
-| Web app | Next.js 14 App Router, TypeScript strict, Tailwind CSS |
-| Analysis service | FastAPI (Python 3.12) |
-| Shared types | TypeScript package |
-| Auth | Supabase Auth |
-| Database | Supabase Postgres (pgvector-ready) |
-| Storage | Supabase Storage (private buckets) |
-| Web deploy | Vercel |
-| Analysis deploy | Railway |
+| Layer            | Technology                                             |
+| ---------------- | ------------------------------------------------------ |
+| Web app          | Next.js 15 App Router, TypeScript strict, Tailwind CSS |
+| Analysis service | FastAPI (Python 3.12)                                  |
+| Shared types     | TypeScript package                                     |
+| Auth             | Supabase Auth                                          |
+| Database         | Supabase Postgres (pgvector-ready)                     |
+| Storage          | Supabase Storage (private buckets)                     |
+| Web deploy       | Vercel                                                 |
+| Analysis deploy  | Railway                                                |
 
 ## Monorepo Structure
 
@@ -57,8 +57,8 @@ phenosage/
 
 ### Prerequisites
 
-- Node.js >= 20
-- pnpm >= 9
+- Node.js 20.x
+- pnpm 9.15.9
 - Python >= 3.12
 - Docker (for analysis service)
 - Supabase CLI
@@ -66,7 +66,7 @@ phenosage/
 ### Install dependencies
 
 ```bash
-pnpm install
+pnpm install --frozen-lockfile
 ```
 
 ### Environment variables
@@ -104,6 +104,13 @@ docker run -p 8000:8000 --env-file .env phenosage-analysis
 ## Environment Variables
 
 See [docs/deployment.md](docs/deployment.md) for the full list of required environment variables per service.
+
+## Current Deployment Posture
+
+- The browser only talks to the Next.js app on Vercel. It does not call Railway directly.
+- Plant image uploads are signed server-side and uploaded straight to Supabase Storage.
+- Plant analyses are persisted in `plant_analyses` and `plant_findings`.
+- Analysis responses can fall back to an inconclusive mode when storage or OpenAI is unavailable. Treat those as non-diagnostic and retry once the upstream dependency is healthy.
 
 ## Documentation
 

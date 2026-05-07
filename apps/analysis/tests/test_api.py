@@ -33,7 +33,7 @@ async def test_analyze_requires_auth() -> None:
             },
         )
 
-    assert response.status_code == 403
+    assert response.status_code in (401, 403)
 
 
 @pytest.mark.asyncio

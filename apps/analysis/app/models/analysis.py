@@ -72,3 +72,7 @@ class AnalyzeResponse(BaseModel):
     comparison_summary: str | None = None
     analyzed_at: datetime
     model_version: str
+    analysis_mode: str = "fallback"
+    is_fallback: bool = False
+    fallback_reason: str | None = None
+    request_id: str | None = None

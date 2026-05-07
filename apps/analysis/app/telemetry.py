@@ -22,7 +22,9 @@ def init_sentry() -> None:
         return
     try:
         import sentry_sdk
-        from sentry_sdk.integrations.fastapi import FastApiIntegration
+        from sentry_sdk.integrations.fastapi import (
+            FastApiIntegration,
+        )
     except ImportError:
         logger.info("sentry-sdk not installed; skipping Sentry init")
         return
@@ -52,7 +54,9 @@ def init_otel() -> None:
         )
         from opentelemetry.sdk.resources import Resource
         from opentelemetry.sdk.trace import TracerProvider
-        from opentelemetry.sdk.trace.export import BatchSpanProcessor
+        from opentelemetry.sdk.trace.export import (
+            BatchSpanProcessor,
+        )
     except ImportError:
         logger.info("opentelemetry-sdk not installed; skipping OTel init")
         return

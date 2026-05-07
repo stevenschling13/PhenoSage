@@ -87,3 +87,15 @@ pwsh scripts/smoke-test-prod.ps1
 ```
 
 It exits non-zero if any endpoint, security header, or secret-leak check fails.
+
+For the authenticated persisted-flow smoke, run the Playwright suite with the
+Supabase service role available to the test runner:
+
+```bash
+E2E_BASE_URL=https://phenosage-<hash>-stevenschling13.vercel.app \
+E2E_SKIP_WEBSERVER=1 \
+E2E_AUTH_SMOKE=1 \
+NEXT_PUBLIC_SUPABASE_URL=https://<project>.supabase.co \
+SUPABASE_SERVICE_ROLE_KEY=<service-role> \
+pnpm --filter web test:e2e
+```

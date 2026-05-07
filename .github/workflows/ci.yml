@@ -14,8 +14,8 @@ permissions:
   contents: read
 
 env:
-  NODE_VERSION: "22"
-  PNPM_VERSION: "9"
+  NODE_VERSION: "20"
+  PNPM_VERSION: "9.15.9"
   PYTHON_VERSION: "3.12"
   TURBO_TOKEN: ${{ secrets.TURBO_TOKEN }}
   TURBO_TEAM: ${{ vars.TURBO_TEAM }}
