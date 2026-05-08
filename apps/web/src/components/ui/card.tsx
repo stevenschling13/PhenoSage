@@ -1,21 +1,34 @@
 import { forwardRef, type HTMLAttributes } from "react";
 import { cn } from "@/lib/cn";
 
-export const Card = forwardRef<HTMLDivElement, HTMLAttributes<HTMLDivElement>>(
-  function Card({ className, ...props }, ref) {
-    return (
-      <div
-        ref={ref}
-        className={cn(
-          "rounded-lg border bg-card text-card-foreground shadow-elevation-1",
-          "transition-shadow duration-200",
-          className,
-        )}
-        {...props}
-      />
-    );
-  },
-);
+type CardVariant = "default" | "surface";
+
+interface CardProps extends HTMLAttributes<HTMLDivElement> {
+  variant?: CardVariant;
+}
+
+const VARIANTS: Record<CardVariant, string> = {
+  default: "bg-card text-card-foreground shadow-elevation-1",
+  surface: "bg-muted/40 text-card-foreground",
+};
+
+export const Card = forwardRef<HTMLDivElement, CardProps>(function Card(
+  { className, variant = "default", ...props },
+  ref,
+) {
+  return (
+    <div
+      ref={ref}
+      className={cn(
+        "rounded-lg border",
+        VARIANTS[variant],
+        "transition-shadow duration-200",
+        className,
+      )}
+      {...props}
+    />
+  );
+});
 
 export const CardHeader = forwardRef<
   HTMLDivElement,

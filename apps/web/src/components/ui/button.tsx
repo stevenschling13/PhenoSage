@@ -16,6 +16,7 @@ type Variant =
   | "outline"
   | "ghost"
   | "destructive"
+  | "surface"
   | "link";
 type Size = "sm" | "md" | "lg" | "icon";
 
@@ -29,6 +30,8 @@ const VARIANTS: Record<Variant, string> = {
   ghost: "bg-transparent text-foreground hover:bg-muted active:bg-muted/80",
   destructive:
     "bg-destructive text-destructive-foreground shadow-elevation-1 hover:bg-destructive/90",
+  surface:
+    "border border-border/70 bg-card text-foreground shadow-elevation-1 hover:bg-muted/60 active:bg-muted",
   link: "bg-transparent text-primary underline-offset-4 hover:underline px-0 h-auto",
 };
 
@@ -39,14 +42,19 @@ const SIZES: Record<Size, string> = {
   icon: "h-10 w-10 p-0",
 };
 
+export const buttonStyles = (args?: Parameters<typeof buttonVariants>[0]) =>
+  buttonVariants(args);
+
 export function buttonVariants({
   variant = "primary",
   size = "md",
   fullWidth,
+  className,
 }: {
   variant?: Variant;
   size?: Size;
   fullWidth?: boolean;
+  className?: string;
 } = {}): string {
   return cn(
     "inline-flex items-center justify-center whitespace-nowrap rounded-md font-medium transition-colors duration-150 ease-out-expo",
@@ -55,6 +63,7 @@ export function buttonVariants({
     VARIANTS[variant],
     SIZES[size],
     fullWidth && "w-full",
+    className,
   );
 }
 

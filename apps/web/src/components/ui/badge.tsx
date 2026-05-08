@@ -10,6 +10,8 @@ type Variant =
   | "destructive"
   | "info";
 
+type Tone = "default" | "accent" | "success" | "warning" | "danger" | "info";
+
 const VARIANTS: Record<Variant, string> = {
   default: "bg-primary text-primary-foreground",
   secondary: "bg-secondary text-secondary-foreground",
@@ -21,20 +23,28 @@ const VARIANTS: Record<Variant, string> = {
   info: "bg-info/15 text-info border border-info/30",
 };
 
+const TONE_TO_VARIANT: Record<Tone, Variant> = {
+  default: "secondary",
+  accent: "info",
+  success: "success",
+  warning: "warning",
+  danger: "destructive",
+  info: "info",
+};
+
 interface BadgeProps extends HTMLAttributes<HTMLSpanElement> {
   variant?: Variant;
+  tone?: Tone;
 }
 
-export function Badge({
-  variant = "default",
-  className,
-  ...props
-}: BadgeProps) {
+export function Badge({ variant, tone, className, ...props }: BadgeProps) {
+  const resolved: Variant =
+    variant ?? (tone ? TONE_TO_VARIANT[tone] : "default");
   return (
     <span
       className={cn(
         "inline-flex items-center rounded-full px-2.5 py-0.5 text-xs font-medium leading-none",
-        VARIANTS[variant],
+        VARIANTS[resolved],
         className,
       )}
       {...props}
