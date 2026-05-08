@@ -1,51 +1,40 @@
-import { NextResponse } from "next/server";
+import { NextRequest, NextResponse } from "next/server";
 
 export const runtime = "edge";
 
-type Check = { name: string; ok: boolean; detail?: string };
+const REQUIRED_ENV = [
+  "NEXT_PUBLIC_SUPABASE_URL",
+  "NEXT_PUBLIC_SUPABASE_ANON_KEY",
+  "ANALYSIS_SERVICE_URL",
+  "ANALYSIS_SERVICE_API_KEY",
+  "CRON_SECRET",
+  "READINESS_PROBE_SECRET",
+] as const;
 
-function check(name: string, ok: boolean, detail?: string): Check {
-  const result: Check = { name, ok };
-  if (detail !== undefined) result.detail = detail;
-  return result;
-}
+export function GET(request: NextRequest) {
+  const expected = process.env["READINESS_PROBE_SECRET"];
+  const auth = request.headers.get("authorization");
 
-export function GET() {
-  const checks: Check[] = [
-    check(
-      "supabase_url",
-      Boolean(process.env["NEXT_PUBLIC_SUPABASE_URL"]),
-      "NEXT_PUBLIC_SUPABASE_URL",
-    ),
-    check(
-      "supabase_anon_key",
-      Boolean(process.env["NEXT_PUBLIC_SUPABASE_ANON_KEY"]),
-      "NEXT_PUBLIC_SUPABASE_ANON_KEY",
-    ),
-    check(
-      "analysis_service_url",
-      Boolean(process.env["ANALYSIS_SERVICE_URL"]),
-      "ANALYSIS_SERVICE_URL",
-    ),
-    check(
-      "analysis_service_api_key",
-      Boolean(process.env["ANALYSIS_SERVICE_API_KEY"]),
-      "ANALYSIS_SERVICE_API_KEY",
-    ),
-  ];
+  if (!expected || auth !== `Bearer ${expected}`) {
+    return NextResponse.json(
+      { error: { code: "UNAUTHORIZED", message: "Unauthorized" } },
+      { status: 401 },
+    );
+  }
 
-  const ok = checks.every((c) => c.ok);
-  const body = {
-    status: ok ? "ok" : "not_ready",
-    service: "phenosage-web",
-    commit:
-      process.env["VERCEL_GIT_COMMIT_SHA"] ??
-      process.env["GIT_COMMIT_SHA"] ??
-      "unknown",
-    env:
-      process.env["NEXT_PUBLIC_APP_ENV"] ?? process.env.NODE_ENV ?? "unknown",
-    checks,
-    timestamp: new Date().toISOString(),
-  };
-  return NextResponse.json(body, { status: ok ? 200 : 503 });
+  const missing = REQUIRED_ENV.filter((key) => !process.env[key]);
+  const ok = missing.length === 0;
+
+  return NextResponse.json(
+    {
+      status: ok ? "ok" : "not_ready",
+      service: "phenosage-web",
+      timestamp: new Date().toISOString(),
+      checks: {
+        required_env_present: ok,
+        missing_count: missing.length,
+      },
+    },
+    { status: ok ? 200 : 503 },
+  );
 }

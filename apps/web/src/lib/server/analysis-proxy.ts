@@ -65,11 +65,10 @@ export async function callAnalysisService<T = unknown>(
   const response = await fetch(`${url}${endpoint}`, init);
 
   if (!response.ok) {
-    const text = await response.text();
     const upstreamRequestId =
       response.headers.get(REQUEST_ID_HEADER) ?? requestId ?? "unknown";
     throw new Error(
-      `Analysis service error ${response.status} (request ${upstreamRequestId}): ${text}`,
+      `Analysis service error ${response.status} (request ${upstreamRequestId})`,
     );
   }
 

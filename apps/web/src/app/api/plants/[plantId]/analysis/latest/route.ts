@@ -1,5 +1,7 @@
+import { UuidSchema } from "@phenosage/shared";
 import { NextRequest, NextResponse } from "next/server";
 import { getServerSession } from "@/lib/server/auth";
+import { apiError } from "@/lib/server/api-errors";
 import { getLatestPlantAnalysis } from "@/lib/server/plants";
 import {
   attachRequestId,
@@ -19,12 +21,15 @@ export async function GET(request: NextRequest, { params }: RouteParams) {
   const session = await getServerSession();
   if (!session) {
     return attachRequestId(
-      NextResponse.json({ error: "Unauthorized", requestId }, { status: 401 }),
+      apiError(401, "UNAUTHORIZED", "Unauthorized", requestId),
       requestId,
     );
   }
 
   const { plantId } = await params;
+  if (!UuidSchema.safeParse(plantId).success) {
+    return apiError(422, "UNPROCESSABLE_ENTITY", "Invalid plantId", requestId);
+  }
 
   try {
     const analysis = await getLatestPlantAnalysis(plantId);
@@ -49,15 +54,11 @@ export async function GET(request: NextRequest, { params }: RouteParams) {
       error: error instanceof Error ? error.message : "unknown_error",
     });
     return attachRequestId(
-      NextResponse.json(
-        {
-          error:
-            error instanceof Error
-              ? error.message
-              : "Failed to load latest analysis",
-          requestId,
-        },
-        { status: 500 },
+      apiError(
+        500,
+        "INTERNAL_ERROR",
+        "Failed to load latest analysis",
+        requestId,
       ),
       requestId,
     );

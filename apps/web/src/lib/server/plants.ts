@@ -58,6 +58,29 @@ type PlantObservationRow = {
   created_at: string;
 };
 
+type AnalysisJobRow = {
+  id: string;
+  plant_id: string;
+  image_id: string;
+  grow_id: string;
+  requested_by: string;
+  status:
+    | "queued"
+    | "running"
+    | "succeeded"
+    | "failed"
+    | "retrying"
+    | "cancelled";
+  attempt_count: number;
+  max_attempts: number;
+  queued_at: string;
+  started_at: string | null;
+  finished_at: string | null;
+  error_code: string | null;
+  error_message: string | null;
+  result_analysis_id: string | null;
+};
+
 function sanitizeFileName(name: string): string {
   return name.replace(/[^a-zA-Z0-9._-]+/g, "-").replace(/-+/g, "-");
 }
@@ -183,6 +206,63 @@ export async function persistPlantImageUpload(params: {
     plantId: context.plantId,
     storagePath: params.storagePath,
   };
+}
+
+export async function enqueuePlantAnalysisJob(params: {
+  plantId: string;
+  imageId: string;
+  requestId: string;
+  idempotencyKey?: string;
+}) {
+  const context = await getAuthorizedPlantContext(params.plantId);
+  if (!context) return null;
+
+  const db = getDbClient();
+  const { data, error } = await db.rpc("enqueue_analysis_job", {
+    p_plant_id: context.plantId,
+    p_image_id: params.imageId,
+    p_grow_id: context.growId,
+    p_requested_by: context.userId,
+    p_idempotency_key: params.idempotencyKey ?? null,
+    p_max_attempts: 3,
+  });
+
+  if (error) {
+    throw new Error(`Failed to enqueue analysis job: ${error.message}`);
+  }
+
+  const job = data as AnalysisJobRow | null;
+  if (!job) throw new Error("Failed to enqueue analysis job: empty response");
+
+  logServerEvent("info", "analysis job enqueued", {
+    requestId: params.requestId,
+    plantId: context.plantId,
+    imageId: params.imageId,
+    jobId: job.id,
+    status: job.status,
+  });
+
+  return { context, job };
+}
+
+export async function getAnalysisJobForPlant(params: {
+  plantId: string;
+  jobId: string;
+}) {
+  const context = await getAuthorizedPlantContext(params.plantId);
+  if (!context) return null;
+
+  const db = getDbClient();
+  const { data, error } = await db
+    .from("analysis_jobs")
+    .select("*")
+    .eq("id", params.jobId)
+    .eq("plant_id", context.plantId)
+    .maybeSingle();
+
+  if (error) throw new Error(`Failed to load analysis job: ${error.message}`);
+  if (!data) return { context, job: null };
+  return { context, job: data as AnalysisJobRow };
 }
 
 export async function getLatestPlantAnalysis(
