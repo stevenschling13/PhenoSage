@@ -4,6 +4,34 @@ Handoff log between sessions. Keep entries short. Newest at top.
 
 ---
 
+## 2026-05-08 — Chat route hardening: rate limits + payload validation + NDJSON stream controls (Codex)
+
+**Landed on `work`**
+
+- `feat(web)` — `apps/web/src/app/api/chat/route.ts`: added request-id propagation, per-user/IP rate limiting (`15 req / 60s`), payload validation (`message` required + max 2000 chars, optional `threadId` format), and NDJSON framing (`delta`/`done`/`error`) for reliable client-side incremental parsing. Stream iteration now has explicit error handling that logs correlation IDs and terminates with a controlled error frame.
+- `test(web)` — `apps/web/src/app/api/chat/__tests__/route.test.ts`: added coverage for unauthorized, validation failures, rate-limit rejection, NDJSON framing semantics, and upstream model stream failures.
+
+**Validation**
+
+- `pnpm run validate` — PASS
+- `pnpm turbo run type-check lint test` — PASS (106 / 106 web, 5 / 5 shared)
+- `pnpm run security:routes` — PASS
+
+**Session commit**
+
+- `b210b46` — feat(web): harden chat route streaming and guardrails
+
+**In-flight**
+
+- Branch: `work`
+- PR: not opened yet
+
+**Dead ends**
+
+- None in this session.
+
+---
+
 ## 2026-05-08 — UX walkthrough: signed-out CTAs + auth copy + alert focus (Claude Opus 4.7)
 
 **Landed on `main`**

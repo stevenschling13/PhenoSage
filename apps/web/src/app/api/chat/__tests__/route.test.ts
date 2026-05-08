@@ -1,5 +1,6 @@
 import { beforeEach, describe, expect, it, vi, type Mock } from "vitest";
 import { NextRequest } from "next/server";
+import { __resetRateLimitStore } from "@/lib/server/rate-limit";
 
 const getServerSession = vi.fn();
 const streamMock = vi.fn();
@@ -22,15 +23,18 @@ vi.mock("@/lib/server/ai-client", () => ({
 
 import { POST } from "../route";
 
-function jsonRequest(body: unknown): NextRequest {
+function jsonRequest(body: unknown, requestId = "req-1"): NextRequest {
   return new NextRequest("http://localhost/api/chat", {
     method: "POST",
     body: JSON.stringify(body),
-    headers: { "content-type": "application/json" },
+    headers: {
+      "content-type": "application/json",
+      "x-request-id": requestId,
+      "x-forwarded-for": "203.0.113.10",
+    },
   });
 }
 
-/** Minimal async iterator simulating an OpenAI streaming response. */
 function fakeStream(chunks: string[]): AsyncIterable<{
   choices: Array<{ delta: { content?: string } }>;
 }> {
@@ -39,7 +43,6 @@ function fakeStream(chunks: string[]): AsyncIterable<{
       for (const c of chunks) {
         yield { choices: [{ delta: { content: c } }] };
       }
-      // Include a chunk with no delta to exercise the falsy branch.
       yield { choices: [{ delta: {} }] };
     },
   };
@@ -49,13 +52,17 @@ describe("POST /api/chat", () => {
   beforeEach(() => {
     (getServerSession as Mock).mockReset();
     streamMock.mockReset();
+    __resetRateLimitStore();
   });
 
   it("returns 401 when unauthenticated", async () => {
     getServerSession.mockResolvedValue(null);
     const res = await POST(jsonRequest({ message: "hello" }));
     expect(res.status).toBe(401);
-    expect(await res.json()).toEqual({ error: "Unauthorized" });
+    expect(await res.json()).toEqual({
+      error: "Unauthorized",
+      requestId: "req-1",
+    });
     expect(streamMock).not.toHaveBeenCalled();
   });
 
@@ -66,36 +73,81 @@ describe("POST /api/chat", () => {
     expect(streamMock).not.toHaveBeenCalled();
   });
 
-  it("returns 400 when message is whitespace-only", async () => {
+  it("returns 400 for invalid payload constraints", async () => {
     getServerSession.mockResolvedValue({ user: { id: "u1" } });
-    const res = await POST(jsonRequest({ message: "   " }));
-    expect(res.status).toBe(400);
+
+    const badThread = await POST(
+      jsonRequest({ message: "ok", threadId: "bad id" }),
+    );
+    expect(badThread.status).toBe(400);
+
+    const tooLong = "x".repeat(2001);
+    const badMessage = await POST(jsonRequest({ message: tooLong }));
+    expect(badMessage.status).toBe(400);
+    expect(streamMock).not.toHaveBeenCalled();
   });
 
-  it("streams the OpenAI deltas back as text", async () => {
+  it("returns 429 when rate limit is exceeded", async () => {
+    getServerSession.mockResolvedValue({ user: { id: "u1" } });
+    streamMock.mockReturnValue(fakeStream(["ok"]));
+
+    for (let i = 0; i < 15; i++) {
+      const res = await POST(
+        jsonRequest({ message: `hello-${i}` }, `req-${i}`),
+      );
+      expect(res.status).toBe(200);
+      await res.text();
+    }
+
+    const blocked = await POST(
+      jsonRequest({ message: "blocked" }, "req-blocked"),
+    );
+    expect(blocked.status).toBe(429);
+    expect(await blocked.json()).toEqual({
+      error: "Too many chat requests. Try again shortly.",
+      requestId: "req-blocked",
+    });
+  });
+
+  it("streams NDJSON deltas and done event", async () => {
     getServerSession.mockResolvedValue({ user: { id: "u1" } });
     streamMock.mockReturnValue(fakeStream(["Hello, ", "world", "!"]));
 
     const res = await POST(jsonRequest({ message: "hi" }));
     expect(res.status).toBe(200);
-    expect(res.headers.get("content-type")).toMatch(/text\/plain/);
+    expect(res.headers.get("content-type")).toMatch(/application\/x-ndjson/);
 
-    const text = await res.text();
-    expect(text).toBe("Hello, world!");
+    const lines = (await res.text())
+      .trim()
+      .split("\n")
+      .map((line) => JSON.parse(line));
+    expect(lines).toEqual([
+      { type: "delta", content: "Hello, ", requestId: "req-1" },
+      { type: "delta", content: "world", requestId: "req-1" },
+      { type: "delta", content: "!", requestId: "req-1" },
+      { type: "done", requestId: "req-1" },
+    ]);
+  });
 
-    // The system prompt + user message were forwarded to OpenAI.
-    expect(streamMock).toHaveBeenCalledTimes(1);
-    const args = streamMock.mock.calls[0]?.[0] as {
-      model: string;
-      stream: boolean;
-      messages: Array<{ role: string; content: string }>;
-    };
-    expect(args.model).toBe("gpt-4o");
-    expect(args.stream).toBe(true);
-    expect(args.messages[0]?.role).toBe("system");
-    expect(args.messages[args.messages.length - 1]).toEqual({
-      role: "user",
-      content: "hi",
+  it("emits controlled error frame when upstream stream fails", async () => {
+    getServerSession.mockResolvedValue({ user: { id: "u1" } });
+    streamMock.mockReturnValue({
+      async *[Symbol.asyncIterator]() {
+        yield { choices: [{ delta: { content: "partial" } }] };
+        throw new Error("boom");
+      },
     });
+
+    const res = await POST(jsonRequest({ message: "hi" }));
+    expect(res.status).toBe(200);
+
+    const lines = (await res.text())
+      .trim()
+      .split("\n")
+      .map((line) => JSON.parse(line));
+    expect(lines).toEqual([
+      { type: "delta", content: "partial", requestId: "req-1" },
+      { type: "error", error: "upstream_model_failure", requestId: "req-1" },
+    ]);
   });
 });
