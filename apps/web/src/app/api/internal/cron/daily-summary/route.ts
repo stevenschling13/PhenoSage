@@ -21,9 +21,14 @@ export async function GET(request: NextRequest) {
   // TODO: Persist as grow_events with eventType = 'observation'
   // TODO: Queue notifications (email / push) per user preferences
 
-  return NextResponse.json({
-    status: "ok",
-    ran: new Date().toISOString(),
-    message: "TODO: Implement daily summary generation",
-  });
+  return NextResponse.json(
+    {
+      error: {
+        code: "NOT_IMPLEMENTED",
+        message: "Daily summary generation is not enabled in this deployment.",
+      },
+      ran: new Date().toISOString(),
+    },
+    { status: 501 },
+  );
 }

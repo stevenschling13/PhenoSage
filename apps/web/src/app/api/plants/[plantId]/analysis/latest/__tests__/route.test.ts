@@ -15,7 +15,9 @@ vi.mock("@/lib/server/plants", () => ({
 import { GET } from "../route";
 
 function makeRequest(): NextRequest {
-  return new NextRequest("http://localhost/api/plants/p1/analysis/latest");
+  return new NextRequest(
+    "http://localhost/api/plants/11111111-1111-4111-8111-111111111111/analysis/latest",
+  );
 }
 
 function makeParams(plantId: string) {
@@ -30,31 +32,42 @@ describe("GET /api/plants/[plantId]/analysis/latest", () => {
 
   it("returns 401 when unauthenticated", async () => {
     getServerSession.mockResolvedValue(null);
-    const res = await GET(makeRequest(), makeParams("p1"));
+    const res = await GET(
+      makeRequest(),
+      makeParams("11111111-1111-4111-8111-111111111111"),
+    );
     expect(res.status).toBe(401);
     const body = await res.json();
-    expect(body.error).toBe("Unauthorized");
+    expect(body.error.code).toBe("UNAUTHORIZED");
     expect(getLatestPlantAnalysis).not.toHaveBeenCalled();
   });
 
   it("returns plantId and null analysis when none is found", async () => {
     getServerSession.mockResolvedValue({ user: { id: "u1" } });
     getLatestPlantAnalysis.mockResolvedValue(null);
-    const res = await GET(makeRequest(), makeParams("plant-xyz"));
+    const res = await GET(
+      makeRequest(),
+      makeParams("11111111-1111-4111-8111-111111111111"),
+    );
     expect(res.status).toBe(200);
     const body = await res.json();
-    expect(body.plantId).toBe("plant-xyz");
+    expect(body.plantId).toBe("11111111-1111-4111-8111-111111111111");
     expect(body.analysis).toBeNull();
-    expect(getLatestPlantAnalysis).toHaveBeenCalledWith("plant-xyz");
+    expect(getLatestPlantAnalysis).toHaveBeenCalledWith(
+      "11111111-1111-4111-8111-111111111111",
+    );
   });
 
   it("returns the analysis payload when present", async () => {
     getServerSession.mockResolvedValue({ user: { id: "u1" } });
     getLatestPlantAnalysis.mockResolvedValue({ score: 0.87 });
-    const res = await GET(makeRequest(), makeParams("plant-xyz"));
+    const res = await GET(
+      makeRequest(),
+      makeParams("11111111-1111-4111-8111-111111111111"),
+    );
     expect(res.status).toBe(200);
     const body = await res.json();
-    expect(body.plantId).toBe("plant-xyz");
+    expect(body.plantId).toBe("11111111-1111-4111-8111-111111111111");
     expect(body.analysis).toEqual({ score: 0.87 });
   });
 });

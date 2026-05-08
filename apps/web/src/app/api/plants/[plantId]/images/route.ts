@@ -1,12 +1,19 @@
 import { NextRequest, NextResponse } from "next/server";
+import { UploadFinalizeRequestSchema, UuidSchema } from "@phenosage/shared";
 import { getServerSession, getServerUser } from "@/lib/server/auth";
-import { getPlantTimeline, persistPlantImageUpload } from "@/lib/server/plants";
+import {
+  enqueuePlantAnalysisJob,
+  getPlantTimeline,
+  persistPlantImageUpload,
+} from "@/lib/server/plants";
+import { apiError } from "@/lib/server/api-errors";
 import { rateLimit, rateLimitKeyFromRequest } from "@/lib/server/rate-limit";
 import {
   attachRequestId,
   getOrCreateRequestId,
   logServerEvent,
 } from "@/lib/server/request-id";
+import { parseJsonBody } from "@/lib/server/validate";
 
 interface RouteParams {
   params: Promise<{ plantId: string }>;
@@ -23,6 +30,9 @@ export async function GET(request: NextRequest, { params }: RouteParams) {
   }
 
   const { plantId } = await params;
+  if (!UuidSchema.safeParse(plantId).success) {
+    return apiError(422, "UNPROCESSABLE_ENTITY", "Invalid plantId", requestId);
+  }
 
   try {
     const timeline = await getPlantTimeline(plantId);
@@ -93,32 +103,34 @@ export async function POST(request: NextRequest, { params }: RouteParams) {
   }
 
   const { plantId } = await params;
-  const body = (await request.json()) as {
-    imageId: string;
-    takenAt?: string;
-    source?: "camera" | "upload";
-    notes?: string;
-    storagePath: string;
-  };
+  if (!UuidSchema.safeParse(plantId).success) {
+    return apiError(422, "UNPROCESSABLE_ENTITY", "Invalid plantId", requestId);
+  }
 
-  if (!body.imageId || !body.storagePath) {
-    return attachRequestId(
-      NextResponse.json(
-        { error: "imageId and storagePath are required", requestId },
-        { status: 400 },
-      ),
-      requestId,
-    );
+  const parsedBody = await parseJsonBody(request, UploadFinalizeRequestSchema);
+  if (!parsedBody.ok) {
+    if (parsedBody.status === 415) {
+      return apiError(
+        415,
+        "UNSUPPORTED_MEDIA_TYPE",
+        parsedBody.error,
+        requestId,
+      );
+    }
+    if (parsedBody.status === 422) {
+      return apiError(422, "UNPROCESSABLE_ENTITY", parsedBody.error, requestId);
+    }
+    return apiError(400, "BAD_REQUEST", parsedBody.error, requestId);
   }
 
   try {
     const prepared = await persistPlantImageUpload({
-      imageId: body.imageId,
+      imageId: parsedBody.data.imageId,
       plantId,
-      ...(body.takenAt ? { takenAt: body.takenAt } : {}),
-      ...(body.source ? { source: body.source } : {}),
-      ...(body.notes ? { notes: body.notes } : {}),
-      storagePath: body.storagePath,
+      ...(parsedBody.data.takenAt ? { takenAt: parsedBody.data.takenAt } : {}),
+      ...(parsedBody.data.source ? { source: parsedBody.data.source } : {}),
+      ...(parsedBody.data.notes ? { notes: parsedBody.data.notes } : {}),
+      storagePath: parsedBody.data.storagePath,
     });
 
     if (!prepared) {
@@ -131,8 +143,31 @@ export async function POST(request: NextRequest, { params }: RouteParams) {
       );
     }
 
+    const job = await enqueuePlantAnalysisJob({
+      plantId,
+      imageId: parsedBody.data.imageId,
+      requestId,
+      ...(parsedBody.data.idempotencyKey
+        ? { idempotencyKey: parsedBody.data.idempotencyKey }
+        : {}),
+    });
+
     return attachRequestId(
-      NextResponse.json({ ...prepared, requestId }, { status: 201 }),
+      NextResponse.json(
+        {
+          ...prepared,
+          analysisJob: job
+            ? {
+                id: job.job.id,
+                status: job.job.status,
+                attemptCount: job.job.attempt_count,
+                queuedAt: job.job.queued_at,
+              }
+            : null,
+          requestId,
+        },
+        { status: 201 },
+      ),
       requestId,
     );
   } catch (error) {
@@ -141,16 +176,6 @@ export async function POST(request: NextRequest, { params }: RouteParams) {
       plantId,
       error: error instanceof Error ? error.message : "unknown_error",
     });
-    return attachRequestId(
-      NextResponse.json(
-        {
-          error:
-            error instanceof Error ? error.message : "Image persistence failed",
-          requestId,
-        },
-        { status: 500 },
-      ),
-      requestId,
-    );
+    return apiError(500, "INTERNAL_ERROR", "Image finalize failed", requestId);
   }
 }
