@@ -4,6 +4,35 @@ Handoff log between sessions. Keep entries short. Newest at top.
 
 ---
 
+## 2026-05-08 — UX walkthrough: signed-out CTAs + auth copy + alert focus (Claude Opus 4.7)
+
+**Landed on `main`**
+
+Posed as a real user and walked the deployed surface. Five concrete UX
+defects fixed in one commit:
+
+- Landing "View demo" CTA linked to `/dashboard`, which redirects to
+  `/auth` for signed-out users — a broken promise. Replaced with a
+  "See features" button that scrolls to a new `#pillars` anchor on the
+  same page.
+- Footer "Dashboard" link had the same problem; swapped for a "Features"
+  anchor link.
+- Auth page heading said "Welcome back", which is wrong for sign-up and
+  magic-link users. Made the heading neutral ("Welcome") and updated the
+  supporting copy to mention all three modes.
+- Sign-in form `Feedback` alert had `role="alert"` but no auto-focus, so
+  screen readers didn't get a priority announcement and keyboard users
+  had to hunt for the message. Added a `useEffect` that focuses the
+  alert on appearance, plus `tabIndex={-1}` and a focus ring.
+- Mode-switch helper text ("Switch to Sign up above") was plain text.
+  Converted to actionable `<button>` elements that flip mode and focus
+  the matching tab in one click.
+
+No server logic changed. Architecture rules unchanged. All 104 web tests
+pass; type-check, lint, build, security:routes all clean.
+
+---
+
 ## 2026-05-07 — Form a11y hardening + assistant boundary parity (Claude Opus 4.7)
 
 **Landed on `main`**

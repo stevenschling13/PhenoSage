@@ -115,10 +115,11 @@ export default async function AuthPage({
               <CardContent className="space-y-6 p-6 sm:p-8">
                 <div>
                   <h1 className="text-2xl font-semibold tracking-tight text-foreground">
-                    Welcome back
+                    Welcome
                   </h1>
                   <p className="mt-1.5 text-sm text-muted-foreground">
-                    Sign in or create an account to start tracking grows.
+                    Sign in, create an account, or use a magic link to start
+                    tracking your grows.
                   </p>
                 </div>
                 <SignInForm {...(initialError ? { initialError } : {})} />

@@ -127,7 +127,7 @@ export default function LandingPage() {
                   <Link href="/auth">Get started free</Link>
                 </Button>
                 <Button asChild size="lg" variant="outline">
-                  <Link href="/dashboard">View demo</Link>
+                  <Link href="#pillars">See features</Link>
                 </Button>
               </div>
               <p className="mt-6 text-xs text-muted-foreground">
@@ -138,7 +138,10 @@ export default function LandingPage() {
         </section>
 
         {/* Pillars */}
-        <section className="border-t border-border bg-card">
+        <section
+          id="pillars"
+          className="border-t border-border bg-card scroll-mt-20"
+        >
           <Container width="xl" className="py-20 sm:py-24">
             <div className="mx-auto max-w-2xl text-center">
               <p className="text-xs font-medium uppercase tracking-wider text-primary">
@@ -231,8 +234,8 @@ export default function LandingPage() {
             <Link href="/auth" className="hover:text-foreground">
               Sign in
             </Link>
-            <Link href="/dashboard" className="hover:text-foreground">
-              Dashboard
+            <Link href="#pillars" className="hover:text-foreground">
+              Features
             </Link>
           </div>
         </Container>

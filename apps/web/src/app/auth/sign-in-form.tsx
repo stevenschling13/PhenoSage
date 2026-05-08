@@ -1,6 +1,12 @@
 "use client";
 
-import { useActionState, useRef, useState, type KeyboardEvent } from "react";
+import {
+  useActionState,
+  useEffect,
+  useRef,
+  useState,
+  type KeyboardEvent,
+} from "react";
 import { useFormStatus } from "react-dom";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -73,16 +79,27 @@ function Feedback({
   initialError?: string | undefined;
 }) {
   const message = state?.message ?? initialError ?? "";
-  if (!message) return null;
+  const ref = useRef<HTMLDivElement | null>(null);
   const isOk = state?.ok === true;
+
+  useEffect(() => {
+    if (message && !isOk) {
+      ref.current?.focus();
+    }
+  }, [message, isOk]);
+
+  if (!message) return null;
   return (
     <div
+      ref={ref}
       role={isOk ? "status" : "alert"}
+      aria-live={isOk ? "polite" : "assertive"}
+      tabIndex={-1}
       className={cn(
-        "rounded-md border px-3 py-2 text-sm animate-fade-in",
+        "rounded-md border px-3 py-2 text-sm animate-fade-in focus:outline-none focus-visible:ring-2",
         isOk
-          ? "border-success/30 bg-success/10 text-success"
-          : "border-destructive/30 bg-destructive/10 text-destructive",
+          ? "border-success/30 bg-success/10 text-success focus-visible:ring-success/40"
+          : "border-destructive/30 bg-destructive/10 text-destructive focus-visible:ring-destructive/40",
       )}
     >
       {message}
@@ -218,8 +235,38 @@ export function SignInForm({
       )}
 
       <p className="text-center text-xs text-muted-foreground">
-        {mode === "sign-in" && "No account yet? Switch to Sign up above."}
-        {mode === "sign-up" && "Already have one? Switch to Sign in above."}
+        {mode === "sign-in" && (
+          <>
+            No account yet?{" "}
+            <button
+              type="button"
+              className="font-medium text-primary underline-offset-2 hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-1 focus-visible:ring-offset-background"
+              onClick={() => {
+                setMode("sign-up");
+                tabRefs.current["sign-up"]?.focus();
+              }}
+            >
+              Create an account
+            </button>
+            .
+          </>
+        )}
+        {mode === "sign-up" && (
+          <>
+            Already have one?{" "}
+            <button
+              type="button"
+              className="font-medium text-primary underline-offset-2 hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-1 focus-visible:ring-offset-background"
+              onClick={() => {
+                setMode("sign-in");
+                tabRefs.current["sign-in"]?.focus();
+              }}
+            >
+              Sign in instead
+            </button>
+            .
+          </>
+        )}
         {mode === "magic-link" && "We'll email you a one-click sign-in link."}
       </p>
     </div>
