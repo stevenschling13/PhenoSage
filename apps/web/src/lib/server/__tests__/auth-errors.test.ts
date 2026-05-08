@@ -10,6 +10,7 @@ import {
   AuthConfigError,
   describeAuthError,
   getAuthConfigViolations,
+  isNextFrameworkError,
   isNextNotFoundError,
   isNextRedirectError,
 } from "../auth-errors";
@@ -52,6 +53,24 @@ describe("isNextRedirectError / isNextNotFoundError", () => {
   it("recognises not-found digests", () => {
     expect(isNextNotFoundError({ digest: "NEXT_NOT_FOUND" })).toBe(true);
     expect(isNextNotFoundError({ digest: "x" })).toBe(false);
+  });
+});
+
+describe("isNextFrameworkError", () => {
+  it("recognises redirect, not-found, and dynamic-server signals", () => {
+    expect(
+      isNextFrameworkError({ digest: "NEXT_REDIRECT;replace;/x;307;" }),
+    ).toBe(true);
+    expect(isNextFrameworkError({ digest: "NEXT_NOT_FOUND" })).toBe(true);
+    expect(isNextFrameworkError({ digest: "DYNAMIC_SERVER_USAGE" })).toBe(true);
+  });
+
+  it("does not match generic errors", () => {
+    expect(isNextFrameworkError(new Error("boom"))).toBe(false);
+    expect(isNextFrameworkError({ digest: "OTHER" })).toBe(false);
+    expect(isNextFrameworkError(null)).toBe(false);
+    expect(isNextFrameworkError(undefined)).toBe(false);
+    expect(isNextFrameworkError("string")).toBe(false);
   });
 });
 

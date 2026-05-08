@@ -4,6 +4,55 @@ Handoff log between sessions. Keep entries short. Newest at top.
 
 ---
 
+## 2026-05-07 — DRY error boundaries + workspace loading state (Claude Opus 4.7)
+
+**Landed on `main`**
+
+Builds on `6edc55f` (segment + global error boundaries) and `6026f21`
+(force-dynamic for `(app)`). Adds:
+
+- `feat(web)` — `apps/web/src/components/error-fallback.tsx`, a shared
+  presentational component used by every route-level error boundary so
+  users see a uniform error card (eyebrow, alert heading, plain-language
+  description, optional digest reference, Try-again + secondary link).
+- `feat(web)` — `apps/web/src/app/(app)/error.tsx` and
+  `apps/web/src/app/auth/error.tsx`: per-segment error boundaries with
+  copy tailored to each surface, both delegating to `ErrorFallback`.
+- `refactor(web)` — `apps/web/src/app/error.tsx` now delegates to the
+  shared `ErrorFallback` instead of inlining its own card markup.
+  `global-error.tsx` is intentionally kept self-contained (no design
+  system) because it runs when the layout itself can't render.
+- `feat(web)` — `apps/web/src/app/(app)/loading.tsx`, a skeleton shell
+  with `role="status"` + `aria-busy` so workspace navigations show a calm
+  loading surface instead of a blank screen.
+- `fix(web)` — `apps/web/src/app/(app)/layout.tsx` re-throws Next.js
+  control-flow signals (NEXT_REDIRECT, NEXT_NOT_FOUND,
+  DYNAMIC_SERVER_USAGE) untouched from its profile-load try/catch via the
+  new `isNextFrameworkError()` helper. Defense-in-depth on top of
+  `force-dynamic`.
+- `feat(web)` — `apps/web/src/lib/server/auth-errors.ts` exports
+  `isNextFrameworkError()` plus 2 new tests. Web suite now 104 / 104.
+
+**Validation**
+
+- `pnpm run validate` — PASS
+- `pnpm turbo run type-check lint test` — PASS (104 / 104 web, 5 / 5 shared)
+- `pnpm --filter web build` — PASS (12 / 12 static pages, no spurious logs)
+- `pnpm run security:routes` — PASS (9 routes scanned)
+
+**Notes / follow-ups**
+
+- The shared `ErrorFallback` is a client component; vitest is configured
+  for `node` env without `@vitejs/plugin-react`, so it has no unit tests.
+  Adding component tests would require introducing jsdom +
+  `@testing-library/react` + the React plugin. Out of scope; behavior is
+  exercised by the build's static prerender of `/not-found` (same
+  primitives) and the route boundaries themselves.
+- Upload, analysis, chat, and timeline error UX still need the same audit
+  pass — next iteration.
+
+---
+
 ## 2026-05-07 — Auth UX hardening: kill "fetch failed" (Claude Opus 4.7)
 
 **Landed on `main`**

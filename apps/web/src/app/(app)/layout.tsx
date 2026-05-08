@@ -1,6 +1,7 @@
 import type { ReactNode } from "react";
 import { redirect } from "next/navigation";
 import { AppShell } from "@/components/app-shell";
+import { isNextFrameworkError } from "@/lib/server/auth-errors";
 import { getCurrentProfile } from "@/lib/server/profile";
 
 // Every page under (app) reads the authenticated user via getCurrentProfile.
@@ -14,6 +15,9 @@ export default async function AppLayout({ children }: { children: ReactNode }) {
   try {
     profile = await getCurrentProfile();
   } catch (err) {
+    // Re-throw Next.js control-flow signals (redirect, notFound, dynamic
+    // server usage) untouched — they aren't real errors.
+    if (isNextFrameworkError(err)) throw err;
     // If auth/db is unreachable we can't safely render the authenticated
     // shell. Bounce the user back to /auth where they'll see a friendly
     // status message instead of a generic Next.js error screen.

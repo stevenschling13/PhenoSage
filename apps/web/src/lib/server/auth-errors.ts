@@ -82,6 +82,27 @@ export function isNextNotFoundError(err: unknown): boolean {
 }
 
 /**
+ * Catches Next.js framework signals carried on `err.digest`:
+ *   - NEXT_REDIRECT
+ *   - NEXT_NOT_FOUND
+ *   - DYNAMIC_SERVER_USAGE (thrown when `cookies()` / `headers()` are used
+ *     during static prerender so Next can re-render the route dynamically)
+ *
+ * Any of these MUST be re-thrown unchanged from a try/catch so Next can
+ * complete its control-flow.
+ */
+export function isNextFrameworkError(err: unknown): boolean {
+  if (!err || typeof err !== "object") return false;
+  const digest = (err as { digest?: unknown }).digest;
+  if (typeof digest !== "string") return false;
+  return (
+    digest.startsWith("NEXT_REDIRECT") ||
+    digest.startsWith("NEXT_NOT_FOUND") ||
+    digest.startsWith("DYNAMIC_SERVER_USAGE")
+  );
+}
+
+/**
  * Pattern-match a thrown or returned auth error into a single friendly
  * sentence. Prefers stable fields (`name`, `status`, `code`) over message
  * substring matching so we don't silently regress when Supabase reworks
