@@ -19,6 +19,7 @@ describe("analysis-proxy", () => {
       ...ORIGINAL_ENV,
       ANALYSIS_SERVICE_URL: "https://analysis.example.com",
       ANALYSIS_SERVICE_API_KEY: "test-key",
+      ANALYSIS_SERVICE_TIMEOUT_MS: "50",
     };
     fetchSpy = vi.spyOn(globalThis, "fetch");
   });
@@ -92,5 +93,35 @@ describe("analysis-proxy", () => {
     await expect(callAnalysisService({ endpoint: "/broken" })).rejects.toThrow(
       /502/,
     );
+  });
+
+  it("retries once for retryable upstream 503 responses", async () => {
+    fetchSpy
+      .mockResolvedValueOnce(new Response("down", { status: 503 }))
+      .mockResolvedValueOnce(
+        new Response(JSON.stringify({ ok: true }), { status: 200 }),
+      );
+    await callAnalysisService({ endpoint: "/retry", method: "POST", body: {} });
+    expect(fetchSpy).toHaveBeenCalledTimes(2);
+  });
+
+  it("does not retry for non-retryable 401 responses", async () => {
+    fetchSpy.mockResolvedValue(new Response("nope", { status: 401 }));
+    await expect(
+      callAnalysisService({ endpoint: "/unauth", method: "POST", body: {} }),
+    ).rejects.toThrow(/401/);
+    expect(fetchSpy).toHaveBeenCalledTimes(1);
+  });
+
+  it("throws when analysis response schema is invalid", async () => {
+    mockOk({ invalid: true });
+    await expect(
+      analyzeImage({
+        plantId: "p1",
+        imageId: "i1",
+        storagePath: "plants/p1/i1.jpg",
+        growContext: { stage: "vegetative" },
+      }),
+    ).rejects.toThrow(/invalid response shape/);
   });
 });

@@ -1,6 +1,101 @@
+## 2026-05-08 — PR4 analysis proxy hardening (Codex GPT-5.3)
+
+**Landed on `work`**
+
+- `feat(web)` — Hardened analysis proxy with timeout support (`ANALYSIS_SERVICE_TIMEOUT_MS`), bounded retry behavior for safe retryable upstream statuses, and structured proxy completion logging.
+- `feat(web)` — Added runtime response schema validation for analysis responses before normalization to prevent invalid upstream payloads from being treated as successful analyses.
+- `test(web)` — Expanded analysis proxy tests for retry behavior, non-retry on 401, and invalid response schema rejection.
+
+**What landed**
+
+- commit: `<pending>`
+
+**In-flight**
+
+- branch: `work`
+
+**Dead ends**
+
+- None.
+
+---
+
+## 2026-05-08 — PR3 chat persistence + honest cron status (Codex GPT-5.3)
+
+**Landed on `work`**
+
+- `feat(web)` — Implemented chat thread/message persistence in `POST /api/chat` using service-role writes, explicit thread creation/lookup, and persisted assistant transcript after stream completion.
+- `feat(web)` — Added `GET/POST /api/chat/threads` and `GET /api/chat/threads/[threadId]/messages` for durable history retrieval and thread bootstrapping.
+- `fix(web)` — Updated daily summary cron route to return `501 NOT_IMPLEMENTED` instead of TODO-success semantics while preserving CRON_SECRET auth checks.
+- `test(web)` — Updated chat and cron route tests for the new API contracts.
+
+**What landed**
+
+- commit: `<pending>`
+
+**In-flight**
+
+- branch: `work`
+
+**Dead ends**
+
+- None.
+
+---
+
+## 2026-05-08 — PR2 async analysis job foundation (Codex GPT-5.3)
+
+**Landed on `work`**
+
+- `feat(db)` — Added forward-only `005_analysis_jobs.sql` migration creating `analysis_jobs` queue table, RLS read policy, indexes, updated-at trigger, and secure `enqueue_analysis_job` RPC with idempotency key support.
+- `feat(web)` — Reworked `/api/plants/[plantId]/analyze` to enqueue jobs (202 Accepted) instead of synchronous model analysis.
+- `feat(web)` — Updated upload finalize route `/api/plants/[plantId]/images` to validate finalize payload with shared schema and enqueue an analysis job after image persistence.
+- `feat(web)` — Added `GET /api/plants/[plantId]/analysis/jobs/[jobId]` for authenticated job status polling.
+- `feat(shared)` — Added shared schemas for upload finalize payload, analyze payload, and analysis job statuses.
+- `feat(web)` — Added server helpers in `plants.ts` for job enqueue and job lookup scoped to authorized plant context.
+
+**What landed**
+
+- commit: `<pending>`
+
+**In-flight**
+
+- branch: `work`
+
+**Dead ends**
+
+- None.
+
+---
+
 # WORKLOG
 
 Handoff log between sessions. Keep entries short. Newest at top.
+
+---
+
+## 2026-05-08 — PR1 safety foundation slice (Codex GPT-5.3)
+
+**Landed on `work`**
+
+- `feat(web)` — Added centralized API error helper and JSON+schema request validation helper for route handlers.
+- `feat(shared)` — Added runtime schemas (`zod`) and exported them via shared package.
+- `fix(web)` — Hardened `/api/uploads/sign`, `/api/plants/[plantId]/analyze`, and `/api/plants/[plantId]/analysis/latest` with schema validation + UUID validation + sanitized error envelopes.
+- `feat(web)` — Protected `/api/ready` with `READINESS_PROBE_SECRET` bearer auth and sanitized readiness output.
+- `fix(web)` — Removed upstream response-body leakage from analysis proxy errors.
+- `test(web)` — Updated ready/upload/latest-analysis route tests for new contracts.
+
+**What landed**
+
+- commit: `4132f1b`
+
+**In-flight**
+
+- branch: `work` (no PR opened yet)
+
+**Dead ends**
+
+- None.
 
 ---
 

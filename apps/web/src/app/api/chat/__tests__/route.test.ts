@@ -2,10 +2,26 @@ import { beforeEach, describe, expect, it, vi, type Mock } from "vitest";
 import { NextRequest } from "next/server";
 
 const getServerSession = vi.fn();
+const getServerUser = vi.fn();
+const parseJsonBody = vi.fn();
+const getOrCreateThread = vi.fn();
+const appendChatMessage = vi.fn();
+const getDbClient = vi.fn();
 const streamMock = vi.fn();
 
 vi.mock("@/lib/server/auth", () => ({
   getServerSession: (...args: unknown[]) => getServerSession(...args),
+  getServerUser: (...args: unknown[]) => getServerUser(...args),
+}));
+vi.mock("@/lib/server/validate", () => ({
+  parseJsonBody: (...args: unknown[]) => parseJsonBody(...args),
+}));
+vi.mock("@/lib/server/chat", () => ({
+  getOrCreateThread: (...args: unknown[]) => getOrCreateThread(...args),
+  appendChatMessage: (...args: unknown[]) => appendChatMessage(...args),
+}));
+vi.mock("@/lib/server/db", () => ({
+  getDbClient: (...args: unknown[]) => getDbClient(...args),
 }));
 
 vi.mock("@/lib/server/ai-client", () => ({
@@ -48,32 +64,51 @@ function fakeStream(chunks: string[]): AsyncIterable<{
 describe("POST /api/chat", () => {
   beforeEach(() => {
     (getServerSession as Mock).mockReset();
+    (getServerUser as Mock).mockReset();
+    parseJsonBody.mockReset();
+    getOrCreateThread.mockReset();
+    appendChatMessage.mockReset();
+    getDbClient.mockReset();
     streamMock.mockReset();
+    parseJsonBody.mockResolvedValue({ ok: true, data: { message: "hi" } });
+    getOrCreateThread.mockResolvedValue({ id: "thread-1" });
+    appendChatMessage.mockResolvedValue(undefined);
+    getDbClient.mockReturnValue({
+      from: () => ({
+        select: () => ({
+          eq: () => ({
+            eq: () => ({ maybeSingle: async () => ({ data: null }) }),
+          }),
+          limit: async () => ({ data: [] }),
+        }),
+      }),
+    });
   });
 
   it("returns 401 when unauthenticated", async () => {
     getServerSession.mockResolvedValue(null);
     const res = await POST(jsonRequest({ message: "hello" }));
     expect(res.status).toBe(401);
-    expect(await res.json()).toEqual({ error: "Unauthorized" });
+    expect((await res.json()).error.message).toBe("Unauthorized");
     expect(streamMock).not.toHaveBeenCalled();
   });
 
   it("returns 400 when message is missing", async () => {
     getServerSession.mockResolvedValue({ user: { id: "u1" } });
+    getServerUser.mockResolvedValue({ id: "u1" });
+    parseJsonBody.mockResolvedValue({
+      ok: false,
+      status: 400,
+      error: "message is required",
+    });
     const res = await POST(jsonRequest({}));
     expect(res.status).toBe(400);
     expect(streamMock).not.toHaveBeenCalled();
   });
 
-  it("returns 400 when message is whitespace-only", async () => {
-    getServerSession.mockResolvedValue({ user: { id: "u1" } });
-    const res = await POST(jsonRequest({ message: "   " }));
-    expect(res.status).toBe(400);
-  });
-
   it("streams the OpenAI deltas back as text", async () => {
     getServerSession.mockResolvedValue({ user: { id: "u1" } });
+    getServerUser.mockResolvedValue({ id: "u1" });
     streamMock.mockReturnValue(fakeStream(["Hello, ", "world", "!"]));
 
     const res = await POST(jsonRequest({ message: "hi" }));
@@ -97,5 +132,6 @@ describe("POST /api/chat", () => {
       role: "user",
       content: "hi",
     });
+    expect(res.headers.get("x-chat-thread-id")).toBe("thread-1");
   });
 });

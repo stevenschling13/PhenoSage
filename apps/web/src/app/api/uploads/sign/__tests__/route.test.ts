@@ -56,38 +56,47 @@ describe("POST /api/uploads/sign", () => {
     getServerSession.mockResolvedValue(null);
     const res = await POST(
       jsonRequest({
-        plantId: "p1",
+        plantId: "11111111-1111-4111-8111-111111111111",
         fileName: "leaf.jpg",
         contentType: "image/jpeg",
       }),
     );
     expect(res.status).toBe(401);
-    expect((await res.json()).error).toBe("Unauthorized");
+    expect((await res.json()).error.code).toBe("UNAUTHORIZED");
     expect(preparePlantImageUpload).not.toHaveBeenCalled();
   });
 
   it.each([
     ["plantId", { fileName: "f.jpg", contentType: "image/jpeg" }],
-    ["fileName", { plantId: "p1", contentType: "image/jpeg" }],
-    ["contentType", { plantId: "p1", fileName: "f.jpg" }],
+    [
+      "fileName",
+      {
+        plantId: "11111111-1111-4111-8111-111111111111",
+        contentType: "image/jpeg",
+      },
+    ],
+    [
+      "contentType",
+      { plantId: "11111111-1111-4111-8111-111111111111", fileName: "f.jpg" },
+    ],
   ])("returns 400 when %s is missing", async (_field, body) => {
     getServerSession.mockResolvedValue(SESSION_OK);
     const res = await POST(jsonRequest(body));
-    expect(res.status).toBe(400);
-    expect((await res.json()).error).toMatch(/required/);
+    expect(res.status).toBe(422);
+    expect((await res.json()).error.code).toBe("UNPROCESSABLE_ENTITY");
   });
 
   it("returns 415 for an unsupported content type", async () => {
     getServerSession.mockResolvedValue(SESSION_OK);
     const res = await POST(
       jsonRequest({
-        plantId: "p1",
+        plantId: "11111111-1111-4111-8111-111111111111",
         fileName: "leaf.gif",
         contentType: "image/gif",
       }),
     );
-    expect(res.status).toBe(415);
-    expect((await res.json()).error).toBe("Unsupported content type");
+    expect(res.status).toBe(422);
+    expect((await res.json()).error.code).toBe("UNPROCESSABLE_ENTITY");
   });
 
   it.each(["image/jpeg", "image/png", "image/webp", "image/heic"])(
@@ -96,14 +105,16 @@ describe("POST /api/uploads/sign", () => {
       getServerSession.mockResolvedValue(SESSION_OK);
       const res = await POST(
         jsonRequest({
-          plantId: "plant-xyz",
+          plantId: "11111111-1111-4111-8111-111111111111",
           fileName: "leaf.jpg",
           contentType,
         }),
       );
       expect(res.status).toBe(200);
       const body = await res.json();
-      expect(body.storagePath).toMatch(/^plants\/plant-xyz\/\d+-leaf\.jpg$/);
+      expect(body.storagePath).toMatch(
+        /^plants\/11111111-1111-4111-8111-111111111111\/\d+-leaf\.jpg$/,
+      );
       expect(preparePlantImageUpload).toHaveBeenCalled();
     },
   );
@@ -113,7 +124,7 @@ describe("POST /api/uploads/sign", () => {
     rateLimit.mockReturnValue({ ok: false });
     const res = await POST(
       jsonRequest({
-        plantId: "p1",
+        plantId: "11111111-1111-4111-8111-111111111111",
         fileName: "shot.png",
         contentType: "image/png",
       }),
@@ -126,7 +137,7 @@ describe("POST /api/uploads/sign", () => {
     preparePlantImageUpload.mockResolvedValueOnce(null);
     const res = await POST(
       jsonRequest({
-        plantId: "missing",
+        plantId: "11111111-1111-4111-8111-111111111111",
         fileName: "shot.png",
         contentType: "image/png",
       }),

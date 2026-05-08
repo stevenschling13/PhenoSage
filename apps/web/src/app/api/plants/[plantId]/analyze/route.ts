@@ -1,12 +1,15 @@
+import { AnalyzeRequestSchema, UuidSchema } from "@phenosage/shared";
 import { NextRequest, NextResponse } from "next/server";
 import { getServerSession, getServerUser } from "@/lib/server/auth";
-import { runAndPersistPlantAnalysis } from "@/lib/server/plants";
+import { apiError } from "@/lib/server/api-errors";
+import { enqueuePlantAnalysisJob } from "@/lib/server/plants";
 import { rateLimit, rateLimitKeyFromRequest } from "@/lib/server/rate-limit";
 import {
   attachRequestId,
   getOrCreateRequestId,
   logServerEvent,
 } from "@/lib/server/request-id";
+import { parseJsonBody } from "@/lib/server/validate";
 
 interface RouteParams {
   params: Promise<{ plantId: string }>;
@@ -15,12 +18,7 @@ interface RouteParams {
 export async function POST(request: NextRequest, { params }: RouteParams) {
   const requestId = getOrCreateRequestId(request);
   const session = await getServerSession();
-  if (!session) {
-    return attachRequestId(
-      NextResponse.json({ error: "Unauthorized", requestId }, { status: 401 }),
-      requestId,
-    );
-  }
+  if (!session) return apiError(401, "UNAUTHORIZED", "Unauthorized", requestId);
 
   const user = await getServerUser();
   const rate = rateLimit({
@@ -28,70 +26,70 @@ export async function POST(request: NextRequest, { params }: RouteParams) {
     limit: 5,
     windowMs: 60_000,
   });
-  if (!rate.ok) {
-    return attachRequestId(
-      NextResponse.json(
-        {
-          error: "Too many analysis requests. Try again shortly.",
-          requestId,
-        },
-        { status: 429 },
-      ),
-      requestId,
-    );
-  }
+  if (!rate.ok)
+    return apiError(429, "RATE_LIMITED", "Too many requests", requestId);
 
   const { plantId } = await params;
-  const body = (await request.json().catch(() => ({}))) as { imageId?: string };
+  if (!UuidSchema.safeParse(plantId).success) {
+    return apiError(422, "UNPROCESSABLE_ENTITY", "Invalid plantId", requestId);
+  }
+
+  const parsedBody = await parseJsonBody(request, AnalyzeRequestSchema);
+  if (!parsedBody.ok) {
+    if (parsedBody.status === 415) {
+      return apiError(
+        415,
+        "UNSUPPORTED_MEDIA_TYPE",
+        parsedBody.error,
+        requestId,
+      );
+    }
+    if (parsedBody.status === 422) {
+      return apiError(422, "UNPROCESSABLE_ENTITY", parsedBody.error, requestId);
+    }
+    return apiError(400, "BAD_REQUEST", parsedBody.error, requestId);
+  }
 
   try {
-    const result = await runAndPersistPlantAnalysis({
+    const result = await enqueuePlantAnalysisJob({
       plantId,
-      ...(body.imageId ? { imageId: body.imageId } : {}),
+      imageId: parsedBody.data.imageId,
+      ...(parsedBody.data.idempotencyKey
+        ? { idempotencyKey: parsedBody.data.idempotencyKey }
+        : {}),
       requestId,
     });
 
-    if (!result) {
-      return attachRequestId(
-        NextResponse.json(
-          { error: "Plant not found or access denied", requestId },
-          { status: 404 },
-        ),
+    if (!result)
+      return apiError(
+        404,
+        "NOT_FOUND",
+        "Plant not found or access denied",
         requestId,
       );
-    }
-
-    if (!result.analysis) {
-      return attachRequestId(
-        NextResponse.json(
-          { error: "No plant images are available to analyze", requestId },
-          { status: 404 },
-        ),
-        requestId,
-      );
-    }
-
     return attachRequestId(
-      NextResponse.json({ analysis: result.analysis, requestId }),
+      NextResponse.json(
+        {
+          analysisJob: {
+            id: result.job.id,
+            imageId: result.job.image_id,
+            status: result.job.status,
+            attemptCount: result.job.attempt_count,
+            queuedAt: result.job.queued_at,
+          },
+          requestId,
+        },
+        { status: 202 },
+      ),
       requestId,
     );
   } catch (error) {
     logServerEvent("error", "plant analysis failed", {
       requestId,
       plantId,
-      imageId: body.imageId,
+      imageId: parsedBody.data.imageId,
       error: error instanceof Error ? error.message : "unknown_error",
     });
-    return attachRequestId(
-      NextResponse.json(
-        {
-          error:
-            error instanceof Error ? error.message : "Plant analysis failed",
-          requestId,
-        },
-        { status: 500 },
-      ),
-      requestId,
-    );
+    return apiError(500, "INTERNAL_ERROR", "Plant analysis failed", requestId);
   }
 }

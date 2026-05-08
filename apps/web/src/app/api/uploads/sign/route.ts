@@ -1,5 +1,7 @@
+import { UploadSignRequestSchema } from "@phenosage/shared";
 import { NextRequest, NextResponse } from "next/server";
 import { getServerSession, getServerUser } from "@/lib/server/auth";
+import { apiError } from "@/lib/server/api-errors";
 import { preparePlantImageUpload } from "@/lib/server/plants";
 import { rateLimit, rateLimitKeyFromRequest } from "@/lib/server/rate-limit";
 import {
@@ -7,19 +9,13 @@ import {
   getOrCreateRequestId,
   logServerEvent,
 } from "@/lib/server/request-id";
+import { parseJsonBody } from "@/lib/server/validate";
 
-// POST /api/uploads/sign
-// Returns a short-lived Supabase Storage signed upload URL.
-// The browser uploads directly to Supabase; the signed URL is generated here
-// on the server so the service role key is never exposed.
 export async function POST(request: NextRequest) {
   const requestId = getOrCreateRequestId(request);
   const session = await getServerSession();
   if (!session) {
-    return attachRequestId(
-      NextResponse.json({ error: "Unauthorized", requestId }, { status: 401 }),
-      requestId,
-    );
+    return apiError(401, "UNAUTHORIZED", "Unauthorized", requestId);
   }
 
   const user = await getServerUser();
@@ -29,63 +25,36 @@ export async function POST(request: NextRequest) {
     windowMs: 60_000,
   });
   if (!rate.ok) {
-    return attachRequestId(
-      NextResponse.json(
-        {
-          error: "Too many upload preparations. Try again shortly.",
-          requestId,
-        },
-        { status: 429 },
-      ),
-      requestId,
-    );
+    return apiError(429, "RATE_LIMITED", "Too many requests", requestId);
   }
 
-  const body = (await request.json()) as {
-    plantId: string;
-    fileName: string;
-    contentType: string;
-    takenAt?: string;
-    source?: "camera" | "upload";
-    notes?: string;
-  };
-
-  if (!body.plantId || !body.fileName || !body.contentType) {
-    return attachRequestId(
-      NextResponse.json(
-        { error: "plantId, fileName, and contentType are required", requestId },
-        { status: 400 },
-      ),
-      requestId,
-    );
-  }
-
-  // Validate content type — images only
-  const allowedTypes = ["image/jpeg", "image/png", "image/webp", "image/heic"];
-  if (!allowedTypes.includes(body.contentType)) {
-    return attachRequestId(
-      NextResponse.json(
-        { error: "Unsupported content type", requestId },
-        { status: 415 },
-      ),
-      requestId,
-    );
+  const parsedBody = await parseJsonBody(request, UploadSignRequestSchema);
+  if (!parsedBody.ok) {
+    if (parsedBody.status === 415) {
+      return apiError(
+        415,
+        "UNSUPPORTED_MEDIA_TYPE",
+        parsedBody.error,
+        requestId,
+      );
+    }
+    if (parsedBody.status === 422) {
+      return apiError(422, "UNPROCESSABLE_ENTITY", parsedBody.error, requestId);
+    }
+    return apiError(400, "BAD_REQUEST", parsedBody.error, requestId);
   }
 
   try {
     const prepared = await preparePlantImageUpload({
-      plantId: body.plantId,
-      fileName: body.fileName,
-      contentType: body.contentType,
+      ...parsedBody.data,
       requestId,
     });
 
     if (!prepared) {
-      return attachRequestId(
-        NextResponse.json(
-          { error: "Plant not found or access denied", requestId },
-          { status: 404 },
-        ),
+      return apiError(
+        404,
+        "NOT_FOUND",
+        "Plant not found or access denied",
         requestId,
       );
     }
@@ -97,19 +66,9 @@ export async function POST(request: NextRequest) {
   } catch (error) {
     logServerEvent("error", "upload signing failed", {
       requestId,
-      plantId: body.plantId,
+      plantId: parsedBody.data.plantId,
       error: error instanceof Error ? error.message : "unknown_error",
     });
-    return attachRequestId(
-      NextResponse.json(
-        {
-          error:
-            error instanceof Error ? error.message : "Upload signing failed",
-          requestId,
-        },
-        { status: 500 },
-      ),
-      requestId,
-    );
+    return apiError(500, "INTERNAL_ERROR", "Upload signing failed", requestId);
   }
 }

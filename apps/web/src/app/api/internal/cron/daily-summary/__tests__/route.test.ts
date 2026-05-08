@@ -46,12 +46,12 @@ describe("GET /api/internal/cron/daily-summary", () => {
     expect(res.status).toBe(401);
   });
 
-  it("returns 200 when authorization matches the configured secret", async () => {
+  it("returns 501 when authorization matches the configured secret", async () => {
     process.env["CRON_SECRET"] = "secret";
     const res = await GET(makeRequest("Bearer secret"));
-    expect(res.status).toBe(200);
+    expect(res.status).toBe(501);
     const body = await res.json();
-    expect(body.status).toBe("ok");
+    expect(body.error.code).toBe("NOT_IMPLEMENTED");
     expect(typeof body.ran).toBe("string");
     expect(Number.isNaN(Date.parse(body.ran))).toBe(false);
   });
