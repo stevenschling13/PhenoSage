@@ -75,7 +75,10 @@ pnpm install --frozen-lockfile
 pnpm run validate            # runs all scripts/check-*.mjs
 pnpm run type-check
 pnpm run lint
+pnpm run test                # or: pnpm turbo run type-check lint test
 pnpm run build               # web build with stub envs is fine locally
+pnpm run security:routes     # route-handler security audit
+pnpm run pr:guardian         # PR size / scope caps (advisory locally)
 ```
 
 Python (analysis service):
@@ -88,7 +91,22 @@ mypy app/
 pytest
 ```
 
-## 9. When in Doubt
+## 9. Plant-Health Output Discipline
+
+PhenoSage tells growers what's wrong with their plants. Wrong answers cause real
+crop loss. Therefore:
+
+- If any upstream dependency fails — image analysis, storage, OpenAI, context
+  retrieval, the analysis service — the user-facing result must be an explicit
+  **inconclusive / non-diagnostic** state, not a confident diagnosis.
+- Never present a fallback, simulated, cached-stale, or partial result as a
+  definitive diagnosis. Distinguishing `started`, `succeeded`, `failed`,
+  `retried`, `timed out`, and `inconclusive` is required for any analysis
+  workflow.
+- Do not soften this rule with a "best-effort" wording in the UI; surface the
+  inconclusive state and the reason.
+
+## 10. When in Doubt
 
 - Read `docs/playbooks/repo-aware-ai-coding-playbook.md` for the operating model.
 - Read `docs/playbooks/contract-safe-change-playbook.md` before changing any shared type, migration, or proxy boundary.
