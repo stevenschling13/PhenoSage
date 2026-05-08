@@ -3,6 +3,12 @@ import { redirect } from "next/navigation";
 import { AppShell } from "@/components/app-shell";
 import { getCurrentProfile } from "@/lib/server/profile";
 
+// Every page under (app) reads the authenticated user via getCurrentProfile.
+// Mark the group dynamic so `next build` doesn't try to statically prerender
+// these pages — without env vars present (e.g. on a fresh local clone or in
+// some CI shapes) prerendering throws AuthConfigError and aborts the build.
+export const dynamic = "force-dynamic";
+
 export default async function AppLayout({ children }: { children: ReactNode }) {
   let profile: Awaited<ReturnType<typeof getCurrentProfile>> = null;
   try {
