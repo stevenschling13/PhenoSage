@@ -36,6 +36,7 @@ browser ──► apps/web (Next.js 15, Vercel)
 | Type-check + lint       | `pnpm turbo run type-check lint`                                          | —    |
 | Validate guardrails     | `pnpm run validate`                                                       | —    |
 | Route security audit    | `pnpm run security:routes`                                                | —    |
+| Readiness gates audit   | `pnpm run check:readiness-gates`                                          | —    |
 | E2E (requires browsers) | `pnpm --filter web exec playwright install && pnpm --filter web test:e2e` | —    |
 
 ## Environment
@@ -85,3 +86,13 @@ See `.github/copilot-instructions.md` for the full list; the load-bearing ones:
 - `docs/product-spec.md` — feature scope
 - `docs/playbooks/contract-safe-change-playbook.md` — how to evolve a contract
 - `docs/runbooks/` — incident / rollback / on-call
+
+## Runtime readiness gates
+
+`pnpm run check:readiness-gates` is a hard gate in CI. It blocks deployable branches when:
+
+- Placeholder production handlers are present in runtime modules (`TODO`, `not yet implemented`, placeholder payload markers).
+- Critical endpoints/services are missing required execution branches (`/api/chat`, `/api/internal/cron/daily-summary`, `apps/analysis/app/services/image_comparison.py`).
+- TODOs appear outside docs/tests allowlisted paths.
+
+Keep TODO notes in docs/tests only until runtime handlers are fully implemented.

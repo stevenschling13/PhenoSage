@@ -4,6 +4,28 @@ Handoff log between sessions. Keep entries short. Newest at top.
 
 ---
 
+## 2026-05-08 — Runtime readiness gate for placeholder handlers (Codex GPT-5.3)
+
+**Landed on current branch**
+
+- `feat(guardrails)` — added `scripts/check-production-readiness-gates.mjs` to enforce production-readiness checks:
+  - flags placeholder handlers (`TODO`, `not yet implemented`, placeholder payload markers) in runtime modules.
+  - verifies required branch markers for `/api/chat`, `/api/internal/cron/daily-summary`, and `apps/analysis/app/services/image_comparison.py`.
+  - allows TODOs only in docs/tests patterns.
+- `chore(ci)` — wired `pnpm run check:readiness-gates` into `package.json` and CI validate job.
+- `docs(agents)` — updated `CLAUDE.md` validation table and documented readiness gate expectations.
+
+**Validation**
+
+- `pnpm run check:readiness-gates` — FAIL (expected, existing placeholders in critical runtime paths now surfaced as blockers).
+
+**In-flight**
+
+- Branch: current working branch
+- PR: pending
+
+---
+
 ## 2026-05-08 — UX walkthrough: signed-out CTAs + auth copy + alert focus (Claude Opus 4.7)
 
 **Landed on `main`**

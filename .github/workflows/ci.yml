@@ -46,6 +46,8 @@ jobs:
         run: pnpm run check:imports
       - name: Route security audit
         run: pnpm run security:routes
+      - name: Production readiness gates
+        run: pnpm run check:readiness-gates
       - name: Changed-scope (advisory)
         run: pnpm run check:scope -- --base=origin/${{ github.base_ref || 'main' }}
         continue-on-error: true
