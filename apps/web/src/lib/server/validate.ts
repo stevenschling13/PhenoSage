@@ -14,8 +14,10 @@ import { logServerEvent, REQUEST_ID_HEADER } from "./request-id";
  * correlate failures with server logs.
  *
  * Status-code contract:
- *   400 invalid_json | invalid_request
+ *   400 invalid_json | invalid_request (with issues[])
  *   413 request_body_too_large
+ *   415 unsupported_media_type (when content-type is not application/json,
+ *       and `allowNonJsonContentType` is not set)
  */
 export type ParseJsonOk<T> = { ok: true; data: T };
 export type ParseJsonErr = { ok: false; response: NextResponse };
@@ -63,9 +65,11 @@ export async function parseJson<TSchema extends ZodTypeAny>(
 
   if (!opts.allowNonJsonContentType) {
     const contentType = request.headers.get("content-type") ?? "";
+    // startsWith (not includes) so a media-type smuggling header like
+    // "text/plain; application/json" cannot pass.
     if (
       contentType &&
-      !contentType.toLowerCase().includes("application/json")
+      !contentType.toLowerCase().startsWith("application/json")
     ) {
       logServerEvent("warn", "request rejected: non-JSON content type", {
         requestId,
@@ -120,10 +124,13 @@ export async function parseJson<TSchema extends ZodTypeAny>(
     };
   }
 
-  if (raw.length > maxBytes) {
+  // raw.length counts UTF-16 code units; the byte cap is meaningful only
+  // against the on-the-wire UTF-8 byte count.
+  const rawByteLength = Buffer.byteLength(raw, "utf8");
+  if (rawByteLength > maxBytes) {
     logServerEvent("warn", "request body too large", {
       requestId,
-      bodyLength: raw.length,
+      bodyLength: rawByteLength,
       maxBytes,
     });
     return {

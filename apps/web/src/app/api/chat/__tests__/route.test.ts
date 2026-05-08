@@ -51,11 +51,14 @@ describe("POST /api/chat", () => {
     streamMock.mockReset();
   });
 
-  it("returns 401 when unauthenticated", async () => {
+  it("returns 401 with requestId when unauthenticated", async () => {
     getServerSession.mockResolvedValue(null);
     const res = await POST(jsonRequest({ message: "hello" }));
     expect(res.status).toBe(401);
-    expect(await res.json()).toEqual({ error: "Unauthorized" });
+    const body = (await res.json()) as { error: string; requestId?: string };
+    expect(body.error).toBe("Unauthorized");
+    expect(typeof body.requestId).toBe("string");
+    expect(body.requestId?.length).toBeGreaterThan(0);
     expect(streamMock).not.toHaveBeenCalled();
   });
 

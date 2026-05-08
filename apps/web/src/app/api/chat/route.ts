@@ -13,7 +13,7 @@ export async function POST(request: NextRequest) {
   const session = await getServerSession();
   if (!session) {
     return attachRequestId(
-      NextResponse.json({ error: "Unauthorized" }, { status: 401 }),
+      NextResponse.json({ error: "Unauthorized", requestId }, { status: 401 }),
       requestId,
     );
   }

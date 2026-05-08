@@ -87,9 +87,26 @@ describe("chatRequestSchema", () => {
     if (ok.success) expect(ok.data.message).toBe("hello");
   });
 
-  it("rejects messages above the chat byte cap", () => {
+  it("rejects messages above the chat byte cap (ASCII)", () => {
     const oversize = "x".repeat(MAX_CHAT_MESSAGE_BYTES + 1);
     expect(chatRequestSchema.safeParse({ message: oversize }).success).toBe(
+      false,
+    );
+  });
+
+  it("rejects messages where UTF-8 byte count exceeds the cap", () => {
+    // 4-byte emoji × n: char-count cap is 4096, but byte cost is 4× chars.
+    // Pick a count that passes the char .max() (length ≤ 4096) yet
+    // exceeds the byte cap.
+    const emoji = "\u{1F600}"; // 😀 — JS .length is 2 (surrogate pair); UTF-8 is 4 bytes
+    // 1024 emojis: js .length = 2048 (≤ 4096), bytes = 4096 (== cap, passes)
+    // 1025 emojis: js .length = 2050 (≤ 4096), bytes = 4100 (> cap, must fail)
+    const exactlyAtCap = emoji.repeat(1024);
+    const overByteCap = emoji.repeat(1025);
+    expect(chatRequestSchema.safeParse({ message: exactlyAtCap }).success).toBe(
+      true,
+    );
+    expect(chatRequestSchema.safeParse({ message: overByteCap }).success).toBe(
       false,
     );
   });

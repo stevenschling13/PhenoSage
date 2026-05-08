@@ -6,7 +6,7 @@ import type { AnalysisResponse } from "@phenosage/shared";
 import { CheckCircleIcon, UploadIcon } from "@/components/icons";
 import { Badge } from "@/components/ui/badge";
 import { Button, buttonStyles } from "@/components/ui/button";
-import { createSupabaseBrowserClient } from "@/lib/supabase";
+import { createSupabaseBrowserClient } from "@/lib/supabase/browser";
 
 type UploadNotice = {
   tone: "danger" | "success" | "warning";

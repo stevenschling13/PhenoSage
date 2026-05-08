@@ -20,14 +20,12 @@ import { z } from "zod";
  */
 export const idSchema = z.string().min(1).max(128);
 
+// Strict ISO-8601 (UTC `Z` or offset). z.datetime is stricter than
+// Date.parse and consistent across runtimes.
 export const isoTimestampSchema = z
   .string()
-  .min(1)
   .max(64)
-  // Accept "2026-04-01T00:00:00Z" and offset-bearing forms.
-  .refine((v) => !Number.isNaN(Date.parse(v)), {
-    message: "must be an ISO-8601 timestamp",
-  });
+  .datetime({ offset: true, message: "must be an ISO-8601 timestamp" });
 
 export const imageSourceSchema = z.enum(["upload", "camera"]);
 
@@ -85,15 +83,25 @@ export const analyzeRequestSchema = z.object({
 });
 export type AnalyzeRequest = z.infer<typeof analyzeRequestSchema>;
 
+// TextEncoder is universal across Node 18+ and browsers; works in any
+// runtime that imports these schemas.
+const utf8ByteLength = (value: string): number =>
+  new TextEncoder().encode(value).length;
+
 /** POST /api/chat */
 export const chatRequestSchema = z.object({
   threadId: idSchema.optional(),
   growId: idSchema.optional(),
   message: z
     .string()
-    .min(1)
+    .trim()
+    .min(1, { message: "message is required" })
+    // Char-count is a fast pre-filter; the byte refine below is the
+    // actual on-the-wire cap (multibyte chars can spend up to 4 bytes
+    // each in UTF-8).
     .max(MAX_CHAT_MESSAGE_BYTES)
-    .transform((v) => v.trim())
-    .refine((v) => v.length > 0, { message: "message is required" }),
+    .refine((v) => utf8ByteLength(v) <= MAX_CHAT_MESSAGE_BYTES, {
+      message: `message exceeds ${MAX_CHAT_MESSAGE_BYTES}-byte limit`,
+    }),
 });
 export type ChatRequest = z.infer<typeof chatRequestSchema>;
