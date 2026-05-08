@@ -1,0 +1,36 @@
+version: "3.9"
+
+services:
+  web:
+    build:
+      context: .
+      dockerfile: Dockerfile.web
+    environment:
+      NODE_ENV: production
+      NEXT_PUBLIC_SUPABASE_URL: https://stub.supabase.co
+      NEXT_PUBLIC_SUPABASE_ANON_KEY: stub-anon-key
+      NEXT_PUBLIC_APP_URL: http://localhost:3000
+      SUPABASE_SERVICE_ROLE_KEY: stub-service-role
+      ANALYSIS_SERVICE_URL: http://analysis:8000
+      ANALYSIS_SERVICE_API_KEY: stub-analysis-key
+      OPENAI_API_KEY: stub-openai-key
+      CRON_SECRET: stub-cron-secret
+      READINESS_PROBE_SECRET: stub-readiness-secret
+    ports:
+      - "3000:3000"
+    depends_on:
+      - analysis
+
+  analysis:
+    build:
+      context: .
+      dockerfile: Dockerfile.analysis
+    environment:
+      APP_ENV: production
+      OPENAI_API_KEY: stub-openai-key
+      ANALYSIS_SERVICE_API_KEY: stub-analysis-key
+      READINESS_PROBE_SECRET: stub-readiness-secret
+      SUPABASE_URL: https://stub.supabase.co
+      SUPABASE_SERVICE_ROLE_KEY: stub-service-role
+    ports:
+      - "8000:8000"

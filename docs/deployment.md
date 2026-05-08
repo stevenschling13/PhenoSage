@@ -189,3 +189,40 @@ NEXT_PUBLIC_SUPABASE_URL=https://<project>.supabase.co \
 SUPABASE_SERVICE_ROLE_KEY=<service-role> \
 pnpm --filter web test:e2e
 ```
+
+---
+
+## Container images (PR5)
+
+The repo now includes production-oriented root Dockerfiles:
+
+- `Dockerfile.web` builds `apps/web` using a multi-stage Node 20 Alpine build and runs as a non-root user.
+- `Dockerfile.analysis` builds `apps/analysis` using Python 3.12 slim and runs as a non-root user.
+- `.dockerignore` excludes local state, caches, and secrets from build context.
+
+Build locally:
+
+```bash
+docker build -f Dockerfile.web -t phenosage-web:local .
+docker build -f Dockerfile.analysis -t phenosage-analysis:local .
+```
+
+For CI smoke bootstrapping, `docker-compose.ci.yml` launches both services with stub env vars:
+
+```bash
+docker compose -f docker-compose.ci.yml up --build
+```
+
+> Note: compose values are placeholders for build/smoke and are not production secrets.
+
+---
+
+## CI container + SBOM validation
+
+`/.github/workflows/ci.yml` now includes a `build-images` job that:
+
+1. Builds `phenosage-web:ci` from `Dockerfile.web`.
+2. Builds `phenosage-analysis:ci` from `Dockerfile.analysis`.
+3. Generates SPDX SBOM artifacts for both images via `anchore/sbom-action`.
+
+This gives deploy-time confidence that production images stay buildable and produces attestable inventory artifacts for security review.

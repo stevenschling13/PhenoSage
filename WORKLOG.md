@@ -1,3 +1,26 @@
+## 2026-05-08 — PR5 deployment slice (Codex GPT-5.3)
+
+**Landed on `work`**
+
+- `feat(devops)` — Added root `Dockerfile.web` and `Dockerfile.analysis` with multi-stage/non-root runtime defaults suitable for CI and production image builds.
+- `feat(devops)` — Added `.dockerignore` and `docker-compose.ci.yml` for reproducible local/CI container smoke orchestration.
+- `ci` — Extended `.github/workflows/ci.yml` with `build-images` (web+analysis image builds) plus SPDX SBOM generation/upload via `anchore/sbom-action`.
+- `docs` — Extended `docs/deployment.md` with container build/run instructions and CI SBOM notes.
+
+**What landed**
+
+- commit: `61954f1`
+
+**In-flight**
+
+- branch: `work`
+
+**Dead ends**
+
+- None.
+
+---
+
 ## 2026-05-08 — PR4 analysis proxy hardening (Codex GPT-5.3)
 
 **Landed on `work`**
