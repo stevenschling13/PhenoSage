@@ -43,6 +43,10 @@ Handoff log between sessions. Keep entries short. Newest at top.
   postcss advisory cleared via `pnpm.overrides` (`postcss@<8.5.10` →
   `>=8.5.10`). Two open advisories remain (`vite ≤ 6.4.1`, `esbuild ≤ 0.24.2`)
   and require a vitest 2 → 3 upgrade. Tracked as the next dep-bump PR.
+- ~~Two open advisories remain (`vite`, `esbuild`)~~ Cleared in a follow-up
+  commit: bumped `vitest` 2 → 3 in both `apps/web` and `packages/shared`,
+  added `vite ^6.4.2` and `esbuild ^0.25.0` to `pnpm.overrides`, all 78 tests
+  still pass under the new toolchain.
 
 ---
 
