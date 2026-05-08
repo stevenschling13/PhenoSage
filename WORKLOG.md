@@ -4,6 +4,31 @@ Handoff log between sessions. Keep entries short. Newest at top.
 
 ---
 
+## 2026-05-08 — PR1 safety foundation slice (Codex GPT-5.3)
+
+**Landed on `work`**
+
+- `feat(web)` — Added centralized API error helper and JSON+schema request validation helper for route handlers.
+- `feat(shared)` — Added runtime schemas (`zod`) and exported them via shared package.
+- `fix(web)` — Hardened `/api/uploads/sign`, `/api/plants/[plantId]/analyze`, and `/api/plants/[plantId]/analysis/latest` with schema validation + UUID validation + sanitized error envelopes.
+- `feat(web)` — Protected `/api/ready` with `READINESS_PROBE_SECRET` bearer auth and sanitized readiness output.
+- `fix(web)` — Removed upstream response-body leakage from analysis proxy errors.
+- `test(web)` — Updated ready/upload/latest-analysis route tests for new contracts.
+
+**What landed**
+
+- commit: `4132f1b`
+
+**In-flight**
+
+- branch: `work` (no PR opened yet)
+
+**Dead ends**
+
+- None.
+
+---
+
 ## 2026-05-08 — UX walkthrough: signed-out CTAs + auth copy + alert focus (Claude Opus 4.7)
 
 **Landed on `main`**
