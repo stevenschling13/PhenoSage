@@ -24,7 +24,8 @@
     "openai": "^4.47.1",
     "react": "^19.2.5",
     "react-dom": "^19.2.5",
-    "server-only": "^0.0.1"
+    "server-only": "^0.0.1",
+    "zod": "^3.23.8"
   },
   "devDependencies": {
     "@types/node": "^25.6.0",

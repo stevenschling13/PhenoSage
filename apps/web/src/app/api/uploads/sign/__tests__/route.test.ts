@@ -70,11 +70,28 @@ describe("POST /api/uploads/sign", () => {
     ["plantId", { fileName: "f.jpg", contentType: "image/jpeg" }],
     ["fileName", { plantId: "p1", contentType: "image/jpeg" }],
     ["contentType", { plantId: "p1", fileName: "f.jpg" }],
-  ])("returns 400 when %s is missing", async (_field, body) => {
+  ])("returns 400 when %s is missing", async (field, body) => {
     getServerSession.mockResolvedValue(SESSION_OK);
     const res = await POST(jsonRequest(body));
     expect(res.status).toBe(400);
-    expect((await res.json()).error).toMatch(/required/);
+    const json = (await res.json()) as {
+      error: string;
+      issues?: Array<{ path: string }>;
+    };
+    expect(json.error).toBe("invalid_request");
+    expect(json.issues?.some((i) => i.path === field)).toBe(true);
+  });
+
+  it("returns 400 when the body is not valid JSON", async () => {
+    getServerSession.mockResolvedValue(SESSION_OK);
+    const req = new NextRequest("http://localhost/api/uploads/sign", {
+      method: "POST",
+      body: "not-json",
+      headers: { "content-type": "application/json" },
+    });
+    const res = await POST(req);
+    expect(res.status).toBe(400);
+    expect((await res.json()).error).toBe("invalid_json");
   });
 
   it("returns 415 for an unsupported content type", async () => {

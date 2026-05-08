@@ -1,4 +1,8 @@
 import { NextRequest, NextResponse } from "next/server";
+import {
+  allowedImageMimeSchema,
+  uploadsSignRequestSchema,
+} from "@phenosage/shared";
 import { getServerSession, getServerUser } from "@/lib/server/auth";
 import { preparePlantImageUpload } from "@/lib/server/plants";
 import { rateLimit, rateLimitKeyFromRequest } from "@/lib/server/rate-limit";
@@ -7,6 +11,7 @@ import {
   getOrCreateRequestId,
   logServerEvent,
 } from "@/lib/server/request-id";
+import { parseJson } from "@/lib/server/validate";
 
 // POST /api/uploads/sign
 // Returns a short-lived Supabase Storage signed upload URL.
@@ -24,7 +29,7 @@ export async function POST(request: NextRequest) {
 
   const user = await getServerUser();
   const rate = rateLimit({
-    key: rateLimitKeyFromRequest(request, user?.id ?? null),
+    key: `upload-sign:${rateLimitKeyFromRequest(request, user?.id ?? null)}`,
     limit: 10,
     windowMs: 60_000,
   });
@@ -41,28 +46,15 @@ export async function POST(request: NextRequest) {
     );
   }
 
-  const body = (await request.json()) as {
-    plantId: string;
-    fileName: string;
-    contentType: string;
-    takenAt?: string;
-    source?: "camera" | "upload";
-    notes?: string;
-  };
+  const parsed = await parseJson(request, uploadsSignRequestSchema, {
+    requestId,
+  });
+  if (!parsed.ok) return parsed.response;
+  const body = parsed.data;
 
-  if (!body.plantId || !body.fileName || !body.contentType) {
-    return attachRequestId(
-      NextResponse.json(
-        { error: "plantId, fileName, and contentType are required", requestId },
-        { status: 400 },
-      ),
-      requestId,
-    );
-  }
-
-  // Validate content type — images only
-  const allowedTypes = ["image/jpeg", "image/png", "image/webp", "image/heic"];
-  if (!allowedTypes.includes(body.contentType)) {
+  // Strict MIME whitelist — kept as a separate check so 415 stays distinct
+  // from a 400 (shape) error.
+  if (!allowedImageMimeSchema.safeParse(body.contentType).success) {
     return attachRequestId(
       NextResponse.json(
         { error: "Unsupported content type", requestId },

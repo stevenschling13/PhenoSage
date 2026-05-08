@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import { analyzeRequestSchema } from "@phenosage/shared";
 import { getServerSession, getServerUser } from "@/lib/server/auth";
 import { runAndPersistPlantAnalysis } from "@/lib/server/plants";
 import { rateLimit, rateLimitKeyFromRequest } from "@/lib/server/rate-limit";
@@ -7,6 +8,7 @@ import {
   getOrCreateRequestId,
   logServerEvent,
 } from "@/lib/server/request-id";
+import { parseJson } from "@/lib/server/validate";
 
 interface RouteParams {
   params: Promise<{ plantId: string }>;
@@ -24,7 +26,7 @@ export async function POST(request: NextRequest, { params }: RouteParams) {
 
   const user = await getServerUser();
   const rate = rateLimit({
-    key: rateLimitKeyFromRequest(request, user?.id ?? null),
+    key: `analyze:${rateLimitKeyFromRequest(request, user?.id ?? null)}`,
     limit: 5,
     windowMs: 60_000,
   });
@@ -41,13 +43,16 @@ export async function POST(request: NextRequest, { params }: RouteParams) {
     );
   }
 
+  const parsed = await parseJson(request, analyzeRequestSchema, { requestId });
+  if (!parsed.ok) return parsed.response;
+  const { imageId } = parsed.data;
+
   const { plantId } = await params;
-  const body = (await request.json().catch(() => ({}))) as { imageId?: string };
 
   try {
     const result = await runAndPersistPlantAnalysis({
       plantId,
-      ...(body.imageId ? { imageId: body.imageId } : {}),
+      ...(imageId ? { imageId } : {}),
       requestId,
     });
 
@@ -79,7 +84,7 @@ export async function POST(request: NextRequest, { params }: RouteParams) {
     logServerEvent("error", "plant analysis failed", {
       requestId,
       plantId,
-      imageId: body.imageId,
+      imageId,
       error: error instanceof Error ? error.message : "unknown_error",
     });
     return attachRequestId(

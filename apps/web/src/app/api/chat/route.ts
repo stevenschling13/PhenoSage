@@ -1,30 +1,30 @@
 import { NextRequest, NextResponse } from "next/server";
+import { chatRequestSchema } from "@phenosage/shared";
 import { getAIClient } from "@/lib/server/ai-client";
 import { getServerSession } from "@/lib/server/auth";
+import { attachRequestId, getOrCreateRequestId } from "@/lib/server/request-id";
+import { parseJson } from "@/lib/server/validate";
 
 // POST /api/chat
 // Accepts a threadId + message, streams OpenAI response back.
 // Context is injected server-side from the user's grow data.
 export async function POST(request: NextRequest) {
+  const requestId = getOrCreateRequestId(request);
   const session = await getServerSession();
   if (!session) {
-    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+    return attachRequestId(
+      NextResponse.json({ error: "Unauthorized" }, { status: 401 }),
+      requestId,
+    );
   }
 
-  const body = (await request.json()) as {
-    threadId?: string;
-    message: string;
-    growId?: string;
-  };
-
-  if (!body.message?.trim()) {
-    return NextResponse.json({ error: "message is required" }, { status: 400 });
-  }
+  const parsed = await parseJson(request, chatRequestSchema, { requestId });
+  if (!parsed.ok) return parsed.response;
 
   const openai = getAIClient();
 
-  // TODO: Load grow context from DB to inject as system context
-  // TODO: Persist ChatThread + ChatMessage rows via Supabase service role
+  // TODO(phase 11): inject grow context retrieved via embeddings.
+  // TODO(phase 11): persist ChatThread + ChatMessage rows via service role.
 
   const stream = openai.beta.chat.completions.stream({
     model: "gpt-4o",
@@ -36,7 +36,7 @@ export async function POST(request: NextRequest) {
           "You have access to the user's grow data and plant history. " +
           "Give precise, evidence-based advice. Be concise and professional.",
       },
-      { role: "user", content: body.message },
+      { role: "user", content: parsed.data.message },
     ],
     stream: true,
   });
@@ -58,6 +58,7 @@ export async function POST(request: NextRequest) {
     headers: {
       "Content-Type": "text/plain; charset=utf-8",
       "Transfer-Encoding": "chunked",
+      "x-request-id": requestId,
     },
   });
 }

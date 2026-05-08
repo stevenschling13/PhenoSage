@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import { plantImageFinalizeRequestSchema } from "@phenosage/shared";
 import { getServerSession, getServerUser } from "@/lib/server/auth";
 import { getPlantTimeline, persistPlantImageUpload } from "@/lib/server/plants";
 import { rateLimit, rateLimitKeyFromRequest } from "@/lib/server/rate-limit";
@@ -7,6 +8,7 @@ import {
   getOrCreateRequestId,
   logServerEvent,
 } from "@/lib/server/request-id";
+import { parseJson } from "@/lib/server/validate";
 
 interface RouteParams {
   params: Promise<{ plantId: string }>;
@@ -75,7 +77,7 @@ export async function POST(request: NextRequest, { params }: RouteParams) {
 
   const user = await getServerUser();
   const rate = rateLimit({
-    key: rateLimitKeyFromRequest(request, user?.id ?? null),
+    key: `images:${rateLimitKeyFromRequest(request, user?.id ?? null)}`,
     limit: 10,
     windowMs: 60_000,
   });
@@ -92,24 +94,13 @@ export async function POST(request: NextRequest, { params }: RouteParams) {
     );
   }
 
-  const { plantId } = await params;
-  const body = (await request.json()) as {
-    imageId: string;
-    takenAt?: string;
-    source?: "camera" | "upload";
-    notes?: string;
-    storagePath: string;
-  };
+  const parsed = await parseJson(request, plantImageFinalizeRequestSchema, {
+    requestId,
+  });
+  if (!parsed.ok) return parsed.response;
+  const body = parsed.data;
 
-  if (!body.imageId || !body.storagePath) {
-    return attachRequestId(
-      NextResponse.json(
-        { error: "imageId and storagePath are required", requestId },
-        { status: 400 },
-      ),
-      requestId,
-    );
-  }
+  const { plantId } = await params;
 
   try {
     const prepared = await persistPlantImageUpload({
