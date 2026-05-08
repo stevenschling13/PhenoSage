@@ -4,6 +4,59 @@ Handoff log between sessions. Keep entries short. Newest at top.
 
 ---
 
+## 2026-05-07 — Form a11y hardening + assistant boundary parity (Claude Opus 4.7)
+
+**Landed on `main`**
+
+Continuation of the UX-hardening pass. Focus: form error accessibility,
+upload feedback semantics, and assistant route parity with the rest of
+the app's error/loading boundaries.
+
+- `feat(web)` — `apps/web/src/components/form-error-summary.tsx`. New
+  shared client component that renders `role="alert"` + `aria-live=
+"assertive"`, focuses itself on appearance (so screen readers
+  announce), and lists field errors as deep-link anchors to each
+  offending field. Returns null when the form is clean.
+- `feat(web)` — `apps/web/src/app/(app)/grows/new/grow-form.tsx`:
+  - Replaced inline server-error div with `FormErrorSummary` that
+    receives the field-error map and a label/target-id meta map.
+  - Every field now sets `aria-invalid` and `aria-describedby` linking
+    to its `*-error` paragraph when an error is present.
+  - Added `noValidate` so server-side validation owns the message
+    surface (no duplicate browser tooltips).
+  - Submit button now sets `aria-busy={isPending}`.
+- `feat(web)` — `apps/web/src/app/(app)/plants/new/plant-form.tsx`: same
+  treatment (FormErrorSummary, aria-invalid/describedby on grow + name
+  fields, aria-busy on submit, noValidate on form).
+- `feat(web)` — `apps/web/src/components/upload-photo-panel.tsx`: the
+  notice region now switches between `role="status"` /
+  `aria-live="polite"` for success/warning and `role="alert"` /
+  `aria-live="assertive"` for danger, so upload failures are announced
+  immediately. Submit gets `aria-busy` while uploading.
+- `feat(web)` — `apps/web/src/app/assistant/error.tsx` and
+  `apps/web/src/app/assistant/loading.tsx` bring the chat surface to
+  parity with `(app)` and `auth`: a tailored ErrorFallback ("The grow
+  copilot is unavailable right now") and a skeleton with `role="status"`
+  - `aria-busy`.
+
+**Validation**
+
+- `pnpm run validate` — PASS
+- `pnpm turbo run type-check lint test` — PASS (104 / 104 web, 5 / 5 shared)
+- `pnpm --filter web build` — PASS (12 / 12 static pages)
+- `pnpm run security:routes` — PASS (9 routes scanned)
+
+**Notes / follow-ups**
+
+- `FormErrorSummary` and the upload region updates are presentational;
+  no unit tests because vitest still has no `@vitejs/plugin-react`.
+  Adding RTL infra is queued as its own iteration.
+- Plant detail / timeline page still relies on server-rendered empty
+  states; if any client-side fetches are added later, they need the
+  same role="alert" + aria-busy treatment.
+
+---
+
 ## 2026-05-07 — DRY error boundaries + workspace loading state (Claude Opus 4.7)
 
 **Landed on `main`**

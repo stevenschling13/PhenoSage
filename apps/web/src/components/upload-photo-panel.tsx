@@ -226,7 +226,8 @@ export function UploadPhotoPanel({ plantId }: { plantId: string }) {
 
           {notice ? (
             <div
-              aria-live="polite"
+              aria-live={notice.tone === "danger" ? "assertive" : "polite"}
+              role={notice.tone === "danger" ? "alert" : "status"}
               className={`rounded-[1.15rem] border px-4 py-3 text-sm ${
                 notice.tone === "success"
                   ? "border-success/20 bg-success/10 text-success"
@@ -240,6 +241,7 @@ export function UploadPhotoPanel({ plantId }: { plantId: string }) {
           ) : null}
 
           <Button
+            aria-busy={isSubmitting || undefined}
             disabled={!file || isSubmitting}
             fullWidth
             onClick={() => void prepareUpload()}

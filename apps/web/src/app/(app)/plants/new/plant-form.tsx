@@ -3,6 +3,7 @@
 import { useState, useTransition } from "react";
 import Link from "next/link";
 import { Button, buttonStyles } from "@/components/ui/button";
+import { FormErrorSummary } from "@/components/form-error-summary";
 type GrowRecord = { id: string; name: string; stage: string | null };
 import {
   createPlantAction,
@@ -10,15 +11,34 @@ import {
   type CreatePlantActionResult,
 } from "../actions";
 
+const FIELD_META = {
+  growId: { label: "Grow", targetId: "plant-grow" },
+  name: { label: "Plant name", targetId: "plant-name" },
+} as const;
+
 const inputClassName =
   "mt-2 block w-full rounded-[1.15rem] border border-border/80 bg-surface px-4 py-3 text-sm text-foreground shadow-soft transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/35";
 
-function FieldError({ message }: { message: string | undefined }) {
+function describedBy(id: string, hasError: boolean): string | undefined {
+  return hasError ? `${id}-error` : undefined;
+}
+
+function FieldError({
+  fieldId,
+  message,
+}: {
+  fieldId: string;
+  message: string | undefined;
+}) {
   if (!message) {
     return null;
   }
 
-  return <p className="mt-2 text-sm text-danger">{message}</p>;
+  return (
+    <p id={`${fieldId}-error`} className="mt-2 text-sm text-danger">
+      {message}
+    </p>
+  );
 }
 
 export function PlantForm({
@@ -46,7 +66,13 @@ export function PlantForm({
   }
 
   return (
-    <form action={handleAction} className="space-y-5">
+    <form action={handleAction} className="space-y-5" noValidate>
+      <FormErrorSummary
+        message={state.message}
+        fieldErrors={state.fieldErrors}
+        fieldMeta={FIELD_META}
+      />
+
       <div>
         <label
           className="block text-sm font-medium text-foreground"
@@ -55,6 +81,11 @@ export function PlantForm({
           Grow
         </label>
         <select
+          aria-describedby={describedBy(
+            "plant-grow",
+            Boolean(state.fieldErrors?.growId),
+          )}
+          aria-invalid={Boolean(state.fieldErrors?.growId) || undefined}
           className={inputClassName}
           id="plant-grow"
           name="growId"
@@ -68,7 +99,7 @@ export function PlantForm({
             </option>
           ))}
         </select>
-        <FieldError message={state.fieldErrors?.growId} />
+        <FieldError fieldId="plant-grow" message={state.fieldErrors?.growId} />
       </div>
 
       <div>
@@ -79,6 +110,11 @@ export function PlantForm({
           Plant name
         </label>
         <input
+          aria-describedby={describedBy(
+            "plant-name",
+            Boolean(state.fieldErrors?.name),
+          )}
+          aria-invalid={Boolean(state.fieldErrors?.name) || undefined}
           className={inputClassName}
           id="plant-name"
           name="name"
@@ -87,7 +123,7 @@ export function PlantForm({
           required
           value={name}
         />
-        <FieldError message={state.fieldErrors?.name} />
+        <FieldError fieldId="plant-name" message={state.fieldErrors?.name} />
       </div>
 
       <div className="grid gap-5 md:grid-cols-2">
@@ -143,12 +179,6 @@ export function PlantForm({
         />
       </div>
 
-      {state.message ? (
-        <div className="rounded-[1.15rem] border border-danger/20 bg-danger/10 px-4 py-3 text-sm text-danger">
-          {state.message}
-        </div>
-      ) : null}
-
       <div className="flex flex-wrap items-center justify-between gap-3 border-t border-border/70 pt-5">
         <p className="text-sm leading-6 text-muted-foreground">
           The new plant opens directly into its upload and timeline workspace.
@@ -160,7 +190,12 @@ export function PlantForm({
           >
             Cancel
           </Link>
-          <Button disabled={isPending} size="md" type="submit">
+          <Button
+            aria-busy={isPending || undefined}
+            disabled={isPending}
+            size="md"
+            type="submit"
+          >
             {isPending ? "Creating plant..." : "Create plant"}
           </Button>
         </div>
