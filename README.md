@@ -105,6 +105,23 @@ docker run -p 8000:8000 --env-file .env phenosage-analysis
 
 See [docs/deployment.md](docs/deployment.md) for the full list of required environment variables per service.
 
+The contract is enforced in two places:
+
+- `scripts/check-env-contract.mjs` (run via `pnpm run check:env`) — fails CI if any required key is missing from `.env.example`, or if a server-only key leaks into client code.
+- `apps/web/src/lib/server/env.ts` — runtime validator for Route Handlers; call `assertServerEnv()` at the top of a server entry to fail loudly on misconfiguration.
+
+## Testing
+
+| Layer                   | Command                                                                   |
+| ----------------------- | ------------------------------------------------------------------------- |
+| Unit (web + shared)     | `pnpm turbo run test`                                                     |
+| Type-check + lint       | `pnpm turbo run type-check lint`                                          |
+| Pre-merge guardrails    | `pnpm run validate`                                                       |
+| Route security audit    | `pnpm run security:routes`                                                |
+| End-to-end (Playwright) | `pnpm --filter web exec playwright install && pnpm --filter web test:e2e` |
+
+The auth flow is covered by unit tests in `apps/web/src/app/auth/__tests__/actions.test.ts`, including network-failure (`TypeError: fetch failed`) and DNS-failure (`ENOTFOUND`) paths so a misconfigured Supabase URL never reaches the user as a raw "fetch failed" error.
+
 ## Current Deployment Posture
 
 - The browser only talks to the Next.js app on Vercel. It does not call Railway directly.
