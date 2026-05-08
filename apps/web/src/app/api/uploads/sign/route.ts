@@ -28,7 +28,7 @@ export async function POST(request: NextRequest) {
   }
 
   const user = await getServerUser();
-  const rate = rateLimit({
+  const rate = await rateLimit({
     key: `upload-sign:${rateLimitKeyFromRequest(request, user?.id ?? null)}`,
     limit: 10,
     windowMs: 60_000,

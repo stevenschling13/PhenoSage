@@ -35,6 +35,16 @@ const SERVER_RULES: Rule[] = [
   { name: "ANALYSIS_SERVICE_API_KEY", required: true },
   { name: "OPENAI_API_KEY", required: true, pattern: /^sk-/ },
   { name: "NEXT_PUBLIC_APP_URL", required: true, pattern: /^https?:\/\// },
+  // Upstash Redis powers distributed rate limiting. Optional in dev
+  // (the limiter falls back to in-memory) — Phase 6 tightens this to
+  // required in production via /api/ready.
+  {
+    name: "UPSTASH_REDIS_REST_URL",
+    required: false,
+    pattern: /^https?:\/\//,
+    hint: "https://<id>.upstash.io",
+  },
+  { name: "UPSTASH_REDIS_REST_TOKEN", required: false },
 ];
 
 const PUBLIC_RULES: Rule[] = SERVER_RULES.filter((r) =>

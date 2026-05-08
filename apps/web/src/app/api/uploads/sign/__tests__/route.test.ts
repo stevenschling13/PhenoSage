@@ -40,7 +40,7 @@ describe("POST /api/uploads/sign", () => {
     (preparePlantImageUpload as Mock).mockReset();
     (rateLimit as Mock).mockReset();
     (rateLimitKeyFromRequest as Mock).mockReset();
-    rateLimit.mockReturnValue({ ok: true });
+    rateLimit.mockResolvedValue({ ok: true });
     rateLimitKeyFromRequest.mockReturnValue("k");
     getServerUser.mockResolvedValue({ id: "u1" });
     preparePlantImageUpload.mockImplementation(
@@ -127,7 +127,7 @@ describe("POST /api/uploads/sign", () => {
 
   it("returns 429 when rate-limited", async () => {
     getServerSession.mockResolvedValue(SESSION_OK);
-    rateLimit.mockReturnValue({ ok: false });
+    rateLimit.mockResolvedValue({ ok: false });
     const res = await POST(
       jsonRequest({
         plantId: "p1",

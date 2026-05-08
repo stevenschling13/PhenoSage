@@ -44,7 +44,7 @@ describe("POST /api/plants/[plantId]/analyze", () => {
     (runAndPersistPlantAnalysis as Mock).mockReset();
     (rateLimit as Mock).mockReset();
     (rateLimitKeyFromRequest as Mock).mockReset();
-    rateLimit.mockReturnValue({ ok: true });
+    rateLimit.mockResolvedValue({ ok: true });
     rateLimitKeyFromRequest.mockReturnValue("k");
     getServerUser.mockResolvedValue({ id: "u1" });
     runAndPersistPlantAnalysis.mockResolvedValue({
@@ -61,7 +61,7 @@ describe("POST /api/plants/[plantId]/analyze", () => {
 
   it("returns 429 when rate-limited", async () => {
     getServerSession.mockResolvedValue(SESSION_OK);
-    rateLimit.mockReturnValue({ ok: false });
+    rateLimit.mockResolvedValue({ ok: false });
     const res = await POST(jsonRequest({}), makeParams("p1"));
     expect(res.status).toBe(429);
     expect(runAndPersistPlantAnalysis).not.toHaveBeenCalled();

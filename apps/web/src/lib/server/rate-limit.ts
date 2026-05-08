@@ -1,11 +1,23 @@
 import "server-only";
 
+import { Ratelimit } from "@upstash/ratelimit";
+import { Redis } from "@upstash/redis";
+import { logServerEvent } from "./request-id";
+
 /**
- * Lightweight in-memory sliding-window limiter.
+ * Rate limiter with two backends.
  *
- * Sufficient for Vercel serverless where each instance is short-lived.
- * Upgrade to `@upstash/ratelimit` (Redis) when you need cross-instance
- * enforcement or burst protection stronger than best-effort.
+ * Production (Vercel, multi-lambda): Upstash Redis sliding window.
+ *   Activated when both UPSTASH_REDIS_REST_URL and
+ *   UPSTASH_REDIS_REST_TOKEN are set.
+ *
+ * Dev / test / fallback: in-process sliding window.
+ *   Each lambda gets its own counter — fine for one-machine dev.
+ *   Used when Upstash env is missing, and as a fail-open fallback when
+ *   a Redis call throws (we never let the limiter take down the site).
+ *
+ * The function signature is the same in either backend; callers always
+ * `await rateLimit(...)` and read `result.ok`.
  */
 
 interface Bucket {
@@ -25,10 +37,61 @@ export interface RateLimitOptions {
   key: string;
   limit: number;
   windowMs: number;
+  /** Test hook — overrides Date.now() for the in-memory backend. */
   now?: number;
 }
 
-export function rateLimit(opts: RateLimitOptions): RateLimitResult {
+// ── Redis singleton (lazy, env-aware) ─────────────────────────────────────
+
+let redisClient: Redis | null | undefined; // undefined = not yet resolved
+
+function getRedis(): Redis | null {
+  if (redisClient !== undefined) return redisClient;
+  const url = process.env["UPSTASH_REDIS_REST_URL"];
+  const token = process.env["UPSTASH_REDIS_REST_TOKEN"];
+  if (!url || !token) {
+    redisClient = null;
+    return null;
+  }
+  try {
+    redisClient = new Redis({ url, token });
+  } catch (error) {
+    logServerEvent("warn", "rate-limit: failed to construct Redis client", {
+      error: error instanceof Error ? error.message : "unknown_error",
+    });
+    redisClient = null;
+  }
+  return redisClient;
+}
+
+// One Ratelimit instance per (limit, windowMs) tuple — re-creating per
+// call would defeat the @upstash/ratelimit internal cache.
+const limiterCache = new Map<string, Ratelimit>();
+
+function getDistributedLimiter(
+  redis: Redis,
+  limit: number,
+  windowMs: number,
+): Ratelimit {
+  const cacheKey = `${limit}:${windowMs}`;
+  let limiter = limiterCache.get(cacheKey);
+  if (!limiter) {
+    // Upstash duration syntax: "<n> <unit>". Convert ms → s, floor at 1s.
+    const seconds = Math.max(1, Math.ceil(windowMs / 1000));
+    limiter = new Ratelimit({
+      redis,
+      limiter: Ratelimit.slidingWindow(limit, `${seconds} s` as `${number} s`),
+      prefix: "phenosage:rl",
+      analytics: false,
+    });
+    limiterCache.set(cacheKey, limiter);
+  }
+  return limiter;
+}
+
+// ── In-memory fallback (sliding window) ───────────────────────────────────
+
+function inMemoryLimit(opts: RateLimitOptions): RateLimitResult {
   const { key, limit, windowMs } = opts;
   const now = opts.now ?? Date.now();
   const cutoff = now - windowMs;
@@ -58,6 +121,34 @@ export function rateLimit(opts: RateLimitOptions): RateLimitResult {
   };
 }
 
+// ── Public API ────────────────────────────────────────────────────────────
+
+export async function rateLimit(
+  opts: RateLimitOptions,
+): Promise<RateLimitResult> {
+  const redis = getRedis();
+  if (redis) {
+    try {
+      const limiter = getDistributedLimiter(redis, opts.limit, opts.windowMs);
+      const result = await limiter.limit(opts.key);
+      return {
+        ok: result.success,
+        remaining: result.remaining,
+        resetAt: result.reset,
+      };
+    } catch (error) {
+      // Fail open with a loud log — never silently disable the limiter,
+      // but never let a Redis hiccup take down the site either.
+      logServerEvent("warn", "rate-limit: redis call failed; falling back", {
+        key: opts.key,
+        error: error instanceof Error ? error.message : "unknown_error",
+      });
+      // fall through to in-memory
+    }
+  }
+  return inMemoryLimit(opts);
+}
+
 export function rateLimitKeyFromRequest(
   request: Request,
   userId: string | null,
@@ -68,7 +159,9 @@ export function rateLimitKeyFromRequest(
   return `ip:${ip}`;
 }
 
-/** Test-only. */
+/** Test-only. Resets in-memory state and the lazy Redis singleton. */
 export function __resetRateLimitStore(): void {
   buckets.clear();
+  limiterCache.clear();
+  redisClient = undefined;
 }
