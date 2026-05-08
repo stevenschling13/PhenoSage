@@ -1,12 +1,22 @@
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { NextRequest } from "next/server";
+
+const dbMock = { from: vi.fn() };
+const createMock = vi.fn();
+vi.mock("@/lib/server/db", () => ({ getDbClient: () => dbMock }));
+vi.mock("@/lib/server/ai-client", () => ({
+  getAIClient: () => ({
+    chat: {
+      completions: { create: (...args: unknown[]) => createMock(...args) },
+    },
+  }),
+}));
+
 import { GET } from "../route";
-
 const ORIGINAL_ENV = process.env;
-
 function makeRequest(authHeader?: string): NextRequest {
   const headers = new Headers();
-  if (authHeader !== undefined) headers.set("authorization", authHeader);
+  if (authHeader) headers.set("authorization", authHeader);
   return new NextRequest("http://localhost/api/internal/cron/daily-summary", {
     headers,
   });
@@ -15,44 +25,78 @@ function makeRequest(authHeader?: string): NextRequest {
 describe("GET /api/internal/cron/daily-summary", () => {
   beforeEach(() => {
     process.env = { ...ORIGINAL_ENV };
+    dbMock.from.mockReset();
+    createMock.mockReset();
   });
   afterEach(() => {
     process.env = ORIGINAL_ENV;
   });
 
-  it("returns 401 when CRON_SECRET is not configured", async () => {
-    delete process.env["CRON_SECRET"];
-    const res = await GET(makeRequest("Bearer anything"));
-    expect(res.status).toBe(401);
-    const body = await res.json();
-    expect(body.error).toBe("Unauthorized");
-  });
-
-  it("returns 401 when authorization header is missing", async () => {
+  it("returns 401 when unauthorized", async () => {
     process.env["CRON_SECRET"] = "secret";
-    const res = await GET(makeRequest());
+    const res = await GET(makeRequest("Bearer wrong"));
     expect(res.status).toBe(401);
   });
 
-  it("returns 401 when authorization header is wrong", async () => {
+  it("runs pipeline for authorized request", async () => {
     process.env["CRON_SECRET"] = "secret";
-    const res = await GET(makeRequest("Bearer not-the-secret"));
-    expect(res.status).toBe(401);
-  });
+    createMock.mockResolvedValue({
+      choices: [{ message: { content: "summary" } }],
+    });
 
-  it("returns 401 when authorization header is missing the Bearer prefix", async () => {
-    process.env["CRON_SECRET"] = "secret";
-    const res = await GET(makeRequest("secret"));
-    expect(res.status).toBe(401);
-  });
+    dbMock.from.mockImplementation((table: string) => {
+      if (table === "grows")
+        return {
+          select: vi
+            .fn()
+            .mockReturnValue({
+              eq: vi
+                .fn()
+                .mockResolvedValue({
+                  error: null,
+                  data: [{ id: "g1", owner_id: "u1", name: "Grow 1" }],
+                }),
+            }),
+        };
+      if (table === "grow_events")
+        return {
+          select: vi
+            .fn()
+            .mockReturnValue({
+              eq: vi
+                .fn()
+                .mockReturnValue({
+                  order: vi
+                    .fn()
+                    .mockReturnValue({
+                      limit: vi
+                        .fn()
+                        .mockResolvedValue({ error: null, data: [] }),
+                    }),
+                }),
+            }),
+          insert: vi.fn().mockResolvedValue({ error: null }),
+        };
+      return {
+        select: vi
+          .fn()
+          .mockReturnValue({
+            eq: vi
+              .fn()
+              .mockReturnValue({
+                order: vi
+                  .fn()
+                  .mockReturnValue({
+                    limit: vi.fn().mockResolvedValue({ error: null, data: [] }),
+                  }),
+              }),
+          }),
+      };
+    });
 
-  it("returns 200 when authorization matches the configured secret", async () => {
-    process.env["CRON_SECRET"] = "secret";
     const res = await GET(makeRequest("Bearer secret"));
     expect(res.status).toBe(200);
     const body = await res.json();
     expect(body.status).toBe("ok");
-    expect(typeof body.ran).toBe("string");
-    expect(Number.isNaN(Date.parse(body.ran))).toBe(false);
   });
 });

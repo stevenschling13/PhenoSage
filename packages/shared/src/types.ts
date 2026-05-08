@@ -196,3 +196,22 @@ export interface GrowEvent {
   occurredAt: string; // ISO timestamp
   createdAt: string;
 }
+
+export type ChatGenerationStatus =
+  | "started"
+  | "succeeded"
+  | "failed"
+  | "inconclusive";
+
+export interface ChatGenerationMetadata {
+  generationStatus: ChatGenerationStatus;
+  failureReason?: string;
+  growId?: string;
+}
+
+export interface ImageComparisonResult {
+  changes: string[];
+  likelyTrendDirection: "improving" | "stable" | "regressing" | "inconclusive";
+  confidence: number;
+  caveats: string[];
+}

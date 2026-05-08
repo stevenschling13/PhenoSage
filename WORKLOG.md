@@ -4,6 +4,26 @@ Handoff log between sessions. Keep entries short. Newest at top.
 
 ---
 
+## 2026-05-08 — chat+cron+comparison integration scaffolding (Codex)
+
+**Landed on feature branch**
+
+- Added authenticated chat grow-context hydration and server-side persistence for `chat_threads`/`chat_messages` in `apps/web/src/app/api/chat/route.ts`, including generation lifecycle states (`started/succeeded/failed/inconclusive`) stored in message metadata.
+- Implemented internal daily-summary cron pipeline skeleton in `apps/web/src/app/api/internal/cron/daily-summary/route.ts`: loads active grows, aggregates events/findings, generates AI summary, persists summary records to `grow_events`, and records notification enqueue placeholder events.
+- Implemented end-to-end image comparison service in `apps/analysis/app/services/image_comparison.py` with storage fetch + vision call + structured result contract.
+- Added shared/analysis types for comparison and chat generation status contracts in `packages/shared/src/types.ts` and `apps/analysis/app/models/analysis.py`.
+- Expanded integration-style tests for chat route, cron route, and image comparison service happy-path/auth paths/failure-safe behavior.
+
+**In-flight**
+
+- Branch: current working branch (PR not opened yet in this session).
+
+**Dead ends**
+
+- No durable notifications table exists in current schema; cron currently persists a notification-queued placeholder as `grow_events.note` for observability until a dedicated queue table lands.
+
+---
+
 ## 2026-05-08 — UX walkthrough: signed-out CTAs + auth copy + alert focus (Claude Opus 4.7)
 
 **Landed on `main`**

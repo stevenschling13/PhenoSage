@@ -25,6 +25,20 @@ class FindingSeverity(StrEnum):
     critical = "critical"
 
 
+class ComparisonTrendDirection(StrEnum):
+    improving = "improving"
+    stable = "stable"
+    regressing = "regressing"
+    inconclusive = "inconclusive"
+
+
+class ImageComparisonResult(BaseModel):
+    changes: list[str]
+    likely_trend_direction: ComparisonTrendDirection
+    confidence: float = Field(ge=0, le=1)
+    caveats: list[str]
+
+
 class GrowContext(BaseModel):
     """Contextual grow data sent from the Next.js proxy."""
 
@@ -38,14 +52,10 @@ class GrowContext(BaseModel):
 
 
 class AnalyzeRequest(BaseModel):
-    """Request body for POST /analyze."""
-
     plant_id: str
     image_id: str
-    # Supabase Storage path — the service fetches the image using the service role key
     storage_path: str
     grow_context: GrowContext
-    # If provided, compare this image to the previous one
     previous_image_id: str | None = None
     previous_storage_path: str | None = None
 
@@ -59,8 +69,6 @@ class AnalysisFinding(BaseModel):
 
 
 class AnalyzeResponse(BaseModel):
-    """Response body for POST /analyze."""
-
     model_config = ConfigDict(protected_namespaces=())
 
     plant_id: str
