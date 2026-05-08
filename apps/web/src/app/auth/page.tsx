@@ -8,7 +8,11 @@ import {
   LeafIcon,
   CheckCircleIcon,
 } from "@/components/ui/icons";
-import { getServerUser } from "@/lib/server/auth";
+import { tryGetServerUser } from "@/lib/server/auth";
+import {
+  AUTH_MISCONFIGURED,
+  getAuthConfigViolations,
+} from "@/lib/server/auth-errors";
 import { SignInForm } from "./sign-in-form";
 
 export const metadata: Metadata = { title: "Sign In" };
@@ -28,10 +32,15 @@ export default async function AuthPage({
 }: {
   searchParams: SearchParams;
 }) {
-  const user = await getServerUser();
+  const user = await tryGetServerUser();
   if (user) redirect("/dashboard");
 
   const { error } = await searchParams;
+
+  // If Supabase isn't configured for this deployment, surface a friendly
+  // banner instead of letting the form submit and fail with "fetch failed".
+  const configMissing = getAuthConfigViolations().length > 0;
+  const initialError = configMissing ? AUTH_MISCONFIGURED : error;
 
   return (
     <main
@@ -112,7 +121,7 @@ export default async function AuthPage({
                     Sign in or create an account to start tracking grows.
                   </p>
                 </div>
-                <SignInForm {...(error ? { initialError: error } : {})} />
+                <SignInForm {...(initialError ? { initialError } : {})} />
               </CardContent>
             </Card>
             <p className="mt-6 text-center text-xs text-muted-foreground">

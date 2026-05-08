@@ -30,7 +30,7 @@ function SubmitButton({ label }: { label: string }) {
   );
 }
 
-function EmailField() {
+function EmailField({ defaultValue }: { defaultValue?: string }) {
   return (
     <div className="space-y-1.5">
       <Label htmlFor="email">Email</Label>
@@ -40,6 +40,7 @@ function EmailField() {
         type="email"
         autoComplete="email"
         placeholder="you@example.com"
+        defaultValue={defaultValue ?? ""}
         required
       />
     </div>
@@ -176,8 +177,9 @@ export function SignInForm({
           role="tabpanel"
           id={panelId("sign-in")}
           aria-labelledby={tabId("sign-in")}
+          key={`sign-in-${signInState?.email ?? ""}`}
         >
-          <EmailField />
+          <EmailField defaultValue={signInState?.email ?? ""} />
           <PasswordField autoComplete="current-password" />
           <Feedback state={signInState} initialError={initialError} />
           <SubmitButton label="Sign in" />
@@ -191,8 +193,9 @@ export function SignInForm({
           role="tabpanel"
           id={panelId("sign-up")}
           aria-labelledby={tabId("sign-up")}
+          key={`sign-up-${signUpState?.email ?? ""}`}
         >
-          <EmailField />
+          <EmailField defaultValue={signUpState?.email ?? ""} />
           <PasswordField autoComplete="new-password" />
           <Feedback state={signUpState} />
           <SubmitButton label="Create account" />
@@ -206,8 +209,9 @@ export function SignInForm({
           role="tabpanel"
           id={panelId("magic-link")}
           aria-labelledby={tabId("magic-link")}
+          key={`magic-link-${otpState?.email ?? ""}`}
         >
-          <EmailField />
+          <EmailField defaultValue={otpState?.email ?? ""} />
           <Feedback state={otpState} />
           <SubmitButton label="Send magic link" />
         </form>

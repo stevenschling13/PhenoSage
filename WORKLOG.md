@@ -4,6 +4,72 @@ Handoff log between sessions. Keep entries short. Newest at top.
 
 ---
 
+## 2026-05-07 — Auth UX hardening: kill "fetch failed" (Claude Opus 4.7)
+
+**Landed on `main`**
+
+- `fix(web)` — production sign-in/sign-up surfaced a generic "fetch failed"
+  message because raw Supabase / undici errors were rendered straight from
+  `error.message`. Added `apps/web/src/lib/server/auth-errors.ts` with a
+  central `describeAuthError()` mapper that prefers stable fields
+  (`name === "AuthRetryableFetchError"`, `code`, `status`) over message
+  substrings, plus `AuthConfigError`, `getAuthConfigViolations()`, and
+  `isNextRedirectError()`/`isNextNotFoundError()` helpers.
+- `fix(web)` — `apps/web/src/lib/server/auth.ts` now throws `AuthConfigError`
+  early if `NEXT_PUBLIC_SUPABASE_URL`/`ANON_KEY` are missing/malformed, so a
+  misconfigured Vercel deploy fails loudly instead of bubbling a TypeError
+  out of Supabase's fetch layer. Added `tryGetServerUser()` for places that
+  must keep rendering when auth is unreachable.
+- `fix(web)` — `apps/web/src/app/auth/actions.ts` rewritten: each action
+  pre-validates env, wraps the Supabase call in try/catch, re-throws
+  `NEXT_REDIRECT`/`NEXT_NOT_FOUND` digests, and returns
+  `{ ok, message, email }` so the form can repopulate the email after a
+  failure. `signOutAction` now redirects home even if Supabase is down.
+- `fix(web)` — `apps/web/src/app/auth/page.tsx` uses `tryGetServerUser()`
+  and shows `AUTH_MISCONFIGURED` as the initial error if env is missing.
+- `fix(web)` — `apps/web/src/app/auth/sign-in-form.tsx` threads the
+  preserved email back via `defaultValue` and uses `key` to remount the
+  form when the echoed email changes (handles uncontrolled inputs cleanly).
+- `fix(web)` — `apps/web/src/app/auth/callback/route.ts` translates
+  `exchangeCodeForSession` errors and config/fetch failures via the new
+  helper, and closes a protocol-relative open-redirect (`//evil.com`) in
+  the `next` param.
+- `fix(web)` — `apps/web/src/app/(app)/layout.tsx` catches profile-load
+  failures and redirects to `/auth?error=...` instead of crashing the
+  authenticated shell when the DB is unreachable.
+- `test(web)` — added `auth-errors.test.ts` (15 cases) and
+  `app/auth/__tests__/actions.test.ts` (14 cases): validation, env-missing,
+  thrown-fetch-failure, returned `AuthRetryableFetchError`,
+  invalid-credentials mapping, success redirect, OTP success, sign-out
+  resilience. Web suite now 102/102 green (was 73/73).
+
+**Validation run for this change**
+
+- `pnpm run validate` → PASS
+- `pnpm turbo run type-check lint` → PASS
+- `pnpm turbo run test` → PASS (102/102 in web, shared cached)
+- `pnpm --filter web build` → PASS (with stub envs)
+- `pnpm run security:routes` → PASS
+
+**Production env action required (NOT a code change)**
+
+- The user-visible "fetch failed" symptom in the live deploy is consistent
+  with one or both of `NEXT_PUBLIC_SUPABASE_URL` / `NEXT_PUBLIC_SUPABASE_ANON_KEY`
+  being absent or malformed in the Vercel **Production** environment.
+  After this change the page surfaces `AUTH_MISCONFIGURED` instead of
+  "fetch failed", but the underlying env still has to be filled in for
+  auth to actually work end-to-end. Verify in Vercel project settings.
+
+**Intentionally not changed**
+
+- No `middleware.ts` introduced.
+- No migration edits.
+- Architecture boundaries (browser → Vercel only; analysis via server
+  proxy) untouched.
+- Did not add Playwright E2E in this PR — pre-existing follow-up.
+
+---
+
 ## 2026-05-07 — Agent operating-model alignment (Claude Opus 4.7)
 
 **Landed on `main`**
