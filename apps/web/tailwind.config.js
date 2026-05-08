@@ -65,6 +65,15 @@ module.exports = {
           DEFAULT: "hsl(var(--card))",
           foreground: "hsl(var(--card-foreground))",
         },
+        // Editorial surfaces — exposed so utility classes resolve
+        // (Tailwind colors, CSS classes in globals.css both work).
+        surface: "rgb(var(--ps-surface) / <alpha-value>)",
+        "surface-2": "rgb(var(--ps-surface-2) / <alpha-value>)",
+        panel: "rgb(var(--ps-panel) / <alpha-value>)",
+        ink: "rgb(var(--ps-ink) / <alpha-value>)",
+        "ink-2": "rgb(var(--ps-ink-2) / <alpha-value>)",
+        "accent-strong": "rgb(var(--ps-accent-strong) / <alpha-value>)",
+        "border-strong": "rgb(var(--ps-line) / var(--ps-line-strong-strength))",
         // Brand palette retained for landing decorative pieces
         brand: {
           50: "#f0fdf4",
@@ -87,6 +96,7 @@ module.exports = {
       },
       fontFamily: {
         sans: [
+          "var(--font-general-sans)",
           "ui-sans-serif",
           "-apple-system",
           "BlinkMacSystemFont",
@@ -96,7 +106,23 @@ module.exports = {
           "Arial",
           "sans-serif",
         ],
+        serif: [
+          "var(--font-fraunces)",
+          "Fraunces",
+          "Instrument Serif",
+          "Georgia",
+          "serif",
+        ],
+        display: [
+          "var(--font-fraunces)",
+          "Fraunces",
+          "Instrument Serif",
+          "Georgia",
+          "serif",
+        ],
         mono: [
+          "var(--font-jetbrains-mono)",
+          "JetBrains Mono",
           "ui-monospace",
           "SFMono-Regular",
           "Menlo",

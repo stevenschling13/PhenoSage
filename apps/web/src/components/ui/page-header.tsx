@@ -1,7 +1,7 @@
 import type { ReactNode } from "react";
 import Link from "next/link";
-import { cn } from "@/lib/cn";
 import { ChevronRightIcon } from "@/components/icons";
+import { cn } from "@/lib/cn";
 
 interface BreadcrumbItem {
   href?: string;
@@ -23,57 +23,57 @@ export function PageHeader({
 }) {
   return (
     <header className="workspace-hero">
-      <div className="flex flex-col gap-6 lg:flex-row lg:items-end lg:justify-between">
-        <div className="space-y-5">
-          {breadcrumbs?.length ? (
-            <nav aria-label="Breadcrumb">
-              <ol className="flex flex-wrap items-center gap-2 text-sm text-muted-foreground">
-                {breadcrumbs.map((item, index) => (
-                  <li
-                    key={`${item.label}-${index}`}
-                    className="flex items-center gap-2"
+      {breadcrumbs?.length ? (
+        <nav aria-label="Breadcrumb" className="mb-3">
+          <ol className="ps-mono flex flex-wrap items-center gap-1.5 text-[11px] uppercase tracking-[0.12em] text-[rgb(var(--ps-muted))]">
+            {breadcrumbs.map((item, index) => (
+              <li
+                key={`${item.label}-${index}`}
+                className="flex items-center gap-1.5"
+              >
+                {index > 0 ? (
+                  <ChevronRightIcon className="h-3 w-3 opacity-60" />
+                ) : null}
+                {item.href ? (
+                  <Link
+                    className="transition-colors hover:text-[rgb(var(--ps-ink))]"
+                    href={item.href}
                   >
-                    {index > 0 ? (
-                      <ChevronRightIcon className="h-4 w-4 text-border-strong" />
-                    ) : null}
-                    {item.href ? (
-                      <Link className="hover:text-foreground" href={item.href}>
-                        {item.label}
-                      </Link>
-                    ) : (
-                      <span aria-current="page" className="text-foreground">
-                        {item.label}
-                      </span>
-                    )}
-                  </li>
-                ))}
-              </ol>
-            </nav>
-          ) : null}
+                    {item.label}
+                  </Link>
+                ) : (
+                  <span
+                    aria-current="page"
+                    className="text-[rgb(var(--ps-ink))]"
+                  >
+                    {item.label}
+                  </span>
+                )}
+              </li>
+            ))}
+          </ol>
+        </nav>
+      ) : null}
+
+      <div className="flex flex-col gap-6 lg:flex-row lg:items-end lg:justify-between">
+        <div className="space-y-3 max-w-3xl">
           {eyebrow ? <div>{eyebrow}</div> : null}
-          <div className="space-y-4">
-            <h1 className="text-balance max-w-4xl text-3xl font-semibold tracking-[-0.06em] text-foreground sm:text-4xl lg:text-[2.7rem]">
-              {title}
-            </h1>
-            <p className="max-w-3xl text-sm leading-7 text-muted-foreground sm:text-base">
-              {description}
-            </p>
-          </div>
-        </div>
-        {actions ? (
-          <div
+          <h1
             className={cn(
-              "flex flex-wrap items-center gap-3 lg:max-w-[28rem] lg:justify-end",
+              "ps-display text-balance text-[34px] leading-[1.04] sm:text-[44px] lg:text-[52px]",
             )}
           >
+            {title}
+          </h1>
+          <p className="text-[14.5px] leading-[1.55] text-[rgb(var(--ps-muted))] sm:text-[15.5px]">
+            {description}
+          </p>
+        </div>
+        {actions ? (
+          <div className="flex flex-wrap items-center gap-2.5 lg:max-w-[28rem] lg:justify-end">
             {actions}
           </div>
         ) : null}
-      </div>
-      <div className="mt-6 flex flex-wrap gap-2">
-        <span className="metric-chip">Operator-first workspace</span>
-        <span className="metric-chip">Same-origin secured</span>
-        <span className="metric-chip">Evidence over noise</span>
       </div>
     </header>
   );

@@ -17,46 +17,52 @@ interface AppShellProps {
  */
 export function AppShell({ user, children }: AppShellProps) {
   return (
-    <div className="min-h-screen bg-background text-foreground">
+    <div className="min-h-screen bg-[rgb(var(--ps-canvas))] text-[rgb(var(--ps-ink))]">
       <div className="flex">
         {/* Sidebar — desktop */}
         <aside
           aria-label="Sidebar"
-          className="sticky top-0 hidden h-screen w-60 shrink-0 border-r border-border bg-card md:flex md:flex-col"
+          className="sticky top-0 hidden h-screen w-60 shrink-0 flex-col border-r border-[rgb(var(--ps-line)/var(--ps-line-strength))] bg-[rgb(var(--ps-surface)/0.6)] md:flex"
         >
           <Link
             href="/dashboard"
-            className="flex h-16 items-center gap-2 border-b border-border px-5 font-semibold tracking-tight"
+            className="flex h-16 items-center gap-2.5 border-b border-[rgb(var(--ps-line)/var(--ps-line-strength))] px-5"
           >
             <span
               aria-hidden="true"
-              className="flex h-8 w-8 items-center justify-center rounded-md bg-primary text-primary-foreground"
+              className="flex h-9 w-9 items-center justify-center rounded-full bg-[rgb(var(--ps-ink))] text-[rgb(var(--ps-canvas))]"
             >
-              <LeafIcon width={18} height={18} />
+              <LeafIcon width={16} height={16} />
             </span>
-            <span>PhenoSage</span>
+            <span className="ps-display text-[18px] leading-none">
+              PhenoSage
+            </span>
           </Link>
           <SidebarNav className="flex-1" />
-          <div className="border-t border-border p-3 text-[11px] text-muted-foreground">
-            <p>v0.1 · Web-first OS</p>
+          <div className="border-t border-[rgb(var(--ps-line)/var(--ps-line-strength))] p-3">
+            <p className="ps-mono text-[10px] uppercase tracking-[0.16em] text-[rgb(var(--ps-subtle))]">
+              v0.1 · operator preview
+            </p>
           </div>
         </aside>
 
         <div className="flex min-w-0 flex-1 flex-col">
           {/* Top bar */}
-          <header className="sticky top-0 z-20 flex h-16 items-center justify-between gap-3 border-b border-border bg-background/85 px-4 backdrop-blur md:px-6">
+          <header className="sticky top-0 z-20 flex h-14 items-center justify-between gap-3 border-b border-[rgb(var(--ps-line)/var(--ps-line-strength))] bg-[rgb(var(--ps-canvas)/0.85)] px-4 backdrop-blur md:px-6">
             {/* Mobile brand */}
             <Link
               href="/dashboard"
-              className="flex items-center gap-2 font-semibold tracking-tight md:hidden"
+              className="flex items-center gap-2 md:hidden"
             >
               <span
                 aria-hidden="true"
-                className="flex h-7 w-7 items-center justify-center rounded-md bg-primary text-primary-foreground"
+                className="flex h-7 w-7 items-center justify-center rounded-full bg-[rgb(var(--ps-ink))] text-[rgb(var(--ps-canvas))]"
               >
-                <LeafIcon width={16} height={16} />
+                <LeafIcon width={14} height={14} />
               </span>
-              <span>PhenoSage</span>
+              <span className="ps-display text-[15px] leading-none">
+                PhenoSage
+              </span>
             </Link>
             <div className="flex flex-1 items-center justify-end gap-3">
               <HealthIndicator />

@@ -4,14 +4,11 @@ import { Card } from "@/components/ui/card";
 
 type StatTone = "default" | "accent" | "success" | "warning";
 
-const accentStyles: Record<StatTone, string> = {
-  default: "bg-surface/88",
-  accent:
-    "bg-[linear-gradient(135deg,rgba(var(--accent),0.10),rgba(255,255,255,0.92))]",
-  success:
-    "bg-[linear-gradient(135deg,rgba(var(--success),0.10),rgba(255,255,255,0.92))]",
-  warning:
-    "bg-[linear-gradient(135deg,rgba(var(--warning),0.10),rgba(255,255,255,0.92))]",
+const accentBars: Record<StatTone, string> = {
+  default: "bg-[rgb(var(--ps-line)/0.15)]",
+  accent: "bg-[rgb(var(--ps-accent))]",
+  success: "bg-[rgb(var(--ps-ok))]",
+  warning: "bg-[rgb(var(--ps-warn))]",
 };
 
 export function StatCard({
@@ -30,34 +27,28 @@ export function StatCard({
   value: string;
 }) {
   return (
-    <Card
-      className={cn(
-        "relative overflow-hidden p-6 shadow-[0_18px_50px_rgba(17,24,17,0.05)]",
-        accentStyles[tone],
-      )}
-    >
-      <div className="absolute inset-x-0 top-0 h-px bg-gradient-to-r from-transparent via-accent/35 to-transparent" />
-      <div className="flex items-start justify-between gap-4">
-        <div className="space-y-3 z-10">
-          <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-muted-foreground">
-            {label}
-          </p>
-          <div className="space-y-1.5">
-            <p className="text-3xl font-semibold tracking-[-0.05em] text-foreground">
-              {value}
-            </p>
-            <p className="max-w-[16rem] text-sm leading-6 text-muted-foreground">
-              {detail}
-            </p>
+    <Card className="relative overflow-hidden p-5">
+      <span
+        aria-hidden="true"
+        className={cn("absolute inset-y-0 left-0 w-[3px]", accentBars[tone])}
+      />
+      <div className="flex items-start justify-between gap-4 pl-2">
+        <div className="space-y-2.5 min-w-0">
+          <p className="ps-eyebrow">{label}</p>
+          <div className="flex items-baseline gap-2 flex-wrap">
+            <span className="ps-display text-[34px] leading-[1]">{value}</span>
           </div>
+          <p className="text-[13px] leading-[1.5] text-[rgb(var(--ps-muted))] max-w-[20rem]">
+            {detail}
+          </p>
         </div>
         {icon ? (
-          <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-[0.95rem] border border-border/70 bg-surface/90 text-accent shadow-sm z-10">
+          <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full border border-[rgb(var(--ps-line)/0.16)] bg-[rgb(var(--ps-surface-2))] text-[rgb(var(--ps-accent))]">
             {icon}
           </div>
         ) : null}
       </div>
-      {meta ? <div className="pt-5 z-10 relative">{meta}</div> : null}
+      {meta ? <div className="pt-4 pl-2">{meta}</div> : null}
     </Card>
   );
 }

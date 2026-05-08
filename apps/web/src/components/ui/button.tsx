@@ -22,23 +22,23 @@ type Size = "sm" | "md" | "lg" | "icon";
 
 const VARIANTS: Record<Variant, string> = {
   primary:
-    "bg-primary text-primary-foreground shadow-elevation-1 hover:bg-primary/90 active:bg-primary/95",
+    "bg-[rgb(var(--ps-ink))] text-[rgb(var(--ps-canvas))] hover:bg-[rgb(var(--ps-ink-2))]",
   secondary:
-    "bg-secondary text-secondary-foreground hover:bg-secondary/80 active:bg-secondary/70",
+    "bg-[rgb(var(--ps-accent))] text-[rgb(var(--ps-accent-ink))] hover:opacity-90",
   outline:
-    "border border-border bg-transparent text-foreground hover:bg-muted active:bg-muted/80",
-  ghost: "bg-transparent text-foreground hover:bg-muted active:bg-muted/80",
-  destructive:
-    "bg-destructive text-destructive-foreground shadow-elevation-1 hover:bg-destructive/90",
+    "border border-[rgb(var(--ps-line)/var(--ps-line-strong-strength))] bg-transparent text-[rgb(var(--ps-ink))] hover:bg-[rgb(var(--ps-ink)/0.04)]",
+  ghost:
+    "bg-transparent text-[rgb(var(--ps-ink))] hover:bg-[rgb(var(--ps-ink)/0.05)]",
+  destructive: "bg-[rgb(var(--ps-crit))] text-white hover:opacity-90",
   surface:
-    "border border-border/70 bg-card text-foreground shadow-elevation-1 hover:bg-muted/60 active:bg-muted",
-  link: "bg-transparent text-primary underline-offset-4 hover:underline px-0 h-auto",
+    "border border-[rgb(var(--ps-line)/var(--ps-line-strong-strength))] bg-[rgb(var(--ps-surface))] text-[rgb(var(--ps-ink))] hover:bg-[rgb(var(--ps-surface-2))]",
+  link: "bg-transparent text-[rgb(var(--ps-accent))] underline-offset-4 hover:underline px-0 h-auto",
 };
 
 const SIZES: Record<Size, string> = {
-  sm: "h-8 px-3 text-xs gap-1.5",
+  sm: "h-8 px-3.5 text-[12.5px] gap-1.5",
   md: "h-10 px-4 text-sm gap-2",
-  lg: "h-11 px-6 text-base gap-2",
+  lg: "h-11 px-6 text-[15px] gap-2",
   icon: "h-10 w-10 p-0",
 };
 
@@ -57,8 +57,8 @@ export function buttonVariants({
   className?: string;
 } = {}): string {
   return cn(
-    "inline-flex items-center justify-center whitespace-nowrap rounded-md font-medium transition-colors duration-150 ease-out-expo",
-    "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background",
+    "inline-flex items-center justify-center whitespace-nowrap rounded-full font-medium tracking-[0.005em] transition-[background-color,color,transform,opacity] duration-150 ease-out-expo active:scale-[0.985]",
+    "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[rgb(var(--ps-accent))] focus-visible:ring-offset-2 focus-visible:ring-offset-[rgb(var(--ps-canvas))]",
     "disabled:pointer-events-none disabled:opacity-50",
     VARIANTS[variant],
     SIZES[size],
