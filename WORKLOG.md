@@ -39,7 +39,10 @@ Handoff log between sessions. Keep entries short. Newest at top.
   pending.
 - Sentry DSN not provisioned in Vercel/Railway env.
 - `format:check` still advisory in CI.
-- `pnpm audit` still flags 2 moderate advisories per Dependabot.
+- ~~`pnpm audit` still flags 2 moderate advisories per Dependabot.~~ Updated:
+  postcss advisory cleared via `pnpm.overrides` (`postcss@<8.5.10` →
+  `>=8.5.10`). Two open advisories remain (`vite ≤ 6.4.1`, `esbuild ≤ 0.24.2`)
+  and require a vitest 2 → 3 upgrade. Tracked as the next dep-bump PR.
 
 ---
 
