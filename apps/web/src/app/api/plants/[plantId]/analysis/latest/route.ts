@@ -46,15 +46,13 @@ export async function GET(request: NextRequest, { params }: RouteParams) {
     logServerEvent("error", "latest plant analysis fetch failed", {
       requestId,
       plantId,
-      error: error instanceof Error ? error.message : "unknown_error",
+      errorMessage: error instanceof Error ? error.message : "unknown_error",
+      errorStack: error instanceof Error ? error.stack : undefined,
     });
     return attachRequestId(
       NextResponse.json(
         {
-          error:
-            error instanceof Error
-              ? error.message
-              : "Failed to load latest analysis",
+          error: "Failed to load latest analysis",
           requestId,
         },
         { status: 500 },

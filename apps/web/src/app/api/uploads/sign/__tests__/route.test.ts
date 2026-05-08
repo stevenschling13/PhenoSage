@@ -133,4 +133,23 @@ describe("POST /api/uploads/sign", () => {
     );
     expect(res.status).toBe(404);
   });
+
+  it("does not return thrown error details to clients", async () => {
+    getServerSession.mockResolvedValue(SESSION_OK);
+    preparePlantImageUpload.mockRejectedValue(
+      new Error("supabase secret failure"),
+    );
+    const res = await POST(
+      jsonRequest({
+        plantId: "p1",
+        fileName: "shot.png",
+        contentType: "image/png",
+      }),
+    );
+    expect(res.status).toBe(500);
+    const body = await res.json();
+    expect(body.error).toBe("Upload signing failed");
+    expect(JSON.stringify(body)).not.toContain("supabase secret failure");
+    expect(body.requestId).toBeTypeOf("string");
+  });
 });

@@ -4,6 +4,20 @@ Handoff log between sessions. Keep entries short. Newest at top.
 
 ---
 
+## 2026-05-08 — API error-response hardening in route handlers (GPT-5.3-Codex)
+
+**Landed on `work`**
+
+- `fix(web)` — sanitized server-error JSON payloads in API route handlers so 500 responses return stable generic messages plus `requestId`, never raw exception text. Updated routes: `plants/[plantId]/analyze`, `plants/[plantId]/timeline`, `plants/[plantId]/analysis/latest`, `plants/[plantId]/images` (GET+POST), and `uploads/sign`.
+- `fix(web)` — preserved full diagnostics in logs only by emitting `errorMessage` and `errorStack` alongside existing route context (`plantId`, `imageId`, `requestId`).
+- `test(web)` — extended route tests to assert thrown raw error strings are not included in HTTP response bodies.
+
+1. What landed (with commit SHA): `000949b`
+2. What's in-flight (branch name + PR link if any): `work`, PR not opened yet.
+3. Dead ends: none.
+
+---
+
 ## 2026-05-08 — UX walkthrough: signed-out CTAs + auth copy + alert focus (Claude Opus 4.7)
 
 **Landed on `main`**

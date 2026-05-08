@@ -45,15 +45,13 @@ export async function GET(request: NextRequest, { params }: RouteParams) {
     logServerEvent("error", "plant image listing failed", {
       requestId,
       plantId,
-      error: error instanceof Error ? error.message : "unknown_error",
+      errorMessage: error instanceof Error ? error.message : "unknown_error",
+      errorStack: error instanceof Error ? error.stack : undefined,
     });
     return attachRequestId(
       NextResponse.json(
         {
-          error:
-            error instanceof Error
-              ? error.message
-              : "Failed to load plant images",
+          error: "Failed to load plant images",
           requestId,
         },
         { status: 500 },
@@ -139,13 +137,13 @@ export async function POST(request: NextRequest, { params }: RouteParams) {
     logServerEvent("error", "plant image finalize failed", {
       requestId,
       plantId,
-      error: error instanceof Error ? error.message : "unknown_error",
+      errorMessage: error instanceof Error ? error.message : "unknown_error",
+      errorStack: error instanceof Error ? error.stack : undefined,
     });
     return attachRequestId(
       NextResponse.json(
         {
-          error:
-            error instanceof Error ? error.message : "Image persistence failed",
+          error: "Image persistence failed",
           requestId,
         },
         { status: 500 },

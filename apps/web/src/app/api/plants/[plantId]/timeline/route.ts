@@ -45,13 +45,13 @@ export async function GET(request: NextRequest, { params }: RouteParams) {
     logServerEvent("error", "plant timeline fetch failed", {
       requestId,
       plantId,
-      error: error instanceof Error ? error.message : "unknown_error",
+      errorMessage: error instanceof Error ? error.message : "unknown_error",
+      errorStack: error instanceof Error ? error.stack : undefined,
     });
     return attachRequestId(
       NextResponse.json(
         {
-          error:
-            error instanceof Error ? error.message : "Failed to load timeline",
+          error: "Failed to load timeline",
           requestId,
         },
         { status: 500 },

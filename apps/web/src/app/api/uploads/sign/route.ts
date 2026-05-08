@@ -98,13 +98,13 @@ export async function POST(request: NextRequest) {
     logServerEvent("error", "upload signing failed", {
       requestId,
       plantId: body.plantId,
-      error: error instanceof Error ? error.message : "unknown_error",
+      errorMessage: error instanceof Error ? error.message : "unknown_error",
+      errorStack: error instanceof Error ? error.stack : undefined,
     });
     return attachRequestId(
       NextResponse.json(
         {
-          error:
-            error instanceof Error ? error.message : "Upload signing failed",
+          error: "Upload signing failed",
           requestId,
         },
         { status: 500 },

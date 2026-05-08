@@ -57,4 +57,17 @@ describe("GET /api/plants/[plantId]/analysis/latest", () => {
     expect(body.plantId).toBe("plant-xyz");
     expect(body.analysis).toEqual({ score: 0.87 });
   });
+
+  it("does not leak thrown error details", async () => {
+    getServerSession.mockResolvedValue({ user: { id: "u1" } });
+    getLatestPlantAnalysis.mockRejectedValue(
+      new Error("provider timeout raw details"),
+    );
+    const res = await GET(makeRequest(), makeParams("p1"));
+    expect(res.status).toBe(500);
+    const body = await res.json();
+    expect(body.error).toBe("Failed to load latest analysis");
+    expect(JSON.stringify(body)).not.toContain("provider timeout raw details");
+    expect(body.requestId).toBeTypeOf("string");
+  });
 });

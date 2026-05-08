@@ -46,4 +46,17 @@ describe("GET /api/plants/[plantId]/timeline", () => {
     expect(Array.isArray(body.items)).toBe(true);
     expect(getPlantTimeline).toHaveBeenCalledWith("plant-xyz");
   });
+
+  it("does not expose thrown error details", async () => {
+    getServerSession.mockResolvedValue({ user: { id: "u1" } });
+    getPlantTimeline.mockRejectedValue(
+      new Error("database exploded raw message"),
+    );
+    const res = await GET(makeRequest(), makeParams("p1"));
+    expect(res.status).toBe(500);
+    const body = await res.json();
+    expect(body.error).toBe("Failed to load timeline");
+    expect(JSON.stringify(body)).not.toContain("database exploded raw message");
+    expect(body.requestId).toBeTypeOf("string");
+  });
 });
