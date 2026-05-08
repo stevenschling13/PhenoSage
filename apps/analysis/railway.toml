@@ -9,3 +9,5 @@ healthcheckPath = "/health"
 healthcheckTimeout = 30
 restartPolicyType = "ON_FAILURE"
 restartPolicyMaxRetries = 3
+# Give the OpenAI retry loop time to drain on shutdown before SIGKILL.
+gracefulShutdownSeconds = 25

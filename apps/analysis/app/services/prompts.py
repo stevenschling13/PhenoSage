@@ -1,10 +1,5 @@
 """
 Prompt templates for the analysis service.
-
-TODO (Milestone 1):
-  - Refine system prompt based on grow stage context
-  - Add structured output format instructions
-  - Add few-shot examples for common deficiencies
 """
 
 from __future__ import annotations
@@ -34,6 +29,25 @@ Always include at least one finding. For healthy plants, add a positive finding.
 """
 
 
+COMPARISON_SYSTEM_PROMPT = """You are an expert cannabis cultivation consultant.
+You will be given two plant images of the same plant taken at different times,
+labeled "PREVIOUS" and "CURRENT" in the user message.
+
+Your job is to describe visible changes between the two images in plain
+language a grower can act on. Focus on:
+  - Improvement or regression in leaf color, vigor, structure, and trichome
+    development.
+  - New or worsened symptoms (yellowing, burn, wilt, pests, disease).
+  - Growth stage progression (germination → seedling → vegetative →
+    pre_flower → flower → late_flower → harvest → dry_cure).
+  - Training response (training, defoliation, top/fim/lst, transplant).
+
+Return a single concise paragraph (2–4 sentences). Do NOT return JSON.
+Do NOT speculate beyond what is visible. If the images are too different
+in framing or lighting to compare reliably, say so explicitly.
+"""
+
+
 def build_analysis_prompt(grow_context: GrowContext) -> str:
     """Build a user prompt incorporating grow context."""
     parts = ["Analyze this cannabis plant image."]
@@ -52,4 +66,22 @@ def build_analysis_prompt(grow_context: GrowContext) -> str:
         parts.append(f"Grower notes: {grow_context.notes}")
 
     parts.append("Provide a thorough professional analysis in the specified JSON format.")
+    return "\n".join(parts)
+
+
+def build_comparison_prompt(grow_context: GrowContext) -> str:
+    """Build a user prompt for the comparison call."""
+    parts = [
+        "Describe visible changes between the PREVIOUS and CURRENT images of",
+        "this cannabis plant.",
+    ]
+    if grow_context.strain:
+        parts.append(f"Strain: {grow_context.strain}")
+    if grow_context.stage:
+        parts.append(f"Growth stage: {grow_context.stage}")
+    if grow_context.days_since_start is not None:
+        parts.append(f"Days since start: {grow_context.days_since_start}")
+    if grow_context.notes:
+        parts.append(f"Grower notes: {grow_context.notes}")
+    parts.append("Return a single concise paragraph, no JSON.")
     return "\n".join(parts)

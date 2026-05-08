@@ -16,7 +16,12 @@ from __future__ import annotations
 import pytest
 
 from app.models.analysis import FindingCategory, FindingSeverity, GrowContext
-from app.services.prompts import SYSTEM_PROMPT, build_analysis_prompt
+from app.services.prompts import (
+    COMPARISON_SYSTEM_PROMPT,
+    SYSTEM_PROMPT,
+    build_analysis_prompt,
+    build_comparison_prompt,
+)
 
 
 @pytest.mark.parametrize("category", list(FindingCategory))
@@ -82,3 +87,56 @@ def test_build_analysis_prompt_includes_zero_days_since_start() -> None:
     ctx = GrowContext(grow_id="grow-1", days_since_start=0)
     prompt = build_analysis_prompt(ctx)
     assert "Days since start: 0" in prompt
+
+
+# ── Comparison prompt ────────────────────────────────────────────────────
+
+
+def test_comparison_system_prompt_labels_both_images() -> None:
+    """The system prompt must reference both image labels so the model
+    can disambiguate them when the user message presents PREVIOUS / CURRENT."""
+    assert "PREVIOUS" in COMPARISON_SYSTEM_PROMPT
+    assert "CURRENT" in COMPARISON_SYSTEM_PROMPT
+
+
+def test_comparison_system_prompt_mentions_growth_stages() -> None:
+    """A regression guard so any new/renamed grow stage is reflected
+    in the comparison prompt's stage-progression sentence."""
+    expected_stages = (
+        "germination",
+        "seedling",
+        "vegetative",
+        "pre_flower",
+        "flower",
+        "late_flower",
+        "harvest",
+        "dry_cure",
+    )
+    for stage in expected_stages:
+        assert stage in COMPARISON_SYSTEM_PROMPT, (
+            f"COMPARISON_SYSTEM_PROMPT is missing growth stage {stage}."
+        )
+
+
+def test_build_comparison_prompt_minimum_grow_context() -> None:
+    prompt = build_comparison_prompt(GrowContext(grow_id="grow-1"))
+    assert "Describe visible changes" in prompt
+    # No optional field labels should leak when absent.
+    for label in ("Strain:", "Growth stage:", "Days since start:", "Grower notes:"):
+        assert label not in prompt
+    assert "no json" in prompt.lower()
+
+
+def test_build_comparison_prompt_includes_supplied_fields() -> None:
+    ctx = GrowContext(
+        grow_id="grow-1",
+        strain="Blue Dream",
+        stage="vegetative",
+        days_since_start=21,
+        notes="Yellowing",
+    )
+    prompt = build_comparison_prompt(ctx)
+    assert "Strain: Blue Dream" in prompt
+    assert "Growth stage: vegetative" in prompt
+    assert "Days since start: 21" in prompt
+    assert "Grower notes: Yellowing" in prompt

@@ -5,6 +5,7 @@ pydantic-settings==2.14.0
 httpx==0.28.1
 python-multipart==0.0.27
 openai==2.36.0
+tenacity==9.0.0
 
 # Linting & type checking (dev)
 ruff==0.15.12
