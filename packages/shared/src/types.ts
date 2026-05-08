@@ -140,6 +140,18 @@ export interface ChatMessage {
   createdAt: string;
 }
 
+// GrowContext — sent to the analysis service alongside an analyze request.
+// Mirrors `apps/analysis/app/models/analysis.py::GrowContext`.
+export interface GrowContext {
+  growId: string;
+  strain?: string;
+  stage?: string;
+  medium?: string;
+  lightType?: string;
+  daysSinceStart?: number;
+  notes?: string;
+}
+
 // AnalysisResponse — returned by the analysis service through the Next.js proxy
 export interface AnalysisFinding {
   category: FindingCategory;

@@ -8,12 +8,12 @@ client depends on.
 
 A contract is anything observed across a process boundary:
 
-| Boundary                          | Contract surface                                |
-| --------------------------------- | ----------------------------------------------- |
-| Browser ⇄ `apps/web` Route Handler | Request/response JSON shape; status codes       |
+| Boundary                           | Contract surface                                  |
+| ---------------------------------- | ------------------------------------------------- |
+| Browser ⇄ `apps/web` Route Handler | Request/response JSON shape; status codes         |
 | `apps/web` ⇄ `apps/analysis`       | `apps/analysis/app/models/**` ↔ `packages/shared` |
-| `apps/web` ⇄ Supabase Postgres     | Migration column names/types ↔ `packages/shared` |
-| `apps/web` ⇄ Supabase Storage      | Bucket name + path convention                   |
+| `apps/web` ⇄ Supabase Postgres     | Migration column names/types ↔ `packages/shared`  |
+| `apps/web` ⇄ Supabase Storage      | Bucket name + path convention                     |
 
 ## The Rule
 
@@ -29,20 +29,31 @@ A contract is anything observed across a process boundary:
    - **Breaking** (rename, removal, type change): high risk. Prefer a
      parallel addition + deprecation step over an in-place rename.
 3. **Update sides in this order**, all in one PR:
-   1. `packages/shared/src/types.ts` (the source of truth)
-   2. `supabase/migrations/NNN_*.sql` (new file, never edit existing)
-   3. `apps/analysis/app/models/**` (Pydantic mirror)
-   4. `apps/web/src/lib/server/**` (proxy + DB callers)
-   5. `apps/web/src/app/api/**` (Route Handlers)
-   6. Any client component that consumes the response
+   1. `apps/analysis/app/models/**` (Pydantic source of truth for the
+      web ⇄ analysis boundary)
+   2. `apps/analysis/openapi.json` — regenerate via:
+      ```bash
+      cd apps/analysis && python3 scripts/export_openapi.py
+      ```
+   3. `packages/shared/src/types.ts` — update the matching TS interface
+      / union so `pnpm run check:contract-sync` passes
+   4. `supabase/migrations/NNN_*.sql` (new file, never edit existing)
+   5. `apps/web/src/lib/server/**` (proxy + DB callers)
+   6. `apps/web/src/app/api/**` (Route Handlers)
+   7. Any client component that consumes the response
 4. **Run the validators**:
 
    ```bash
-   pnpm run validate
+   pnpm run validate              # includes check:contract-sync
    pnpm run type-check
    pnpm run build
    cd apps/analysis && ruff check . && mypy app/ && pytest
    ```
+
+   The Python-side `tests/test_openapi_committed.py` and the
+   Node-side `check:contract-sync` together catch every case of
+   "I edited the Pydantic model but forgot to regenerate / update
+   the TS mirror" — both run in CI.
 
 5. **Document rollback** in the PR template's Rollback section. Migrations
    especially: how do we recover if production runs the new code with the
