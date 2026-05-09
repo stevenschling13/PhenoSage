@@ -2,10 +2,12 @@ import { beforeEach, describe, expect, it, vi, type Mock } from "vitest";
 import { NextRequest } from "next/server";
 
 const getServerSession = vi.fn();
+const getServerUser = vi.fn();
 const streamMock = vi.fn();
 
 vi.mock("@/lib/server/auth", () => ({
   getServerSession: (...args: unknown[]) => getServerSession(...args),
+  getServerUser: (...args: unknown[]) => getServerUser(...args),
 }));
 
 vi.mock("@/lib/server/ai-client", () => ({
@@ -20,12 +22,13 @@ vi.mock("@/lib/server/ai-client", () => ({
   }),
 }));
 
+import { __resetRateLimitStore } from "@/lib/server/rate-limit";
 import { POST } from "../route";
 
-function jsonRequest(body: unknown): NextRequest {
+function jsonRequest(body: unknown, init?: { rawBody?: string }): NextRequest {
   return new NextRequest("http://localhost/api/chat", {
     method: "POST",
-    body: JSON.stringify(body),
+    body: init?.rawBody ?? JSON.stringify(body),
     headers: { "content-type": "application/json" },
   });
 }
@@ -45,22 +48,37 @@ function fakeStream(chunks: string[]): AsyncIterable<{
   };
 }
 
+/** Stream that throws mid-iteration to simulate an OpenAI failure. */
+function failingStream(): AsyncIterable<{
+  choices: Array<{ delta: { content?: string } }>;
+}> {
+  return {
+    async *[Symbol.asyncIterator]() {
+      yield { choices: [{ delta: { content: "first " } }] };
+      throw new Error("upstream model error");
+    },
+  };
+}
+
 describe("POST /api/chat", () => {
   beforeEach(() => {
     (getServerSession as Mock).mockReset();
+    (getServerUser as Mock).mockReset();
     streamMock.mockReset();
+    __resetRateLimitStore();
   });
 
   it("returns 401 when unauthenticated", async () => {
     getServerSession.mockResolvedValue(null);
     const res = await POST(jsonRequest({ message: "hello" }));
     expect(res.status).toBe(401);
-    expect(await res.json()).toEqual({ error: "Unauthorized" });
+    expect(await res.json()).toMatchObject({ error: "Unauthorized" });
     expect(streamMock).not.toHaveBeenCalled();
   });
 
   it("returns 400 when message is missing", async () => {
     getServerSession.mockResolvedValue({ user: { id: "u1" } });
+    getServerUser.mockResolvedValue({ id: "u1" });
     const res = await POST(jsonRequest({}));
     expect(res.status).toBe(400);
     expect(streamMock).not.toHaveBeenCalled();
@@ -68,17 +86,51 @@ describe("POST /api/chat", () => {
 
   it("returns 400 when message is whitespace-only", async () => {
     getServerSession.mockResolvedValue({ user: { id: "u1" } });
+    getServerUser.mockResolvedValue({ id: "u1" });
     const res = await POST(jsonRequest({ message: "   " }));
     expect(res.status).toBe(400);
   });
 
+  it("returns 400 when body is not valid JSON", async () => {
+    getServerSession.mockResolvedValue({ user: { id: "u1" } });
+    getServerUser.mockResolvedValue({ id: "u1" });
+    const res = await POST(jsonRequest(undefined, { rawBody: "{not-json" }));
+    expect(res.status).toBe(400);
+    expect(streamMock).not.toHaveBeenCalled();
+  });
+
+  it("returns 413 when message exceeds the length cap", async () => {
+    getServerSession.mockResolvedValue({ user: { id: "u1" } });
+    getServerUser.mockResolvedValue({ id: "u1" });
+    const oversized = "x".repeat(4_001);
+    const res = await POST(jsonRequest({ message: oversized }));
+    expect(res.status).toBe(413);
+    expect(streamMock).not.toHaveBeenCalled();
+  });
+
+  it("returns 429 once the per-user limit is exhausted", async () => {
+    getServerSession.mockResolvedValue({ user: { id: "spam" } });
+    getServerUser.mockResolvedValue({ id: "spam" });
+    streamMock.mockReturnValue(fakeStream([""]));
+
+    for (let i = 0; i < 20; i++) {
+      const ok = await POST(jsonRequest({ message: `m${i}` }));
+      expect(ok.status).toBe(200);
+    }
+
+    const limited = await POST(jsonRequest({ message: "one too many" }));
+    expect(limited.status).toBe(429);
+  });
+
   it("streams the OpenAI deltas back as text", async () => {
     getServerSession.mockResolvedValue({ user: { id: "u1" } });
+    getServerUser.mockResolvedValue({ id: "u1" });
     streamMock.mockReturnValue(fakeStream(["Hello, ", "world", "!"]));
 
     const res = await POST(jsonRequest({ message: "hi" }));
     expect(res.status).toBe(200);
     expect(res.headers.get("content-type")).toMatch(/text\/plain/);
+    expect(res.headers.get("x-request-id")).toBeTruthy();
 
     const text = await res.text();
     expect(text).toBe("Hello, world!");
@@ -97,5 +149,16 @@ describe("POST /api/chat", () => {
       role: "user",
       content: "hi",
     });
+  });
+
+  it("surfaces upstream stream errors to the client", async () => {
+    getServerSession.mockResolvedValue({ user: { id: "u1" } });
+    getServerUser.mockResolvedValue({ id: "u1" });
+    streamMock.mockReturnValue(failingStream());
+
+    const res = await POST(jsonRequest({ message: "hi" }));
+    expect(res.status).toBe(200);
+    // Reading the body should reject because the controller errored.
+    await expect(res.text()).rejects.toThrow(/upstream model error/);
   });
 });

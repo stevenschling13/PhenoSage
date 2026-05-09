@@ -3,6 +3,7 @@
 import type { ReactNode } from "react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
+import { signOutAction } from "@/app/auth/actions";
 import {
   AssistantIcon,
   DashboardIcon,
@@ -156,7 +157,7 @@ export function AppShell({
                 </p>
               </div>
             </div>
-            <form action="/auth/signout" className="mt-3" method="post">
+            <form action={signOutAction} className="mt-3">
               <button
                 className={buttonStyles({
                   className: "w-full justify-center",
