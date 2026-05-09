@@ -8,6 +8,12 @@ interface ProxyOptions {
   method?: "GET" | "POST";
   body?: unknown;
   requestId?: string;
+  /**
+   * Override the default 30s upstream timeout. The browser-facing route
+   * handler shouldn't be left hanging on a stuck Railway service —
+   * surface the failure quickly so the UI can show a real error.
+   */
+  timeoutMs?: number;
 }
 
 type RawAnalysisResponse = {
@@ -37,6 +43,8 @@ type RawAnalysisResponse = {
   requestId?: string;
 };
 
+const DEFAULT_TIMEOUT_MS = 30_000;
+
 /**
  * Proxy client for the Railway analysis service.
  * All calls go through Next.js server routes — the browser never calls
@@ -46,7 +54,13 @@ export async function callAnalysisService<T = unknown>(
   options: ProxyOptions,
 ): Promise<T> {
   const { url, apiKey } = getAnalysisServiceConfig();
-  const { endpoint, method = "GET", body, requestId } = options;
+  const {
+    endpoint,
+    method = "GET",
+    body,
+    requestId,
+    timeoutMs = DEFAULT_TIMEOUT_MS,
+  } = options;
 
   const init: RequestInit = {
     method,
@@ -57,12 +71,26 @@ export async function callAnalysisService<T = unknown>(
       },
       requestId ?? crypto.randomUUID(),
     ),
+    signal: AbortSignal.timeout(timeoutMs),
   };
   if (body !== undefined) {
     init.body = JSON.stringify(body);
   }
 
-  const response = await fetch(`${url}${endpoint}`, init);
+  let response: Response;
+  try {
+    response = await fetch(`${url}${endpoint}`, init);
+  } catch (err) {
+    // AbortSignal.timeout fires a TimeoutError DOMException; surface a
+    // distinct message so callers + Sentry can tell a hung upstream
+    // apart from a regular fetch failure.
+    if (err instanceof Error && err.name === "TimeoutError") {
+      throw new Error(
+        `Analysis service timed out after ${timeoutMs}ms (request ${requestId ?? "unknown"})`,
+      );
+    }
+    throw err;
+  }
 
   if (!response.ok) {
     const text = await response.text();

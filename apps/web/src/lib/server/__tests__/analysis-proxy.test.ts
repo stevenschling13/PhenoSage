@@ -93,4 +93,24 @@ describe("analysis-proxy", () => {
       /502/,
     );
   });
+
+  it("attaches an abort signal so the fetch can time out", async () => {
+    mockOk({ ok: true });
+    await callAnalysisService({ endpoint: "/status" });
+    const [, init] = fetchSpy.mock.calls[0] as [string, RequestInit];
+    expect(init.signal).toBeInstanceOf(AbortSignal);
+  });
+
+  it("surfaces a friendly timeout error when the upstream hangs", async () => {
+    const timeoutError = new Error("operation timed out");
+    timeoutError.name = "TimeoutError";
+    fetchSpy.mockRejectedValue(timeoutError);
+    await expect(
+      callAnalysisService({
+        endpoint: "/slow",
+        requestId: "req-123",
+        timeoutMs: 5_000,
+      }),
+    ).rejects.toThrow(/timed out after 5000ms.*req-123/);
+  });
 });
