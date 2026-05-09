@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getAIClient } from "@/lib/server/ai-client";
-import { getServerSession, getServerUser } from "@/lib/server/auth";
+import { getServerSession } from "@/lib/server/auth";
 import { rateLimit, rateLimitKeyFromRequest } from "@/lib/server/rate-limit";
 import {
   attachRequestId,
@@ -28,9 +28,15 @@ export async function POST(request: NextRequest) {
     );
   }
 
-  const user = await getServerUser();
+  // Reuse the user id we already have from the session — calling
+  // getServerUser() here adds a redundant Supabase round-trip that can
+  // fail independently and 500 chat for users with valid sessions.
+  const userId = session.user?.id ?? null;
+
+  // Namespace the limiter key so chat doesn't share a quota with other
+  // routes (uploads, analyze) that use rateLimitKeyFromRequest.
   const rate = rateLimit({
-    key: rateLimitKeyFromRequest(request, user?.id ?? null),
+    key: `chat:${rateLimitKeyFromRequest(request, userId)}`,
     limit: 20,
     windowMs: 60_000,
   });
@@ -124,9 +130,10 @@ export async function POST(request: NextRequest) {
     stream: true,
   });
 
-  // Stream the response. If OpenAI errors mid-stream we surface that to the
-  // ReadableStream consumer (controller.error) so the browser fetch rejects
-  // with a real error rather than silently truncating mid-reply.
+  // Stream the response. If OpenAI errors mid-stream we surface a
+  // SANITISED error to the ReadableStream consumer (just the requestId
+  // for support correlation) — never the upstream wording, which can
+  // leak internal detail and depend on third-party message text.
   const readable = new ReadableStream({
     async start(controller) {
       try {
@@ -138,12 +145,22 @@ export async function POST(request: NextRequest) {
         }
         controller.close();
       } catch (err) {
-        logServerEvent("error", "chat stream failed", {
-          requestId,
-          userId: user?.id,
-          error: err instanceof Error ? err.message : "unknown_error",
-        });
-        controller.error(err);
+        const isAbort = err instanceof Error && err.name === "AbortError";
+        if (!isAbort) {
+          // User-initiated cancellations are not failures — only log when
+          // something actually went wrong upstream. Logging AbortError
+          // creates false-positive noise in monitoring.
+          logServerEvent("error", "chat stream failed", {
+            requestId,
+            userId,
+            error: err instanceof Error ? err.message : "unknown_error",
+          });
+        }
+        controller.error(
+          new Error(
+            `Chat stream failed (request ${requestId}). Please try again.`,
+          ),
+        );
       }
     },
     cancel() {

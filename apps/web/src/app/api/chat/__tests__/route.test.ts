@@ -2,12 +2,10 @@ import { beforeEach, describe, expect, it, vi, type Mock } from "vitest";
 import { NextRequest } from "next/server";
 
 const getServerSession = vi.fn();
-const getServerUser = vi.fn();
 const streamMock = vi.fn();
 
 vi.mock("@/lib/server/auth", () => ({
   getServerSession: (...args: unknown[]) => getServerSession(...args),
-  getServerUser: (...args: unknown[]) => getServerUser(...args),
 }));
 
 vi.mock("@/lib/server/ai-client", () => ({
@@ -55,7 +53,7 @@ function failingStream(): AsyncIterable<{
   return {
     async *[Symbol.asyncIterator]() {
       yield { choices: [{ delta: { content: "first " } }] };
-      throw new Error("upstream model error");
+      throw new Error("upstream model error: secret context here");
     },
   };
 }
@@ -63,7 +61,6 @@ function failingStream(): AsyncIterable<{
 describe("POST /api/chat", () => {
   beforeEach(() => {
     (getServerSession as Mock).mockReset();
-    (getServerUser as Mock).mockReset();
     streamMock.mockReset();
     __resetRateLimitStore();
   });
@@ -78,7 +75,6 @@ describe("POST /api/chat", () => {
 
   it("returns 400 when message is missing", async () => {
     getServerSession.mockResolvedValue({ user: { id: "u1" } });
-    getServerUser.mockResolvedValue({ id: "u1" });
     const res = await POST(jsonRequest({}));
     expect(res.status).toBe(400);
     expect(streamMock).not.toHaveBeenCalled();
@@ -86,14 +82,12 @@ describe("POST /api/chat", () => {
 
   it("returns 400 when message is whitespace-only", async () => {
     getServerSession.mockResolvedValue({ user: { id: "u1" } });
-    getServerUser.mockResolvedValue({ id: "u1" });
     const res = await POST(jsonRequest({ message: "   " }));
     expect(res.status).toBe(400);
   });
 
   it("returns 400 when body is not valid JSON", async () => {
     getServerSession.mockResolvedValue({ user: { id: "u1" } });
-    getServerUser.mockResolvedValue({ id: "u1" });
     const res = await POST(jsonRequest(undefined, { rawBody: "{not-json" }));
     expect(res.status).toBe(400);
     expect(streamMock).not.toHaveBeenCalled();
@@ -101,7 +95,6 @@ describe("POST /api/chat", () => {
 
   it("returns 413 when message exceeds the length cap", async () => {
     getServerSession.mockResolvedValue({ user: { id: "u1" } });
-    getServerUser.mockResolvedValue({ id: "u1" });
     const oversized = "x".repeat(4_001);
     const res = await POST(jsonRequest({ message: oversized }));
     expect(res.status).toBe(413);
@@ -110,7 +103,6 @@ describe("POST /api/chat", () => {
 
   it("returns 429 once the per-user limit is exhausted", async () => {
     getServerSession.mockResolvedValue({ user: { id: "spam" } });
-    getServerUser.mockResolvedValue({ id: "spam" });
     streamMock.mockReturnValue(fakeStream([""]));
 
     for (let i = 0; i < 20; i++) {
@@ -122,9 +114,25 @@ describe("POST /api/chat", () => {
     expect(limited.status).toBe(429);
   });
 
+  it("uses a chat-namespaced rate-limit key so other routes' quotas are independent", async () => {
+    // Drive the chat limit to exhaustion for u1.
+    getServerSession.mockResolvedValue({ user: { id: "u1" } });
+    streamMock.mockReturnValue(fakeStream([""]));
+    for (let i = 0; i < 20; i++) {
+      await POST(jsonRequest({ message: `m${i}` }));
+    }
+    const exhausted = await POST(jsonRequest({ message: "blocked" }));
+    expect(exhausted.status).toBe(429);
+
+    // A non-chat caller using the bare `u:u1` key should still be
+    // unaffected — the chat bucket is namespaced.
+    const { rateLimit } = await import("@/lib/server/rate-limit");
+    const otherRoute = rateLimit({ key: "u:u1", limit: 5, windowMs: 60_000 });
+    expect(otherRoute.ok).toBe(true);
+  });
+
   it("streams the OpenAI deltas back as text", async () => {
     getServerSession.mockResolvedValue({ user: { id: "u1" } });
-    getServerUser.mockResolvedValue({ id: "u1" });
     streamMock.mockReturnValue(fakeStream(["Hello, ", "world", "!"]));
 
     const res = await POST(jsonRequest({ message: "hi" }));
@@ -151,14 +159,23 @@ describe("POST /api/chat", () => {
     });
   });
 
-  it("surfaces upstream stream errors to the client", async () => {
+  it("surfaces a SANITISED error to the client when the upstream fails", async () => {
     getServerSession.mockResolvedValue({ user: { id: "u1" } });
-    getServerUser.mockResolvedValue({ id: "u1" });
     streamMock.mockReturnValue(failingStream());
 
     const res = await POST(jsonRequest({ message: "hi" }));
     expect(res.status).toBe(200);
-    // Reading the body should reject because the controller errored.
-    await expect(res.text()).rejects.toThrow(/upstream model error/);
+    // The client gets a generic message + the request id for support
+    // correlation. The upstream wording must not leak.
+    let caught: unknown = null;
+    try {
+      await res.text();
+    } catch (err) {
+      caught = err;
+    }
+    expect(caught).toBeInstanceOf(Error);
+    const message = caught instanceof Error ? caught.message : "";
+    expect(message).toMatch(/Chat stream failed \(request /);
+    expect(message).not.toMatch(/secret context here/);
   });
 });

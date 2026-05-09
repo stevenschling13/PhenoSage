@@ -62,6 +62,10 @@ export async function callAnalysisService<T = unknown>(
     timeoutMs = DEFAULT_TIMEOUT_MS,
   } = options;
 
+  // Compute the effective request id once so headers, log lines, and
+  // error messages all reference the same correlation key.
+  const effectiveRequestId = requestId ?? crypto.randomUUID();
+
   const init: RequestInit = {
     method,
     headers: withRequestIdHeader(
@@ -69,7 +73,7 @@ export async function callAnalysisService<T = unknown>(
         "Content-Type": "application/json",
         Authorization: `Bearer ${apiKey}`,
       },
-      requestId ?? crypto.randomUUID(),
+      effectiveRequestId,
     ),
     signal: AbortSignal.timeout(timeoutMs),
   };
@@ -83,10 +87,12 @@ export async function callAnalysisService<T = unknown>(
   } catch (err) {
     // AbortSignal.timeout fires a TimeoutError DOMException; surface a
     // distinct message so callers + Sentry can tell a hung upstream
-    // apart from a regular fetch failure.
+    // apart from a regular fetch failure. Carry the underlying error as
+    // `cause` so debuggers still see the original stack.
     if (err instanceof Error && err.name === "TimeoutError") {
       throw new Error(
-        `Analysis service timed out after ${timeoutMs}ms (request ${requestId ?? "unknown"})`,
+        `Analysis service timed out after ${timeoutMs}ms (request ${effectiveRequestId})`,
+        { cause: err },
       );
     }
     throw err;
@@ -95,7 +101,7 @@ export async function callAnalysisService<T = unknown>(
   if (!response.ok) {
     const text = await response.text();
     const upstreamRequestId =
-      response.headers.get(REQUEST_ID_HEADER) ?? requestId ?? "unknown";
+      response.headers.get(REQUEST_ID_HEADER) ?? effectiveRequestId;
     throw new Error(
       `Analysis service error ${response.status} (request ${upstreamRequestId}): ${text}`,
     );
@@ -155,21 +161,78 @@ export function normalizeAnalysisResponse(
 }
 
 /**
+ * Grow context fields the Python analysis service understands. Sent on
+ * the wire as snake_case to match `apps/analysis/app/models/analysis.py`.
+ */
+export interface AnalyzeGrowContext {
+  growId: string;
+  strain?: string;
+  stage?: string;
+  medium?: string;
+  lightType?: string;
+  daysSinceStart?: number;
+  notes?: string;
+}
+
+/**
  * Submit a plant image for analysis.
+ *
+ * The TypeScript surface is camelCase to match `packages/shared` and the
+ * rest of the web app. The HTTP body is serialised as snake_case because
+ * the FastAPI service uses snake_case Pydantic field names with no
+ * aliasing — sending camelCase causes a 422 validation error and the
+ * user-facing analysis silently falls back. Keep this mapping explicit
+ * (rather than a generic key transformer) so a contract change shows up
+ * as a TypeScript error here.
  */
 export async function analyzeImage(params: {
   plantId: string;
   imageId: string;
   storagePath: string;
-  growContext: Record<string, unknown>;
+  growContext: AnalyzeGrowContext;
   previousImageId?: string;
   previousStoragePath?: string;
   requestId?: string;
 }): Promise<AnalysisResponse> {
+  const growContext: Record<string, unknown> = {
+    grow_id: params.growContext.growId,
+  };
+  if (params.growContext.strain !== undefined) {
+    growContext["strain"] = params.growContext.strain;
+  }
+  if (params.growContext.stage !== undefined) {
+    growContext["stage"] = params.growContext.stage;
+  }
+  if (params.growContext.medium !== undefined) {
+    growContext["medium"] = params.growContext.medium;
+  }
+  if (params.growContext.lightType !== undefined) {
+    growContext["light_type"] = params.growContext.lightType;
+  }
+  if (params.growContext.daysSinceStart !== undefined) {
+    growContext["days_since_start"] = params.growContext.daysSinceStart;
+  }
+  if (params.growContext.notes !== undefined) {
+    growContext["notes"] = params.growContext.notes;
+  }
+
+  const body: Record<string, unknown> = {
+    plant_id: params.plantId,
+    image_id: params.imageId,
+    storage_path: params.storagePath,
+    grow_context: growContext,
+  };
+  if (params.previousImageId !== undefined) {
+    body["previous_image_id"] = params.previousImageId;
+  }
+  if (params.previousStoragePath !== undefined) {
+    body["previous_storage_path"] = params.previousStoragePath;
+  }
+
   const raw = await callAnalysisService<RawAnalysisResponse>({
     endpoint: "/analyze",
     method: "POST",
-    body: params,
+    body,
     ...(params.requestId ? { requestId: params.requestId } : {}),
   });
   return normalizeAnalysisResponse(raw);
