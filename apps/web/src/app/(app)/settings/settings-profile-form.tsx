@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useTransition } from "react";
+import { useEffect, useRef, useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import { Button } from "@/components/ui/button";
 import {
@@ -25,6 +25,15 @@ export function SettingsProfileForm({
   );
   const [displayName, setDisplayName] = useState(initialDisplayName);
   const [isPending, startTransition] = useTransition();
+  const messageRef = useRef<HTMLDivElement | null>(null);
+
+  // Focus the status panel when a result lands so screen readers announce it
+  // and keyboard users land on the feedback rather than hunting for it.
+  useEffect(() => {
+    if (state.message) {
+      messageRef.current?.focus();
+    }
+  }, [state.message]);
 
   async function handleAction(formData: FormData) {
     startTransition(async () => {
@@ -36,8 +45,10 @@ export function SettingsProfileForm({
     });
   }
 
+  const isError = state.status === "error";
+
   return (
-    <form action={handleAction} className="space-y-4">
+    <form action={handleAction} className="space-y-4" noValidate>
       <div>
         <label
           className="text-sm font-medium text-foreground"
@@ -60,25 +71,36 @@ export function SettingsProfileForm({
           Display name
         </label>
         <input
+          aria-describedby="display-name-help"
+          aria-invalid={isError || undefined}
           className={inputClassName}
           id="display-name"
+          maxLength={60}
           name="displayName"
           onChange={(event) => setDisplayName(event.target.value)}
           placeholder="How your workspace should label you"
           value={displayName}
         />
-        <p className="mt-2 text-sm text-muted-foreground">
+        <p
+          className="mt-2 text-sm text-muted-foreground"
+          id="display-name-help"
+        >
           This label appears in the dashboard and workspace shell. Leave it
-          blank to fall back to your email-derived operator name.
+          blank to fall back to your email-derived operator name. Maximum 60
+          characters.
         </p>
       </div>
 
       {state.message ? (
         <div
-          className={`rounded-[1.15rem] border px-4 py-3 text-sm ${
-            state.status === "success"
-              ? "border-success/20 bg-success/10 text-success"
-              : "border-danger/20 bg-danger/10 text-danger"
+          ref={messageRef}
+          aria-live={isError ? "assertive" : "polite"}
+          role={isError ? "alert" : "status"}
+          tabIndex={-1}
+          className={`rounded-[1.15rem] border px-4 py-3 text-sm focus:outline-none focus-visible:ring-2 ${
+            isError
+              ? "border-danger/20 bg-danger/10 text-danger focus-visible:ring-danger/40"
+              : "border-success/20 bg-success/10 text-success focus-visible:ring-success/40"
           }`}
         >
           {state.message}

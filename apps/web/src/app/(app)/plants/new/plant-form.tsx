@@ -117,6 +117,7 @@ export function PlantForm({
           aria-invalid={Boolean(state.fieldErrors?.name) || undefined}
           className={inputClassName}
           id="plant-name"
+          maxLength={120}
           name="name"
           onChange={(event) => setName(event.target.value)}
           placeholder="Plant 01"
