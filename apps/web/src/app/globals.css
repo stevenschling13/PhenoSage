@@ -3,96 +3,171 @@
 @tailwind utilities;
 
 /* -----------------------------------------------------------
- * Design tokens
+ * PhenoSage editorial design tokens
  *
- * Inspired by shadcn/ui — semantic, theme-aware HSL variables
- * consumed by Tailwind via tailwind.config.js. To rebrand or
- * tune contrast, edit values here only; Tailwind classes
- * (bg-card, text-foreground, etc.) update everywhere.
+ * Cannabis-aware palette: cream "hemp-paper" canvas, "cola"
+ * deep flower-canopy green ink, "resin" amber for caution,
+ * "pistil" rust for critical. Type pairs Fraunces (display)
+ * with General Sans (body) and JetBrains Mono (labels).
+ *
+ * Tokens are exposed both as raw CSS custom properties (for
+ * direct consumption: `var(--ps-ink)`) and as the legacy
+ * shadcn-style HSL triples consumed by `tailwind.config.js`.
  * --------------------------------------------------------- */
 @layer base {
   :root {
-    --background: 140 30% 99%;
-    --foreground: 150 14% 12%;
+    /* ── Canvas & ink — light (hemp paper) ─────────────── */
+    --ps-canvas: 239 234 217; /* #EFEAD9 hemp-paper */
+    --ps-surface: 247 242 226; /* #F7F2E2 cured-flower cream */
+    --ps-surface-2: 230 225 206; /* #E6E1CE */
+    --ps-panel: 247 242 226;
+    --ps-line: 34 42 32;
+    --ps-line-strength: 0.10;
+    --ps-line-strong-strength: 0.18;
+    --ps-ink: 26 36 24; /* #1A2418 deep cola */
+    --ps-ink-2: 58 69 52; /* #3A4534 */
+    --ps-muted: 110 114 100; /* #6E7264 */
+    --ps-subtle: 160 159 139; /* #A09F8B */
 
-    --card: 0 0% 100%;
-    --card-foreground: 150 14% 12%;
+    /* ── Accent: cola (deep flower canopy) ─────────────── */
+    --ps-accent: 62 92 58; /* #3E5C3A cola */
+    --ps-accent-ink: 244 239 217; /* #F4EFD9 */
+    --ps-accent-soft: 219 226 207; /* cola wash */
+    --ps-accent-strong: 42 64 39;
 
-    --popover: 0 0% 100%;
-    --popover-foreground: 150 14% 12%;
+    /* ── Semantic ──────────────────────────────────────── */
+    --ps-ok: 62 92 58;
+    --ps-ok-soft: 219 226 207;
+    --ps-warn: 183 137 47; /* #B7892F resin amber */
+    --ps-warn-soft: 246 232 192;
+    --ps-crit: 160 74 54; /* #A04A36 ripe pistil */
+    --ps-crit-soft: 241 216 204;
 
-    --primary: 142 71% 35%;
-    --primary-foreground: 0 0% 100%;
+    /* ── Geometry ──────────────────────────────────────── */
+    --ps-radius-sm: 8px;
+    --ps-radius-md: 12px;
+    --ps-radius-lg: 18px;
+    --ps-radius-xl: 24px;
+    --ps-radius-pill: 9999px;
 
-    --secondary: 140 25% 95%;
-    --secondary-foreground: 150 14% 18%;
+    /* ── Type stacks ───────────────────────────────────── */
+    --ps-font-display:
+      var(--font-fraunces, "Fraunces"), "Instrument Serif", Georgia, serif;
+    --ps-font-body:
+      var(--font-general-sans, "General Sans"), "Söhne", -apple-system,
+      BlinkMacSystemFont, system-ui, sans-serif;
+    --ps-font-mono:
+      var(--font-jetbrains-mono, "JetBrains Mono"), "IBM Plex Mono", ui-monospace,
+      SFMono-Regular, Menlo, monospace;
 
-    --muted: 140 16% 95%;
-    --muted-foreground: 150 8% 42%;
+    /* ── Legacy shadcn-style HSL tokens (Tailwind) ─────── */
+    --background: 47 32% 90%; /* hemp-paper */
+    --foreground: 110 17% 12%;
 
-    --accent: 142 60% 92%;
-    --accent-foreground: 142 71% 22%;
+    --card: 49 53% 93%;
+    --card-foreground: 110 17% 12%;
 
-    --destructive: 0 72% 50%;
-    --destructive-foreground: 0 0% 100%;
+    --popover: 49 53% 93%;
+    --popover-foreground: 110 17% 12%;
 
-    --success: 142 71% 35%;
-    --success-foreground: 0 0% 100%;
+    --primary: 117 22% 29%; /* cola */
+    --primary-foreground: 49 56% 91%;
 
-    --warning: 38 92% 48%;
+    --secondary: 47 26% 87%;
+    --secondary-foreground: 110 17% 18%;
+
+    --muted: 47 22% 86%;
+    --muted-foreground: 75 7% 42%;
+
+    --accent: 117 22% 29%;
+    --accent-foreground: 49 56% 91%;
+
+    --destructive: 11 50% 42%;
+    --destructive-foreground: 49 56% 96%;
+
+    --success: 117 22% 29%;
+    --success-foreground: 49 56% 91%;
+
+    --warning: 39 60% 45%;
     --warning-foreground: 30 50% 12%;
 
-    --info: 211 92% 50%;
+    --info: 154 28% 32%;
     --info-foreground: 0 0% 100%;
 
-    --border: 140 12% 88%;
-    --input: 140 12% 88%;
-    --ring: 142 71% 40%;
+    --border: 110 17% 12%;
+    --input: 110 17% 12%;
+    --ring: 117 22% 29%;
 
-    --radius: 0.75rem;
+    --radius: 0.875rem;
   }
 
   .dark {
-    --background: 150 14% 7%;
-    --foreground: 140 8% 95%;
+    /* ── Canvas & ink — dark (grow-room-at-night) ──────── */
+    --ps-canvas: 13 18 13; /* #0D120D */
+    --ps-surface: 20 26 20; /* #141A14 */
+    --ps-surface-2: 27 34 26; /* #1B221A */
+    --ps-panel: 20 26 20;
+    --ps-line: 229 222 196;
+    --ps-line-strength: 0.12;
+    --ps-line-strong-strength: 0.22;
+    --ps-ink: 229 222 196; /* #E5DEC4 dried-flower paper */
+    --ps-ink-2: 197 191 166;
+    --ps-muted: 138 142 120;
+    --ps-subtle: 86 90 76;
 
-    --card: 150 14% 10%;
-    --card-foreground: 140 8% 95%;
+    --ps-accent: 122 168 135; /* milky trichome */
+    --ps-accent-ink: 15 26 18;
+    --ps-accent-soft: 31 42 35;
+    --ps-accent-strong: 156 199 166;
 
-    --popover: 150 14% 9%;
-    --popover-foreground: 140 8% 95%;
+    --ps-ok: 122 168 135;
+    --ps-ok-soft: 28 42 34;
+    --ps-warn: 214 164 70;
+    --ps-warn-soft: 44 36 24;
+    --ps-crit: 208 117 96;
+    --ps-crit-soft: 43 28 23;
 
-    --primary: 142 65% 48%;
-    --primary-foreground: 150 24% 8%;
+    /* ── Legacy HSL ────────────────────────────────────── */
+    --background: 120 17% 5%;
+    --foreground: 47 38% 83%;
 
-    --secondary: 150 10% 15%;
-    --secondary-foreground: 140 8% 92%;
+    --card: 120 13% 9%;
+    --card-foreground: 47 38% 83%;
 
-    --muted: 150 10% 14%;
-    --muted-foreground: 140 6% 65%;
+    --popover: 120 13% 9%;
+    --popover-foreground: 47 38% 83%;
 
-    --accent: 142 40% 18%;
-    --accent-foreground: 142 65% 78%;
+    --primary: 132 22% 57%;
+    --primary-foreground: 120 25% 8%;
 
-    --destructive: 0 65% 55%;
-    --destructive-foreground: 0 0% 100%;
+    --secondary: 110 12% 14%;
+    --secondary-foreground: 47 38% 83%;
 
-    --success: 142 65% 48%;
-    --success-foreground: 150 24% 8%;
+    --muted: 110 12% 14%;
+    --muted-foreground: 75 7% 56%;
 
-    --warning: 38 90% 55%;
+    --accent: 132 22% 57%;
+    --accent-foreground: 120 25% 8%;
+
+    --destructive: 11 56% 60%;
+    --destructive-foreground: 49 38% 92%;
+
+    --success: 132 22% 57%;
+    --success-foreground: 120 25% 8%;
+
+    --warning: 39 64% 56%;
     --warning-foreground: 30 50% 8%;
 
-    --info: 211 85% 60%;
-    --info-foreground: 220 30% 8%;
+    --info: 154 28% 56%;
+    --info-foreground: 0 0% 100%;
 
-    --border: 150 10% 18%;
-    --input: 150 10% 18%;
-    --ring: 142 65% 50%;
+    --border: 47 38% 83%;
+    --input: 47 38% 83%;
+    --ring: 132 22% 57%;
   }
 
   * {
-    border-color: hsl(var(--border));
+    border-color: rgba(var(--ps-line) / var(--ps-line-strength));
   }
 
   html {
@@ -106,37 +181,34 @@
   }
 
   body {
-    background-color: hsl(var(--background));
-    color: hsl(var(--foreground));
+    background-color: rgb(var(--ps-canvas));
+    color: rgb(var(--ps-ink));
+    font-family: var(--ps-font-body);
     font-feature-settings: "rlig" 1, "calt" 1, "ss01" 1;
     text-rendering: optimizeLegibility;
     -webkit-font-smoothing: antialiased;
     -moz-osx-font-smoothing: grayscale;
   }
 
-  /* Visible, theme-aware focus ring */
   :focus-visible {
-    outline: 2px solid hsl(var(--ring));
+    outline: 2px solid rgb(var(--ps-accent));
     outline-offset: 2px;
     border-radius: 4px;
   }
 
-  /* Hide focus ring on mouse, keep for keyboard */
   :focus:not(:focus-visible) {
     outline: none;
   }
 
-  /* Selection */
   ::selection {
-    background-color: hsl(var(--primary) / 0.25);
-    color: hsl(var(--primary-foreground));
+    background-color: rgb(var(--ps-accent) / 0.22);
+    color: rgb(var(--ps-ink));
   }
 
-  /* Scrollbar — subtle, themed */
   @media (pointer: fine) {
     * {
       scrollbar-width: thin;
-      scrollbar-color: hsl(var(--muted-foreground) / 0.3) transparent;
+      scrollbar-color: rgb(var(--ps-muted) / 0.35) transparent;
     }
     *::-webkit-scrollbar {
       width: 10px;
@@ -146,17 +218,124 @@
       background: transparent;
     }
     *::-webkit-scrollbar-thumb {
-      background-color: hsl(var(--muted-foreground) / 0.25);
+      background-color: rgb(var(--ps-muted) / 0.3);
       border-radius: 9999px;
       border: 2px solid transparent;
       background-clip: padding-box;
     }
     *::-webkit-scrollbar-thumb:hover {
-      background-color: hsl(var(--muted-foreground) / 0.45);
+      background-color: rgb(var(--ps-muted) / 0.5);
     }
   }
 }
 
+/* -----------------------------------------------------------
+ * Editorial component classes
+ *
+ * These compose Tailwind utilities into the named building
+ * blocks the redesign relies on. They're stable, additive,
+ * and safe for JIT to scan.
+ * --------------------------------------------------------- */
+@layer components {
+  /* Page wrapper used by every (app)/* route. */
+  .app-page {
+    display: flex;
+    flex-direction: column;
+    gap: 1.5rem;
+    padding: 1.5rem 1.25rem 4rem;
+    max-width: 1400px;
+    width: 100%;
+    margin-inline: auto;
+  }
+  @media (min-width: 768px) {
+    .app-page {
+      padding: 2rem 2rem 5rem;
+      gap: 1.75rem;
+    }
+  }
+  @media (min-width: 1280px) {
+    .app-page {
+      padding: 2.5rem 2.75rem 6rem;
+      gap: 2rem;
+    }
+  }
+
+  /* Editorial hero block at the top of a page. */
+  .workspace-hero {
+    position: relative;
+    padding: 0.5rem 0 1.25rem;
+    border-bottom: 1px solid rgb(var(--ps-line) / var(--ps-line-strength));
+  }
+
+  /* Compact mono pill — the visual chassis for tag-like metadata. */
+  .metric-chip {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.4rem;
+    padding: 0.25rem 0.625rem;
+    border-radius: 9999px;
+    background: rgb(var(--ps-ink) / 0.05);
+    color: rgb(var(--ps-ink-2));
+    font-family: var(--ps-font-mono);
+    font-size: 10.5px;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+    white-space: nowrap;
+  }
+
+  /* Mono small-caps eyebrow above section headings. */
+  .ps-eyebrow {
+    font-family: var(--ps-font-mono);
+    font-size: 10.5px;
+    letter-spacing: 0.16em;
+    text-transform: uppercase;
+    color: rgb(var(--ps-muted));
+    font-weight: 500;
+  }
+
+  /* Display heading — Fraunces, tight tracking. */
+  .ps-display {
+    font-family: var(--ps-font-display);
+    font-weight: 500;
+    letter-spacing: -0.02em;
+    color: rgb(var(--ps-ink));
+  }
+
+  /* Tabular monospaced numeric runs (for stats, timestamps). */
+  .ps-mono {
+    font-family: var(--ps-font-mono);
+    font-feature-settings: "tnum" 1;
+    letter-spacing: 0;
+  }
+
+  /* Section header strip: mono label + optional trailing widget. */
+  .ps-section-head {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    margin-bottom: 0.75rem;
+    gap: 0.75rem;
+  }
+
+  /* Subtle rise-in animation for stacked cards. */
+  .ps-rise {
+    animation: ps-rise 0.45s cubic-bezier(0.2, 0.7, 0.3, 1) backwards;
+  }
+  .ps-rise:nth-child(1) { animation-delay: 0.02s; }
+  .ps-rise:nth-child(2) { animation-delay: 0.06s; }
+  .ps-rise:nth-child(3) { animation-delay: 0.10s; }
+  .ps-rise:nth-child(4) { animation-delay: 0.14s; }
+  .ps-rise:nth-child(5) { animation-delay: 0.18s; }
+  .ps-rise:nth-child(6) { animation-delay: 0.22s; }
+}
+
+/* -----------------------------------------------------------
+ * Utility classes — color/surface helpers consumed across
+ * components. These mirror tokens the legacy code already
+ * referenced (bg-surface, bg-panel, bg-background-subtle,
+ * shadow-soft, border-strong) so existing markup keeps
+ * styling without churn.
+ * --------------------------------------------------------- */
 @layer utilities {
   /* Container helpers */
   .container-page {
@@ -166,19 +345,39 @@
     max-width: 80rem;
   }
 
-  /* Soft surface gradient for hero / empty regions */
+  /* Surfaces */
+  .bg-surface { background-color: rgb(var(--ps-surface)); }
+  .bg-surface-2 { background-color: rgb(var(--ps-surface-2)); }
+  .bg-panel { background-color: rgb(var(--ps-panel)); }
+  .bg-background-subtle { background-color: rgb(var(--ps-surface-2) / 0.55); }
+  .bg-background-subtle\/50 { background-color: rgb(var(--ps-surface-2) / 0.5); }
+  .bg-background-subtle\/60 { background-color: rgb(var(--ps-surface-2) / 0.6); }
+  .bg-background-subtle\/65 { background-color: rgb(var(--ps-surface-2) / 0.65); }
+  .bg-background-subtle\/70 { background-color: rgb(var(--ps-surface-2) / 0.7); }
+
+  /* Borders */
+  .border-strong { border-color: rgb(var(--ps-line) / var(--ps-line-strong-strength)); }
+  .border-border-strong { border-color: rgb(var(--ps-line) / var(--ps-line-strong-strength)); }
+  .border-border-strong\/70 { border-color: rgb(var(--ps-line) / 0.14); }
+  .border-border\/70 { border-color: rgb(var(--ps-line) / 0.07); }
+  .border-border\/80 { border-color: rgb(var(--ps-line) / 0.085); }
+
+  /* Accent helpers */
+  .text-accent-strong { color: rgb(var(--ps-accent-strong)); }
+  .bg-accent\/10 { background-color: rgb(var(--ps-accent) / 0.10); }
+
+  /* Soft shadow — used for cards and floating chrome. */
+  .shadow-soft {
+    box-shadow:
+      0 1px 0 rgb(var(--ps-line) / 0.04),
+      0 8px 28px -16px rgb(var(--ps-ink) / 0.18);
+  }
+
+  /* Soft hero gradient (used by /auth and signed-out home). */
   .bg-hero-gradient {
     background-image:
-      radial-gradient(
-        circle at 20% 10%,
-        hsl(var(--primary) / 0.12),
-        transparent 45%
-      ),
-      radial-gradient(
-        circle at 85% 0%,
-        hsl(var(--info) / 0.08),
-        transparent 50%
-      );
+      radial-gradient(circle at 18% 12%, rgb(var(--ps-accent) / 0.16), transparent 48%),
+      radial-gradient(circle at 88% -8%, rgb(var(--ps-warn) / 0.12), transparent 50%);
   }
 
   /* Skip-link visible only on focus */
@@ -189,11 +388,13 @@
     z-index: 100;
     padding: 0.5rem 0.875rem;
     border-radius: 0.5rem;
-    background-color: hsl(var(--primary));
-    color: hsl(var(--primary-foreground));
-    font-size: 0.875rem;
-    font-weight: 600;
-    box-shadow: 0 8px 20px hsl(var(--primary) / 0.25);
+    background-color: rgb(var(--ps-ink));
+    color: rgb(var(--ps-canvas));
+    font-family: var(--ps-font-mono);
+    font-size: 0.78rem;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    box-shadow: 0 8px 20px rgb(var(--ps-ink) / 0.25);
     transition: top 0.15s ease;
   }
   .skip-link:focus,
@@ -201,9 +402,26 @@
     top: 0.75rem;
     outline: none;
   }
+
+  /* Trichome-stipple watermark — used inside hero cards. */
+  .ps-trichome-bg {
+    background-image:
+      radial-gradient(circle at 8% 22%, rgb(var(--ps-accent) / 0.12) 0 1.4px, transparent 2px),
+      radial-gradient(circle at 24% 70%, rgb(var(--ps-accent) / 0.10) 0 1.2px, transparent 2px),
+      radial-gradient(circle at 60% 18%, rgb(var(--ps-accent) / 0.10) 0 1.6px, transparent 2px),
+      radial-gradient(circle at 78% 64%, rgb(var(--ps-accent) / 0.10) 0 1.2px, transparent 2px),
+      radial-gradient(circle at 92% 30%, rgb(var(--ps-accent) / 0.08) 0 1.2px, transparent 2px);
+  }
 }
 
-/* Respect users who prefer reduced motion */
+/* -----------------------------------------------------------
+ * Animations
+ * --------------------------------------------------------- */
+@keyframes ps-rise {
+  from { opacity: 0; transform: translateY(6px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
 @media (prefers-reduced-motion: reduce) {
   *,
   *::before,

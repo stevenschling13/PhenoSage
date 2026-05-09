@@ -1,9 +1,24 @@
 import type { Metadata, Viewport } from "next";
+import { Fraunces, JetBrains_Mono } from "next/font/google";
 import { Analytics } from "@vercel/analytics/next";
 import { SpeedInsights } from "@vercel/speed-insights/next";
 import { SkipLink } from "@/components/app-shell/skip-link";
 import { ThemeScript } from "@/components/app-shell/theme-script";
 import "./globals.css";
+
+const fraunces = Fraunces({
+  subsets: ["latin"],
+  weight: ["400", "500", "600", "700"],
+  display: "swap",
+  variable: "--font-fraunces",
+});
+
+const jetbrainsMono = JetBrains_Mono({
+  subsets: ["latin"],
+  weight: ["400", "500"],
+  display: "swap",
+  variable: "--font-jetbrains-mono",
+});
 
 export const metadata: Metadata = {
   title: {
@@ -21,8 +36,8 @@ export const viewport: Viewport = {
   width: "device-width",
   initialScale: 1,
   themeColor: [
-    { media: "(prefers-color-scheme: light)", color: "#fafdf9" },
-    { media: "(prefers-color-scheme: dark)", color: "#0f1411" },
+    { media: "(prefers-color-scheme: light)", color: "#EFEAD9" },
+    { media: "(prefers-color-scheme: dark)", color: "#0D120D" },
   ],
 };
 
@@ -32,7 +47,11 @@ export default function RootLayout({
   children: React.ReactNode;
 }) {
   return (
-    <html lang="en" suppressHydrationWarning>
+    <html
+      lang="en"
+      suppressHydrationWarning
+      className={`${fraunces.variable} ${jetbrainsMono.variable}`}
+    >
       <head>
         <ThemeScript />
       </head>

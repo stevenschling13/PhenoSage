@@ -13,14 +13,17 @@ type Variant =
 type Tone = "default" | "accent" | "success" | "warning" | "danger" | "info";
 
 const VARIANTS: Record<Variant, string> = {
-  default: "bg-primary text-primary-foreground",
-  secondary: "bg-secondary text-secondary-foreground",
-  outline: "border border-border bg-transparent text-foreground",
-  success: "bg-success/15 text-success border border-success/30",
-  warning: "bg-warning/15 text-warning border border-warning/30",
+  default: "bg-[rgb(var(--ps-ink))] text-[rgb(var(--ps-canvas))]",
+  secondary: "bg-[rgb(var(--ps-ink)/0.05)] text-[rgb(var(--ps-ink-2))]",
+  outline:
+    "border border-[rgb(var(--ps-line)/var(--ps-line-strong-strength))] bg-transparent text-[rgb(var(--ps-ink-2))]",
+  success:
+    "bg-[rgb(var(--ps-ok)/0.12)] text-[rgb(var(--ps-ok))] border border-[rgb(var(--ps-ok)/0.32)]",
+  warning:
+    "bg-[rgb(var(--ps-warn)/0.16)] text-[rgb(var(--ps-warn))] border border-[rgb(var(--ps-warn)/0.36)]",
   destructive:
-    "bg-destructive/15 text-destructive border border-destructive/30",
-  info: "bg-info/15 text-info border border-info/30",
+    "bg-[rgb(var(--ps-crit)/0.16)] text-[rgb(var(--ps-crit))] border border-[rgb(var(--ps-crit)/0.36)]",
+  info: "bg-[rgb(var(--ps-accent-soft))] text-[rgb(var(--ps-accent-strong))] border border-[rgb(var(--ps-accent)/0.32)]",
 };
 
 const TONE_TO_VARIANT: Record<Tone, Variant> = {
@@ -43,7 +46,7 @@ export function Badge({ variant, tone, className, ...props }: BadgeProps) {
   return (
     <span
       className={cn(
-        "inline-flex items-center rounded-full px-2.5 py-0.5 text-xs font-medium leading-none",
+        "inline-flex items-center gap-1 rounded-full px-2.5 py-[3px] font-mono text-[10.5px] uppercase tracking-[0.08em] leading-none whitespace-nowrap",
         VARIANTS[resolved],
         className,
       )}

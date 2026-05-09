@@ -1,15 +1,16 @@
 import { forwardRef, type HTMLAttributes } from "react";
 import { cn } from "@/lib/cn";
 
-type CardVariant = "default" | "surface";
+type CardVariant = "default" | "surface" | "accent";
 
 interface CardProps extends HTMLAttributes<HTMLDivElement> {
   variant?: CardVariant;
 }
 
 const VARIANTS: Record<CardVariant, string> = {
-  default: "bg-card text-card-foreground shadow-elevation-1",
-  surface: "bg-muted/40 text-card-foreground",
+  default: "bg-[rgb(var(--ps-surface))] text-[rgb(var(--ps-ink))] shadow-soft",
+  surface: "bg-[rgb(var(--ps-surface-2)/0.7)] text-[rgb(var(--ps-ink))]",
+  accent: "bg-[rgb(var(--ps-accent-soft))] text-[rgb(var(--ps-accent-strong))]",
 };
 
 export const Card = forwardRef<HTMLDivElement, CardProps>(function Card(
@@ -20,7 +21,7 @@ export const Card = forwardRef<HTMLDivElement, CardProps>(function Card(
     <div
       ref={ref}
       className={cn(
-        "rounded-lg border",
+        "ps-rise rounded-[18px] border border-[rgb(var(--ps-line)/var(--ps-line-strength))]",
         VARIANTS[variant],
         "transition-shadow duration-200",
         className,
@@ -37,7 +38,7 @@ export const CardHeader = forwardRef<
   return (
     <div
       ref={ref}
-      className={cn("flex flex-col space-y-1.5 p-6", className)}
+      className={cn("flex flex-col gap-1.5 p-6 pb-4", className)}
       {...props}
     />
   );
@@ -50,10 +51,7 @@ export const CardTitle = forwardRef<
   return (
     <h3
       ref={ref}
-      className={cn(
-        "text-base font-semibold leading-tight tracking-tight",
-        className,
-      )}
+      className={cn("ps-display text-[19px] leading-tight", className)}
       {...props}
     />
   );
@@ -66,7 +64,10 @@ export const CardDescription = forwardRef<
   return (
     <p
       ref={ref}
-      className={cn("text-sm text-muted-foreground", className)}
+      className={cn(
+        "text-[13.5px] leading-6 text-[rgb(var(--ps-muted))]",
+        className,
+      )}
       {...props}
     />
   );

@@ -46,21 +46,20 @@ export function SidebarNav({ className }: { className?: string }) {
             href={href}
             aria-current={active ? "page" : undefined}
             className={cn(
-              "group flex items-center gap-3 rounded-md px-3 py-2 text-sm font-medium",
-              "transition-colors duration-150",
+              "group flex items-center gap-3 rounded-full px-3.5 py-2.5 text-[14px] font-medium transition-colors duration-150",
               active
-                ? "bg-accent text-accent-foreground"
-                : "text-muted-foreground hover:bg-muted hover:text-foreground",
+                ? "bg-[rgb(var(--ps-ink))] text-[rgb(var(--ps-canvas))]"
+                : "text-[rgb(var(--ps-ink-2))] hover:bg-[rgb(var(--ps-ink)/0.06)] hover:text-[rgb(var(--ps-ink))]",
             )}
           >
             <Icon
-              width={18}
-              height={18}
+              width={17}
+              height={17}
               className={cn(
                 "transition-colors",
                 active
-                  ? "text-primary"
-                  : "text-muted-foreground group-hover:text-foreground",
+                  ? "text-[rgb(var(--ps-canvas))]"
+                  : "text-[rgb(var(--ps-muted))] group-hover:text-[rgb(var(--ps-ink))]",
               )}
             />
             <span>{label}</span>
@@ -76,10 +75,10 @@ export function MobileBottomNav() {
   return (
     <nav
       aria-label="Primary"
-      className="fixed inset-x-0 bottom-0 z-30 border-t border-border bg-background/90 backdrop-blur md:hidden"
+      className="fixed bottom-3 left-3 right-3 z-30 md:hidden"
       style={{ paddingBottom: "env(safe-area-inset-bottom)" }}
     >
-      <ul className="grid grid-cols-5">
+      <ul className="grid grid-cols-5 gap-1 rounded-full border border-[rgb(var(--ps-line)/var(--ps-line-strength))] bg-[rgb(var(--ps-surface))] p-1.5 shadow-soft">
         {NAV_ITEMS.map(({ href, label, Icon }) => {
           const active = isActive(pathname, href);
           return (
@@ -89,21 +88,14 @@ export function MobileBottomNav() {
                 aria-current={active ? "page" : undefined}
                 aria-label={label}
                 className={cn(
-                  "flex h-14 flex-col items-center justify-center gap-0.5 text-[11px] transition-colors",
-                  "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring",
+                  "flex h-10 flex-col items-center justify-center gap-0.5 rounded-full px-1 text-[10px] font-medium transition-colors",
+                  "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[rgb(var(--ps-accent))]",
                   active
-                    ? "text-primary"
-                    : "text-muted-foreground active:text-foreground",
+                    ? "bg-[rgb(var(--ps-ink))] text-[rgb(var(--ps-canvas))]"
+                    : "text-[rgb(var(--ps-muted))] hover:text-[rgb(var(--ps-ink))]",
                 )}
               >
-                <span
-                  className={cn(
-                    "flex h-7 w-12 items-center justify-center rounded-full transition-colors",
-                    active && "bg-accent",
-                  )}
-                >
-                  <Icon width={20} height={20} />
-                </span>
+                <Icon width={18} height={18} />
                 <span className="leading-none">{label}</span>
               </Link>
             </li>
