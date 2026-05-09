@@ -203,15 +203,22 @@ export async function getWorkspaceOverview(): Promise<WorkspaceOverview> {
     })
     .sort(compareUpdatedAtDescending);
 
-  const recentFindings = findings.slice(0, 5).map((finding) => ({
-    createdAt: finding.created_at,
-    growId: finding.grow_id,
-    id: finding.id,
-    plantId: finding.plant_id,
-    plantName: plantNamesById.get(finding.plant_id) ?? "Plant",
-    severity: finding.severity,
-    title: finding.title,
-  }));
+  // Recent activity should reflect items that still need operator attention.
+  // Including resolved findings here misleads the dashboard "open watch
+  // items" surface, since the count badge filters by `resolved_at` but the
+  // visible list previously did not.
+  const recentFindings = findings
+    .filter((finding) => !finding.resolved_at)
+    .slice(0, 5)
+    .map((finding) => ({
+      createdAt: finding.created_at,
+      growId: finding.grow_id,
+      id: finding.id,
+      plantId: finding.plant_id,
+      plantName: plantNamesById.get(finding.plant_id) ?? "Plant",
+      severity: finding.severity,
+      title: finding.title,
+    }));
 
   return {
     grows: growOverview,
