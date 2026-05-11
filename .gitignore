@@ -37,6 +37,7 @@ pnpm-debug.log*
 
 # Testing
 coverage/
+.coverage
 .nyc_output/
 .pytest_cache/
 htmlcov/
