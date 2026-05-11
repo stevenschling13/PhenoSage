@@ -167,6 +167,9 @@ describe("getWorkspaceOverview", () => {
       primaryPlantId: "plant-new",
       primaryPlantName: "Blue Dream",
     });
+    // recentFindings intentionally excludes resolved findings so the
+    // visible list aligns with the openFindings count badge (see
+    // workspace-overview.ts: filter on !finding.resolved_at).
     expect(overview.recentFindings).toEqual([
       {
         createdAt: "2026-05-03T00:00:00Z",
@@ -176,15 +179,6 @@ describe("getWorkspaceOverview", () => {
         plantName: "Blue Dream",
         severity: "medium",
         title: "Magnesium deficiency",
-      },
-      {
-        createdAt: "2026-05-02T00:00:00Z",
-        growId: "grow-old",
-        id: "finding-resolved",
-        plantId: "plant-missing",
-        plantName: "Plant",
-        severity: "low",
-        title: "Resolved pest pressure",
       },
     ]);
   });
