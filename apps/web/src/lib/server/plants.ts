@@ -1,6 +1,6 @@
 import "server-only";
 import type { AnalysisFinding, AnalysisResponse } from "@phenosage/shared";
-import { analyzeImage } from "./analysis-proxy";
+import { analyzeImage, type AnalyzeGrowContext } from "./analysis-proxy";
 import { createSupabaseServerClient } from "./auth";
 import { getAuthorizedPlantContext } from "./plant-access";
 import { getDbClient } from "./db";
@@ -399,27 +399,31 @@ export async function runAndPersistPlantAnalysis(params: {
   const previousImage =
     images.find((row) => row.id !== currentImage.id) ?? null;
 
-  const analysis = await analyzeImage({
+  // Build the grow context by assignment so TypeScript's
+  // `exactOptionalPropertyTypes` doesn't reject conditional spreads on
+  // optional fields whose source is `T | undefined`.
+  const growContext: AnalyzeGrowContext = { growId: context.growId };
+  if (context.strain) growContext.strain = context.strain;
+  if (context.growStage) growContext.stage = context.growStage;
+  if (context.medium) growContext.medium = context.medium;
+  if (context.lightType) growContext.lightType = context.lightType;
+  const days = daysSinceStart(context.startDate);
+  if (days !== undefined) growContext.daysSinceStart = days;
+  if (context.notes) growContext.notes = context.notes;
+
+  const analyzeParams: Parameters<typeof analyzeImage>[0] = {
     plantId: context.plantId,
     imageId: currentImage.id,
     storagePath: currentImage.storage_path,
-    growContext: {
-      growId: context.growId,
-      ...(context.strain ? { strain: context.strain } : {}),
-      ...(context.growStage ? { stage: context.growStage } : {}),
-      ...(context.medium ? { medium: context.medium } : {}),
-      ...(context.lightType ? { lightType: context.lightType } : {}),
-      ...(daysSinceStart(context.startDate) !== undefined
-        ? { daysSinceStart: daysSinceStart(context.startDate) }
-        : {}),
-      ...(context.notes ? { notes: context.notes } : {}),
-    },
-    ...(previousImage?.id ? { previousImageId: previousImage.id } : {}),
-    ...(previousImage?.storage_path
-      ? { previousStoragePath: previousImage.storage_path }
-      : {}),
+    growContext,
     requestId: params.requestId,
-  });
+  };
+  if (previousImage?.id) analyzeParams.previousImageId = previousImage.id;
+  if (previousImage?.storage_path) {
+    analyzeParams.previousStoragePath = previousImage.storage_path;
+  }
+
+  const analysis = await analyzeImage(analyzeParams);
 
   const { error: upsertError } = await db.from("plant_analyses").upsert(
     {

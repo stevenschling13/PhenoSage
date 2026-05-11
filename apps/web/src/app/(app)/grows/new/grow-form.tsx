@@ -120,6 +120,7 @@ export function GrowForm({ initialStartDate }: { initialStartDate: string }) {
           aria-invalid={Boolean(state.fieldErrors?.name) || undefined}
           className={inputClassName}
           id="grow-name"
+          maxLength={120}
           name="name"
           onChange={(event) => setName(event.target.value)}
           placeholder="North tent A"

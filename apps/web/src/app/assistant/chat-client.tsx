@@ -233,6 +233,7 @@ export function AssistantChat() {
               value={input}
               onChange={(e) => setInput(e.target.value)}
               onKeyDown={onKeyDown}
+              maxLength={4000}
               placeholder="Ask about your grow…  (Enter to send, Shift+Enter for newline)"
               disabled={streaming}
               className="max-h-40 min-h-[2.5rem] flex-1 resize-none border-0 bg-transparent px-2 py-2 text-sm text-foreground placeholder:text-muted-foreground focus:outline-none disabled:cursor-not-allowed disabled:opacity-60"

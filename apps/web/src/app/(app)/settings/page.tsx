@@ -16,6 +16,7 @@ import {
 } from "@/components/ui/card";
 import { PageHeader } from "@/components/ui/page-header";
 import { getCurrentProfile } from "@/lib/server/profile";
+import { signOutAction } from "@/app/auth/actions";
 import { SettingsProfileForm } from "./settings-profile-form";
 
 export const metadata: Metadata = { title: "Settings" };
@@ -140,7 +141,7 @@ export default async function SettingsPage() {
               </CardDescription>
             </CardHeader>
             <CardContent>
-              <form action="/auth/signout" method="post">
+              <form action={signOutAction}>
                 <Button fullWidth type="submit" variant="surface">
                   Sign out securely
                 </Button>
