@@ -1,0 +1,149 @@
+name: E2E — Preview
+
+# Runs the authenticated Playwright smoke against a Vercel Preview deployment.
+# Triggered by Vercel's deployment_status event when a Preview deploy turns
+# successful — mirrors how post-deploy-smoke.yml hooks Production.
+#
+# Required GitHub secrets (see apps/web/e2e/README.md for setup):
+#   E2E_SUPABASE_URL                  Test/staging Supabase project URL
+#   E2E_SUPABASE_ANON_KEY             ...its publishable anon key
+#   E2E_SUPABASE_SERVICE_ROLE_KEY     ...its service role key
+# Optional:
+#   VERCEL_PROTECTION_BYPASS          x-vercel-protection-bypass token if previews are SSO-gated
+#
+# Safety: the job exits cleanly (no-op) if E2E_SUPABASE_SERVICE_ROLE_KEY is
+# missing, so merging this workflow before the secrets are provisioned does
+# not break CI. NEVER point the secrets at the production Supabase project —
+# the helper creates real users and writes real rows via the service role.
+
+on:
+  deployment_status:
+  workflow_dispatch:
+    inputs:
+      target_url:
+        description: "Preview URL to test (overrides deployment_status payload)"
+        required: false
+        type: string
+
+permissions:
+  contents: read
+  deployments: read
+  pull-requests: write
+
+concurrency:
+  group: e2e-preview-${{ github.event.deployment_status.environment_url || github.event.inputs.target_url || github.run_id }}
+  cancel-in-progress: true
+
+jobs:
+  e2e:
+    name: Playwright — Preview
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    if: |
+      github.event_name == 'workflow_dispatch' ||
+      (github.event.deployment_status.state == 'success' &&
+       github.event.deployment_status.environment == 'Preview')
+    steps:
+      - name: Skip if Supabase test secrets are missing
+        id: gate
+        env:
+          E2E_SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.E2E_SUPABASE_SERVICE_ROLE_KEY }}
+        run: |
+          if [ -z "$E2E_SUPABASE_SERVICE_ROLE_KEY" ]; then
+            echo "E2E_SUPABASE_SERVICE_ROLE_KEY not set — skipping authenticated smoke."
+            echo "skip=1" >> "$GITHUB_OUTPUT"
+          else
+            echo "skip=0" >> "$GITHUB_OUTPUT"
+          fi
+
+      - uses: actions/checkout@v6
+        if: steps.gate.outputs.skip != '1'
+
+      - name: Resolve target URL
+        id: target
+        if: steps.gate.outputs.skip != '1'
+        shell: bash
+        run: |
+          URL="${{ github.event.inputs.target_url }}"
+          if [ -z "$URL" ]; then
+            URL="${{ github.event.deployment_status.environment_url }}"
+          fi
+          if [ -z "$URL" ]; then
+            echo "::error::No preview URL available."
+            exit 1
+          fi
+          echo "url=$URL" >> "$GITHUB_OUTPUT"
+          echo "Preview target: $URL"
+
+      - uses: pnpm/action-setup@v6
+        if: steps.gate.outputs.skip != '1'
+
+      - uses: actions/setup-node@v6
+        if: steps.gate.outputs.skip != '1'
+        with:
+          node-version: "20"
+          cache: "pnpm"
+
+      - name: Install dependencies
+        if: steps.gate.outputs.skip != '1'
+        run: pnpm install --frozen-lockfile
+
+      - name: Install Playwright browsers
+        if: steps.gate.outputs.skip != '1'
+        run: pnpm --filter web exec playwright install --with-deps chromium
+
+      - name: Readiness probe
+        if: steps.gate.outputs.skip != '1'
+        run: pnpm run check:ready -- --url "${{ steps.target.outputs.url }}"
+        continue-on-error: true
+
+      - name: Run authenticated smoke
+        if: steps.gate.outputs.skip != '1'
+        working-directory: apps/web
+        env:
+          E2E_AUTH_SMOKE: "1"
+          E2E_BASE_URL: ${{ steps.target.outputs.url }}
+          E2E_SKIP_WEBSERVER: "1"
+          NEXT_PUBLIC_SUPABASE_URL: ${{ secrets.E2E_SUPABASE_URL }}
+          NEXT_PUBLIC_SUPABASE_ANON_KEY: ${{ secrets.E2E_SUPABASE_ANON_KEY }}
+          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.E2E_SUPABASE_SERVICE_ROLE_KEY }}
+          VERCEL_PROTECTION_BYPASS: ${{ secrets.VERCEL_PROTECTION_BYPASS }}
+        run: pnpm exec playwright test e2e/authenticated-workspace.spec.ts
+
+      - name: Upload Playwright report
+        if: always() && steps.gate.outputs.skip != '1'
+        uses: actions/upload-artifact@v7
+        with:
+          name: playwright-report-${{ github.run_id }}
+          path: apps/web/playwright-report
+          if-no-files-found: ignore
+          retention-days: 14
+
+      - name: Comment on PR with report link
+        if: failure() && steps.gate.outputs.skip != '1' && github.event.deployment_status.environment == 'Preview'
+        uses: actions/github-script@v9
+        with:
+          script: |
+            const url = "${{ steps.target.outputs.url }}";
+            const runUrl = `${context.serverUrl}/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId}`;
+            const sha = context.payload.deployment.sha || context.sha;
+            // Find an open PR for this commit and leave a single comment.
+            const { data: prs } = await github.rest.repos.listPullRequestsAssociatedWithCommit({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              commit_sha: sha,
+            });
+            for (const pr of prs) {
+              if (pr.state !== "open") continue;
+              await github.rest.issues.createComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: pr.number,
+                body: [
+                  `Preview Playwright smoke failed against ${url}`,
+                  ``,
+                  `Run: ${runUrl}`,
+                  `Report artifact: \`playwright-report-${context.runId}\` (in run artifacts).`,
+                ].join("\n"),
+              });
+            }
