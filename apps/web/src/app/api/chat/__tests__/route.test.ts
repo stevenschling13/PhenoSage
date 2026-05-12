@@ -180,4 +180,40 @@ describe("POST /api/chat", () => {
     expect(message).toMatch(/Chat stream failed \(request /);
     expect(message).not.toMatch(/secret context here/);
   });
+
+  it("returns a structured JSON 500 when getServerSession throws synchronously", async () => {
+    // Mirrors what happens in production when Supabase env is misconfigured
+    // or the auth service is unreachable. The client must receive a
+    // parseable JSON body with a requestId for support correlation — not
+    // a bare 500 (which is what surfaced as "Request failed with 500.").
+    (getServerSession as Mock).mockRejectedValueOnce(
+      new Error("supabase env not set"),
+    );
+
+    const res = await POST(jsonRequest({ message: "hi" }));
+    expect(res.status).toBe(500);
+    expect(res.headers.get("x-request-id")).toBeTruthy();
+    const body = (await res.json()) as { error: string; requestId: string };
+    expect(body.error).toMatch(/temporarily unavailable/i);
+    expect(body.requestId).toBeTruthy();
+    // The underlying error message must NOT leak to the client.
+    expect(JSON.stringify(body)).not.toMatch(/supabase env not set/);
+    // The upstream OpenAI client must never be touched.
+    expect(streamMock).not.toHaveBeenCalled();
+  });
+
+  it("returns a structured JSON 500 when the OpenAI client throws synchronously", async () => {
+    // Mirrors a missing OPENAI_API_KEY: getAIClient() throws synchronously.
+    getServerSession.mockResolvedValue({ user: { id: "u1" } });
+    streamMock.mockImplementationOnce(() => {
+      throw new Error("Missing OPENAI_API_KEY");
+    });
+
+    const res = await POST(jsonRequest({ message: "hi" }));
+    expect(res.status).toBe(500);
+    expect(res.headers.get("x-request-id")).toBeTruthy();
+    const body = (await res.json()) as { error: string; requestId: string };
+    expect(body.error).toMatch(/temporarily unavailable/i);
+    expect(JSON.stringify(body)).not.toMatch(/OPENAI_API_KEY/);
+  });
 });
