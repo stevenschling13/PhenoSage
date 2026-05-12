@@ -58,6 +58,19 @@ describe("Button", () => {
     expect(screen.queryByTestId("left-icon")).not.toBeInTheDocument();
   });
 
+  it("renders rightIcon when not loading and hides it while loading", () => {
+    const Icon = () => <svg data-testid="right-icon" />;
+    const { rerender } = render(<Button rightIcon={<Icon />}>Action</Button>);
+    expect(screen.getByTestId("right-icon")).toBeInTheDocument();
+
+    rerender(
+      <Button loading rightIcon={<Icon />}>
+        Action
+      </Button>,
+    );
+    expect(screen.queryByTestId("right-icon")).not.toBeInTheDocument();
+  });
+
   it("asChild clones the child and forwards classes", () => {
     render(
       <Button asChild variant="secondary">

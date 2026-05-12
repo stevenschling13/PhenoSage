@@ -53,6 +53,12 @@ function getFetchCall(index: number): FetchCall {
   return fetchSpy.mock.calls[index] as FetchCall;
 }
 
+// The file input is sr-only but associated to the visible "Choose image"
+// label via htmlFor, so getByLabelText follows the accessible relationship.
+function getFileInput(): HTMLInputElement {
+  return screen.getByLabelText(/choose image/i) as HTMLInputElement;
+}
+
 describe("UploadPhotoPanel", () => {
   it("shows the empty hint and disables submit until a file is selected", () => {
     render(<UploadPhotoPanel plantId="plant-1" />);
@@ -64,9 +70,7 @@ describe("UploadPhotoPanel", () => {
 
   it("rejects unsupported file types with an assertive alert", async () => {
     render(<UploadPhotoPanel plantId="plant-1" />);
-    const input = document.querySelector(
-      "input[type=file]",
-    ) as HTMLInputElement;
+    const input = getFileInput();
     // Use fireEvent.change to bypass userEvent's `accept` attribute check —
     // this exercises our own handler's defense-in-depth rejection.
     const gif = new File(["x"], "evil.gif", { type: "image/gif" });
@@ -82,9 +86,7 @@ describe("UploadPhotoPanel", () => {
     const user = userEvent.setup();
     render(<UploadPhotoPanel plantId="plant-1" />);
     const oversized = makeFile("huge.png", "image/png", 16 * 1024 * 1024);
-    const input = document.querySelector(
-      "input[type=file]",
-    ) as HTMLInputElement;
+    const input = getFileInput();
     await user.upload(input, oversized);
     expect(await screen.findByRole("alert")).toHaveTextContent(/under 15 mb/i);
   });
@@ -92,9 +94,7 @@ describe("UploadPhotoPanel", () => {
   it("enables submit and shows file details after a valid selection", async () => {
     const user = userEvent.setup();
     render(<UploadPhotoPanel plantId="plant-1" />);
-    const input = document.querySelector(
-      "input[type=file]",
-    ) as HTMLInputElement;
+    const input = getFileInput();
     await user.upload(input, makeFile("leaf.png", "image/png", 2048));
     expect(screen.getByText("leaf.png")).toBeInTheDocument();
     expect(screen.getByRole("button", { name: /upload photo/i })).toBeEnabled();
@@ -121,9 +121,7 @@ describe("UploadPhotoPanel", () => {
 
     const user = userEvent.setup();
     render(<UploadPhotoPanel plantId="plant-1" />);
-    const input = document.querySelector(
-      "input[type=file]",
-    ) as HTMLInputElement;
+    const input = getFileInput();
     await user.upload(input, makeFile("leaf.png", "image/png", 2048));
     await user.click(screen.getByRole("button", { name: /upload photo/i }));
 
@@ -160,9 +158,7 @@ describe("UploadPhotoPanel", () => {
 
     const user = userEvent.setup();
     render(<UploadPhotoPanel plantId="plant-1" />);
-    const input = document.querySelector(
-      "input[type=file]",
-    ) as HTMLInputElement;
+    const input = getFileInput();
     await user.upload(input, makeFile("leaf.png", "image/png", 2048));
     await user.click(screen.getByRole("button", { name: /upload photo/i }));
 
@@ -185,9 +181,7 @@ describe("UploadPhotoPanel", () => {
 
     const user = userEvent.setup();
     render(<UploadPhotoPanel plantId="plant-1" />);
-    const input = document.querySelector(
-      "input[type=file]",
-    ) as HTMLInputElement;
+    const input = getFileInput();
     await user.upload(input, makeFile("leaf.png", "image/png", 2048));
     await user.click(screen.getByRole("button", { name: /upload photo/i }));
 
@@ -217,9 +211,7 @@ describe("UploadPhotoPanel", () => {
 
     const user = userEvent.setup();
     render(<UploadPhotoPanel plantId="plant-1" />);
-    const input = document.querySelector(
-      "input[type=file]",
-    ) as HTMLInputElement;
+    const input = getFileInput();
     await user.upload(input, makeFile("leaf.png", "image/png", 2048));
     await user.click(screen.getByRole("button", { name: /upload photo/i }));
 
@@ -241,9 +233,7 @@ describe("UploadPhotoPanel", () => {
 
     const user = userEvent.setup();
     render(<UploadPhotoPanel plantId="plant-1" />);
-    const input = document.querySelector(
-      "input[type=file]",
-    ) as HTMLInputElement;
+    const input = getFileInput();
     await user.upload(input, makeFile("leaf.png", "image/png", 2048));
     await user.click(screen.getByRole("button", { name: /upload photo/i }));
 

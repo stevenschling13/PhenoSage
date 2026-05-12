@@ -1,5 +1,6 @@
 // @vitest-environment jsdom
-import { afterEach, describe, expect, it, vi } from "vitest";
+import type { ReactNode } from "react";
+import { afterAll, afterEach, describe, expect, it, vi } from "vitest";
 import { render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 
@@ -10,7 +11,7 @@ vi.mock("next/link", () => ({
     ...rest
   }: {
     href: string;
-    children: React.ReactNode;
+    children: ReactNode;
   }) => (
     <a href={typeof href === "string" ? href : "#"} {...rest}>
       {children}
@@ -25,6 +26,11 @@ const consoleSpy = vi
   .mockImplementation(() => undefined);
 afterEach(() => {
   consoleSpy.mockClear();
+});
+// Restore the real console.error so the spy doesn't leak into later test
+// files in the same Vitest worker.
+afterAll(() => {
+  consoleSpy.mockRestore();
 });
 
 describe("ErrorFallback", () => {
