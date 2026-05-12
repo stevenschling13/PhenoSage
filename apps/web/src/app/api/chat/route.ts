@@ -19,16 +19,26 @@ const MAX_GROW_ID_LENGTH = 64;
 // Accepts a threadId + message, streams OpenAI response back.
 // Context is injected server-side from the user's grow data.
 export async function POST(request: NextRequest) {
-  const requestId = getOrCreateRequestId(request);
+  // Resolve a request id up front but fall back to a fixed sentinel if even
+  // that fails (e.g. a runtime without crypto.randomUUID). This way the
+  // top-level catch below can still emit a structured envelope rather than
+  // re-throwing into Next's default error handler.
+  let requestId: string;
+  try {
+    requestId = getOrCreateRequestId(request);
+  } catch {
+    requestId = "unknown";
+  }
 
   // Single top-level safety net so any synchronous throw before we hand
-  // back the streaming response (e.g. missing OPENAI_API_KEY in
-  // getAIClient(), a Supabase auth blow-up in getServerSession(), or an
-  // openai SDK constructor failure) lands as a structured JSON 500
-  // instead of a bare Next.js error page. Without this the chat UI shows
-  // "Request failed with 500." with no further detail because there's no
-  // parseable body. Errors raised AFTER we return the ReadableStream are
-  // handled inside the stream itself (see start(controller) below).
+  // back the streaming response (a Supabase auth blow-up in
+  // getServerSession(), a missing OPENAI_API_KEY in getAIClient(), or an
+  // openai SDK constructor failure on the .stream() call) lands as a
+  // structured JSON 500 instead of a bare Next.js error page. Without
+  // this the chat UI shows "Request failed with 500." with no further
+  // detail because there's no parseable body. Errors raised AFTER we
+  // return the ReadableStream are handled inside the stream itself (see
+  // start(controller) below).
   let userId: string | null = null;
   try {
     const session = await getServerSession();
@@ -146,7 +156,7 @@ export async function POST(request: NextRequest) {
     });
 
     // Stream the response. If OpenAI errors mid-stream we surface a
-    // SANITISED error to the ReadableStream consumer (just the requestId
+    // sanitized error to the ReadableStream consumer (just the requestId
     // for support correlation) — never the upstream wording, which can
     // leak internal detail and depend on third-party message text.
     const readable = new ReadableStream({
