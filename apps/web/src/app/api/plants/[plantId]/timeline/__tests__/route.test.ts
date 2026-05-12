@@ -46,4 +46,28 @@ describe("GET /api/plants/[plantId]/timeline", () => {
     expect(Array.isArray(body.items)).toBe(true);
     expect(getPlantTimeline).toHaveBeenCalledWith("plant-xyz");
   });
+
+  it("returns 404 when the plant is missing or inaccessible", async () => {
+    getServerSession.mockResolvedValue({ user: { id: "u1" } });
+    getPlantTimeline.mockResolvedValue(null);
+
+    const res = await GET(makeRequest(), makeParams("missing-plant"));
+
+    expect(res.status).toBe(404);
+    const body = await res.json();
+    expect(body.error).toBe("Plant not found or access denied");
+    expect(getPlantTimeline).toHaveBeenCalledWith("missing-plant");
+  });
+
+  it("returns 500 when the timeline lookup fails", async () => {
+    getServerSession.mockResolvedValue({ user: { id: "u1" } });
+    getPlantTimeline.mockRejectedValue(new Error("database unavailable"));
+
+    const res = await GET(makeRequest(), makeParams("plant-xyz"));
+
+    expect(res.status).toBe(500);
+    const body = await res.json();
+    expect(body.error).toBe("database unavailable");
+    expect(body.requestId).toEqual(expect.any(String));
+  });
 });
