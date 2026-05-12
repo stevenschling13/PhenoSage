@@ -91,7 +91,7 @@ describe("rateLimitKeyFromRequest", () => {
 // without any network calls. The mock is hoisted by Vitest so it applies
 // before the dynamic imports inside `getDistributedLimiter`.
 
-const ratelimitLimit = vi.fn();
+const limitMock = vi.fn();
 
 vi.mock("@upstash/ratelimit", () => {
   class Ratelimit {
@@ -100,7 +100,7 @@ vi.mock("@upstash/ratelimit", () => {
     }
     constructor(_opts: unknown) {}
     limit(...args: unknown[]) {
-      return ratelimitLimit(...args);
+      return limitMock(...args);
     }
   }
   return { Ratelimit };
@@ -116,7 +116,7 @@ vi.mock("@upstash/redis", () => {
 describe("rateLimit (distributed backend)", () => {
   beforeEach(() => {
     __resetRateLimitStore();
-    ratelimitLimit.mockReset();
+    limitMock.mockReset();
     process.env.UPSTASH_REDIS_REST_URL = "https://redis.example";
     process.env.UPSTASH_REDIS_REST_TOKEN = "token-xyz";
   });
@@ -127,7 +127,7 @@ describe("rateLimit (distributed backend)", () => {
   });
 
   it("delegates to Upstash and surfaces success", async () => {
-    ratelimitLimit.mockResolvedValue({
+    limitMock.mockResolvedValue({
       success: true,
       remaining: 4,
       reset: 1_700_000_000,
@@ -138,11 +138,11 @@ describe("rateLimit (distributed backend)", () => {
       remaining: 4,
       resetAt: 1_700_000_000,
     });
-    expect(ratelimitLimit).toHaveBeenCalledWith("u:1", { rate: 1 });
+    expect(limitMock).toHaveBeenCalledWith("u:1", { rate: 1 });
   });
 
   it("denies when Upstash reports the limit exhausted", async () => {
-    ratelimitLimit.mockResolvedValue({
+    limitMock.mockResolvedValue({
       success: false,
       remaining: 0,
       reset: 1_700_000_000,
@@ -153,7 +153,7 @@ describe("rateLimit (distributed backend)", () => {
   });
 
   it("fails open if the Upstash call throws", async () => {
-    ratelimitLimit.mockRejectedValue(new Error("ECONNRESET"));
+    limitMock.mockRejectedValue(new Error("ECONNRESET"));
     const r = await rateLimit({ key: "u:1", limit: 5, windowMs: 60_000 });
     expect(r.ok).toBe(true);
     expect(r.remaining).toBe(5);
@@ -167,6 +167,6 @@ describe("rateLimit (distributed backend)", () => {
       now: 1,
     });
     expect(r.ok).toBe(true);
-    expect(ratelimitLimit).not.toHaveBeenCalled();
+    expect(limitMock).not.toHaveBeenCalled();
   });
 });

@@ -152,6 +152,10 @@ async function getDistributedLimiter(
  * Returns a `RateLimitResult` with `ok=false` when the limit is exceeded.
  * Uses Upstash Redis when configured (cross-instance, production-safe) and
  * an in-memory map otherwise. On Redis errors, fails open and logs.
+ *
+ * **Note:** the optional `opts.now` field is a test seam for the in-memory
+ * backend only; supplying it short-circuits the distributed path entirely
+ * and runs purely in-process. Production code paths must NOT pass `now`.
  */
 export async function rateLimit(
   opts: RateLimitOptions,
@@ -168,6 +172,10 @@ export async function rateLimit(
   }
 
   try {
+    // `rate: 1` = consume one token per call. The actual per-window limit
+    // and the window length itself are baked into the Upstash limiter at
+    // construction time (see `Ratelimit.slidingWindow(limit, "${ms} ms")`
+    // above). Only the per-call cost is variable here.
     const res = await distributed.limit(opts.key, { rate: 1 });
     return {
       ok: res.success,
