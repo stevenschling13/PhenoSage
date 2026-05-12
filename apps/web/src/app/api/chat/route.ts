@@ -178,7 +178,7 @@ export async function POST(request: NextRequest) {
             logServerEvent("error", "chat stream failed", {
               requestId,
               userId,
-              error: err instanceof Error ? err.message : "unknown_error",
+              error: err instanceof Error ? err.message : String(err),
             });
           }
           controller.error(
@@ -217,7 +217,7 @@ export async function POST(request: NextRequest) {
     logServerEvent("error", "chat request failed before stream", {
       requestId,
       userId,
-      error: err instanceof Error ? err.message : "unknown_error",
+      error: err instanceof Error ? err.message : String(err),
       stack: err instanceof Error ? err.stack : undefined,
     });
     return attachRequestId(
