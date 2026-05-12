@@ -1,0 +1,224 @@
+name: E2E — Preview
+
+# Runs the authenticated Playwright smoke against a Vercel Preview deployment.
+# Triggered by Vercel's deployment_status event when a Preview deploy turns
+# successful — mirrors how post-deploy-smoke.yml hooks Production.
+#
+# Required GitHub secrets (see apps/web/e2e/README.md for setup):
+#   E2E_SUPABASE_URL                  Test/staging Supabase project URL
+#   E2E_SUPABASE_ANON_KEY             ...its publishable anon key
+#   E2E_SUPABASE_SERVICE_ROLE_KEY     ...its service role key
+# Optional:
+#   VERCEL_PROTECTION_BYPASS          x-vercel-protection-bypass token if previews are SSO-gated
+#
+# Safety:
+# 1. Split into two jobs: `gate` (trust + secret presence) and `e2e`. The
+#    e2e job only runs when gate emits run=1; secrets are never injected
+#    into a job that hasn't passed the trust check, and no repo code is
+#    executed in the gate job.
+# 2. Trust gate resolves the PR(s) associated with the deployment SHA and
+#    skips unless the PR head lives in this repo (i.e. not a fork) or the
+#    author is MEMBER/COLLABORATOR/OWNER. workflow_dispatch is treated as
+#    trusted (dispatcher must already be a collaborator).
+# 3. Secret gate verifies all three required secrets are present, not just
+#    one — staged secret rollout cleanly skips rather than failing.
+# 4. NEVER point the secrets at the production Supabase project — the
+#    helper creates real users and writes real rows via the service role.
+
+on:
+  deployment_status:
+  workflow_dispatch:
+    inputs:
+      target_url:
+        description: "Preview URL to test (overrides deployment_status payload)"
+        required: false
+        type: string
+
+permissions:
+  contents: read
+  deployments: read
+  issues: write
+  pull-requests: read
+
+concurrency:
+  group: e2e-preview-${{ github.event.deployment_status.environment_url || github.event.inputs.target_url || github.run_id }}
+  cancel-in-progress: true
+
+jobs:
+  gate:
+    name: Gate — Trust + Secrets
+    runs-on: ubuntu-latest
+    timeout-minutes: 2
+    if: |
+      github.event_name == 'workflow_dispatch' ||
+      (github.event.deployment_status.state == 'success' &&
+       github.event.deployment_status.environment == 'Preview')
+    outputs:
+      run: ${{ steps.decision.outputs.run }}
+      reason: ${{ steps.decision.outputs.reason }}
+    steps:
+      - name: Resolve PR ownership
+        id: ownership
+        uses: actions/github-script@v9
+        with:
+          script: |
+            // workflow_dispatch has no PR association; treat the human
+            // dispatcher as trusted (they had to be a collaborator to dispatch).
+            if (context.eventName === 'workflow_dispatch') {
+              core.setOutput('trusted', '1');
+              core.setOutput('reason', 'workflow_dispatch');
+              return;
+            }
+            const sha = context.payload.deployment?.sha;
+            if (!sha) {
+              core.setOutput('trusted', '0');
+              core.setOutput('reason', 'no deployment sha');
+              return;
+            }
+            const { data: prs } = await github.rest.repos.listPullRequestsAssociatedWithCommit({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              commit_sha: sha,
+            });
+            // No associated PR (push to a branch outside a PR flow) — allow,
+            // since this is the repo owner's own work.
+            if (prs.length === 0) {
+              core.setOutput('trusted', '1');
+              core.setOutput('reason', 'no associated PR (direct push)');
+              return;
+            }
+            const trustedAssoc = new Set(['MEMBER', 'COLLABORATOR', 'OWNER']);
+            const allowed = prs.some(pr => {
+              const sameRepo = pr.head?.repo?.full_name === pr.base?.repo?.full_name;
+              return sameRepo || trustedAssoc.has(pr.author_association);
+            });
+            core.setOutput('trusted', allowed ? '1' : '0');
+            core.setOutput('reason', allowed ? 'trusted PR' : 'untrusted fork PR');
+      - name: Verify required secrets are present
+        id: secrets
+        env:
+          E2E_SUPABASE_URL: ${{ secrets.E2E_SUPABASE_URL }}
+          E2E_SUPABASE_ANON_KEY: ${{ secrets.E2E_SUPABASE_ANON_KEY }}
+          E2E_SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.E2E_SUPABASE_SERVICE_ROLE_KEY }}
+        run: |
+          missing=()
+          [ -z "$E2E_SUPABASE_URL" ] && missing+=("E2E_SUPABASE_URL")
+          [ -z "$E2E_SUPABASE_ANON_KEY" ] && missing+=("E2E_SUPABASE_ANON_KEY")
+          [ -z "$E2E_SUPABASE_SERVICE_ROLE_KEY" ] && missing+=("E2E_SUPABASE_SERVICE_ROLE_KEY")
+          if [ ${#missing[@]} -gt 0 ]; then
+            echo "ready=0" >> "$GITHUB_OUTPUT"
+            echo "Missing secrets: ${missing[*]}"
+          else
+            echo "ready=1" >> "$GITHUB_OUTPUT"
+          fi
+      - name: Decide
+        id: decision
+        env:
+          TRUSTED: ${{ steps.ownership.outputs.trusted }}
+          READY: ${{ steps.secrets.outputs.ready }}
+          OWNERSHIP_REASON: ${{ steps.ownership.outputs.reason }}
+        run: |
+          if [ "$TRUSTED" != "1" ]; then
+            echo "run=0" >> "$GITHUB_OUTPUT"
+            echo "reason=untrusted (${OWNERSHIP_REASON})" >> "$GITHUB_OUTPUT"
+            echo "::notice::Skipping E2E: deployment SHA is not from a trusted PR (${OWNERSHIP_REASON})."
+            exit 0
+          fi
+          if [ "$READY" != "1" ]; then
+            echo "run=0" >> "$GITHUB_OUTPUT"
+            echo "reason=missing-secrets" >> "$GITHUB_OUTPUT"
+            echo "::notice::Skipping E2E: required Supabase test secrets are not configured."
+            exit 0
+          fi
+          echo "run=1" >> "$GITHUB_OUTPUT"
+          echo "reason=ok" >> "$GITHUB_OUTPUT"
+
+  e2e:
+    name: Playwright — Preview
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    needs: gate
+    if: needs.gate.outputs.run == '1'
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Resolve target URL
+        id: target
+        shell: bash
+        run: |
+          URL="${{ github.event.inputs.target_url }}"
+          if [ -z "$URL" ]; then
+            URL="${{ github.event.deployment_status.environment_url }}"
+          fi
+          if [ -z "$URL" ]; then
+            echo "::error::No preview URL available."
+            exit 1
+          fi
+          echo "url=$URL" >> "$GITHUB_OUTPUT"
+          echo "Preview target: $URL"
+
+      - uses: pnpm/action-setup@v6
+
+      - uses: actions/setup-node@v6
+        with:
+          node-version: "20"
+          cache: "pnpm"
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Install Playwright browsers
+        run: pnpm --filter web exec playwright install --with-deps chromium
+
+      - name: Readiness probe
+        run: pnpm run check:ready -- --url "${{ steps.target.outputs.url }}"
+        continue-on-error: true
+
+      - name: Run authenticated smoke
+        working-directory: apps/web
+        env:
+          E2E_AUTH_SMOKE: "1"
+          E2E_BASE_URL: ${{ steps.target.outputs.url }}
+          E2E_SKIP_WEBSERVER: "1"
+          NEXT_PUBLIC_SUPABASE_URL: ${{ secrets.E2E_SUPABASE_URL }}
+          NEXT_PUBLIC_SUPABASE_ANON_KEY: ${{ secrets.E2E_SUPABASE_ANON_KEY }}
+          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.E2E_SUPABASE_SERVICE_ROLE_KEY }}
+          VERCEL_PROTECTION_BYPASS: ${{ secrets.VERCEL_PROTECTION_BYPASS }}
+        run: pnpm exec playwright test e2e/authenticated-workspace.spec.ts
+
+      - name: Upload Playwright report
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: playwright-report-${{ github.run_id }}
+          path: apps/web/playwright-report
+          if-no-files-found: ignore
+          retention-days: 14
+
+      - name: Comment on PR with report link
+        if: failure() && github.event.deployment_status.environment == 'Preview'
+        uses: actions/github-script@v9
+        with:
+          script: |
+            const url = "${{ steps.target.outputs.url }}";
+            const runUrl = `${context.serverUrl}/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId}`;
+            const sha = context.payload.deployment.sha || context.sha;
+            const { data: prs } = await github.rest.repos.listPullRequestsAssociatedWithCommit({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              commit_sha: sha,
+            });
+            for (const pr of prs) {
+              if (pr.state !== "open") continue;
+              await github.rest.issues.createComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: pr.number,
+                body: [
+                  `Preview Playwright smoke failed against ${url}`,
+                  ``,
+                  `Run: ${runUrl}`,
+                  `Report artifact: \`playwright-report-${context.runId}\` (in run artifacts).`,
+                ].join("\n"),
+              });
+            }
