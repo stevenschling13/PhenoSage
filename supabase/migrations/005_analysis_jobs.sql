@@ -76,7 +76,7 @@ $$;
 drop trigger if exists trg_analysis_jobs_updated_at on analysis_jobs;
 create trigger trg_analysis_jobs_updated_at
   before update on analysis_jobs
-  for each row execute procedure set_analysis_jobs_updated_at();
+  for each row execute function set_analysis_jobs_updated_at();
 
 grant select on analysis_jobs to authenticated;
 
@@ -96,18 +96,20 @@ as $$
 declare
   v_job analysis_jobs;
 begin
-  if p_idempotency_key is not null then
-    select * into v_job
-    from analysis_jobs
-    where image_id = p_image_id
-      and idempotency_key = p_idempotency_key
-    limit 1;
-
-    if found then
-      return v_job;
-    end if;
-  end if;
-
+  -- Race-safe idempotent insert.
+  --
+  -- When an idempotency key is supplied we rely on the partial unique
+  -- index `idx_analysis_jobs_image_idem` (image_id, idempotency_key) WHERE
+  -- idempotency_key IS NOT NULL. The `ON CONFLICT DO UPDATE SET id = id`
+  -- is a no-op self-set whose only purpose is to make `RETURNING *` yield
+  -- the existing row instead of nothing (which `DO NOTHING` would do under
+  -- a concurrent conflict). This guarantees the function always returns a
+  -- job for the same (image_id, idempotency_key) pair, even when two
+  -- callers race.
+  --
+  -- When no idempotency key is supplied the partial index doesn't apply,
+  -- so a plain insert is correct (callers wanting dedupe must supply a
+  -- key — this matches AnalyzeRequestSchema's optional idempotencyKey).
   insert into analysis_jobs (
     plant_id,
     image_id,
@@ -125,6 +127,9 @@ begin
     p_idempotency_key,
     coalesce(nullif(p_max_attempts, 0), 3)
   )
+  on conflict (image_id, idempotency_key)
+    where idempotency_key is not null
+    do update set id = analysis_jobs.id
   returning * into v_job;
 
   return v_job;
