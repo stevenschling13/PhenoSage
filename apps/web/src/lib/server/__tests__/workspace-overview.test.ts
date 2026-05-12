@@ -183,17 +183,84 @@ describe("getWorkspaceOverview", () => {
     ]);
   });
 
-  it("throws a stable error when a dashboard query fails", async () => {
+  it("degrades the failing source to empty and still returns the other sources", async () => {
+    // A single Supabase query failure (missing table, RLS denial, transient
+    // network blip) must not take down the whole dashboard. The failing
+    // source contributes empty data and the rest of the overview still
+    // renders, with the failure surfaced via console.error logging.
+    const consoleError = vi
+      .spyOn(console, "error")
+      .mockImplementation(() => {});
+
     const { client } = makeSupabaseMock({
-      grows: { data: [], error: null },
+      grows: {
+        data: [
+          {
+            id: "grow-new",
+            light_type: "LED",
+            medium: "coco",
+            name: "Flower tent",
+            stage: "flower",
+            start_date: "2026-04-01",
+            updated_at: "2026-05-01T00:00:00Z",
+          },
+        ],
+        error: null,
+      },
       plant_findings: { data: [], error: null },
       plant_images: { data: null, error: { message: "storage table down" } },
-      plants: { data: [], error: null },
+      plants: {
+        data: [
+          {
+            grow_id: "grow-new",
+            id: "plant-new",
+            name: "Blue Dream",
+            updated_at: "2026-05-05T00:00:00Z",
+          },
+        ],
+        error: null,
+      },
     });
     createSupabaseServerClient.mockResolvedValue(client);
 
-    await expect(getWorkspaceOverview()).rejects.toThrow(
-      "Failed to load images: storage table down",
+    const overview = await getWorkspaceOverview();
+
+    expect(overview.totals).toEqual({ grows: 1, images: 0, plants: 1 });
+    expect(overview.recentActivity.lastCaptureAt).toBeNull();
+    expect(overview.grows[0]).toMatchObject({
+      id: "grow-new",
+      imageCount: 0,
+      plantCount: 1,
+    });
+    expect(consoleError).toHaveBeenCalled();
+    const logged = consoleError.mock.calls
+      .map(([line]) => String(line))
+      .join("\n");
+    expect(logged).toContain("workspace overview query failed");
+    expect(logged).toContain("storage table down");
+    expect(logged).toContain("plant_images");
+
+    consoleError.mockRestore();
+  });
+
+  it("returns an empty overview and logs when client construction fails", async () => {
+    const consoleError = vi
+      .spyOn(console, "error")
+      .mockImplementation(() => {});
+    createSupabaseServerClient.mockRejectedValue(new Error("cookies blocked"));
+
+    const overview = await getWorkspaceOverview();
+
+    expect(overview).toMatchObject({
+      grows: [],
+      openFindings: 0,
+      totals: { grows: 0, images: 0, plants: 0 },
+    });
+    expect(consoleError).toHaveBeenCalled();
+    expect(String(consoleError.mock.calls[0]?.[0])).toContain(
+      "workspace overview client init failed",
     );
+
+    consoleError.mockRestore();
   });
 });
