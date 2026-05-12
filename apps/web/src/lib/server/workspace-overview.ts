@@ -1,5 +1,6 @@
 import "server-only";
 import { createSupabaseServerClient } from "./auth";
+import { logServerEvent } from "./request-id";
 
 type GrowRow = {
   id: string;
@@ -107,10 +108,24 @@ export async function getWorkspaceOverview(): Promise<WorkspaceOverview> {
     return EMPTY_WORKSPACE_OVERVIEW;
   }
 
-  const supabase = await createSupabaseServerClient();
+  let supabase: Awaited<ReturnType<typeof createSupabaseServerClient>>;
+  try {
+    supabase = await createSupabaseServerClient();
+  } catch (err) {
+    // Auth/cookie/env failure — log and render an empty board rather than
+    // throwing the user into the global error boundary. Reference codes
+    // surfaced by the boundary aren't actionable for this case.
+    logServerEvent("error", "workspace overview client init failed", {
+      error: err instanceof Error ? err.message : String(err),
+    });
+    return EMPTY_WORKSPACE_OVERVIEW;
+  }
 
-  const [growsResult, plantsResult, imagesResult, findingsResult] =
-    await Promise.all([
+  // Run all four queries independently so a missing table, RLS denial, or
+  // transient network blip on one source degrades that source to "empty"
+  // instead of taking down the entire dashboard view.
+  const [growsSettled, plantsSettled, imagesSettled, findingsSettled] =
+    await Promise.allSettled([
       supabase
         .from("grows")
         .select("id,name,stage,medium,light_type,start_date,updated_at")
@@ -133,23 +148,37 @@ export async function getWorkspaceOverview(): Promise<WorkspaceOverview> {
         .limit(200),
     ]);
 
-  if (growsResult.error) {
-    throw new Error(`Failed to load grows: ${growsResult.error.message}`);
-  }
-  if (plantsResult.error) {
-    throw new Error(`Failed to load plants: ${plantsResult.error.message}`);
-  }
-  if (imagesResult.error) {
-    throw new Error(`Failed to load images: ${imagesResult.error.message}`);
-  }
-  if (findingsResult.error) {
-    throw new Error(`Failed to load findings: ${findingsResult.error.message}`);
+  function unwrap<T>(
+    label: string,
+    settled: PromiseSettledResult<{
+      data: T[] | null;
+      error: { message: string } | null;
+    }>,
+  ): T[] {
+    if (settled.status === "rejected") {
+      logServerEvent("error", "workspace overview query rejected", {
+        source: label,
+        error:
+          settled.reason instanceof Error
+            ? settled.reason.message
+            : String(settled.reason),
+      });
+      return [];
+    }
+    if (settled.value.error) {
+      logServerEvent("error", "workspace overview query failed", {
+        source: label,
+        error: settled.value.error.message,
+      });
+      return [];
+    }
+    return settled.value.data ?? [];
   }
 
-  const grows = (growsResult.data ?? []) as GrowRow[];
-  const plants = (plantsResult.data ?? []) as PlantRow[];
-  const images = (imagesResult.data ?? []) as ImageRow[];
-  const findings = (findingsResult.data ?? []) as FindingRow[];
+  const grows = unwrap<GrowRow>("grows", growsSettled);
+  const plants = unwrap<PlantRow>("plants", plantsSettled);
+  const images = unwrap<ImageRow>("plant_images", imagesSettled);
+  const findings = unwrap<FindingRow>("plant_findings", findingsSettled);
 
   const plantsByGrow = new Map<string, PlantRow[]>();
   const imagesByGrow = new Map<string, ImageRow[]>();
