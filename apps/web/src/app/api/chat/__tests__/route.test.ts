@@ -161,7 +161,7 @@ describe("POST /api/chat", () => {
     });
   });
 
-  it("surfaces a SANITISED error to the client when the upstream fails", async () => {
+  it("surfaces a sanitized error to the client when the upstream fails", async () => {
     getServerSession.mockResolvedValue({ user: { id: "u1" } });
     streamMock.mockReturnValue(failingStream());
 
@@ -202,8 +202,11 @@ describe("POST /api/chat", () => {
     expect(streamMock).not.toHaveBeenCalled();
   });
 
-  it("returns a structured JSON 500 when the OpenAI client throws synchronously", async () => {
-    // Mirrors a missing OPENAI_API_KEY: getAIClient() throws synchronously.
+  it("returns a structured JSON 500 when openai.chat.completions.stream throws synchronously", async () => {
+    // Mirrors an openai SDK init failure (e.g. an upstream constructor
+    // throwing on auth/setup). The route's top-level catch must convert
+    // this into a parseable envelope; the underlying error text must not
+    // leak to the client.
     getServerSession.mockResolvedValue({ user: { id: "u1" } });
     streamMock.mockImplementationOnce(() => {
       throw new Error("Missing OPENAI_API_KEY");
