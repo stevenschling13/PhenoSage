@@ -11,10 +11,19 @@ name: E2E — Preview
 # Optional:
 #   VERCEL_PROTECTION_BYPASS          x-vercel-protection-bypass token if previews are SSO-gated
 #
-# Safety: the job exits cleanly (no-op) if E2E_SUPABASE_SERVICE_ROLE_KEY is
-# missing, so merging this workflow before the secrets are provisioned does
-# not break CI. NEVER point the secrets at the production Supabase project —
-# the helper creates real users and writes real rows via the service role.
+# Safety:
+# 1. Split into two jobs: `gate` (trust + secret presence) and `e2e`. The
+#    e2e job only runs when gate emits run=1; secrets are never injected
+#    into a job that hasn't passed the trust check, and no repo code is
+#    executed in the gate job.
+# 2. Trust gate resolves the PR(s) associated with the deployment SHA and
+#    skips unless the PR head lives in this repo (i.e. not a fork) or the
+#    author is MEMBER/COLLABORATOR/OWNER. workflow_dispatch is treated as
+#    trusted (dispatcher must already be a collaborator).
+# 3. Secret gate verifies all three required secrets are present, not just
+#    one — staged secret rollout cleanly skips rather than failing.
+# 4. NEVER point the secrets at the production Supabase project — the
+#    helper creates real users and writes real rows via the service role.
 
 on:
   deployment_status:
@@ -28,40 +37,113 @@ on:
 permissions:
   contents: read
   deployments: read
-  pull-requests: write
+  issues: write
+  pull-requests: read
 
 concurrency:
   group: e2e-preview-${{ github.event.deployment_status.environment_url || github.event.inputs.target_url || github.run_id }}
   cancel-in-progress: true
 
 jobs:
-  e2e:
-    name: Playwright — Preview
+  gate:
+    name: Gate — Trust + Secrets
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: 2
     if: |
       github.event_name == 'workflow_dispatch' ||
       (github.event.deployment_status.state == 'success' &&
        github.event.deployment_status.environment == 'Preview')
+    outputs:
+      run: ${{ steps.decision.outputs.run }}
+      reason: ${{ steps.decision.outputs.reason }}
     steps:
-      - name: Skip if Supabase test secrets are missing
-        id: gate
+      - name: Resolve PR ownership
+        id: ownership
+        uses: actions/github-script@v9
+        with:
+          script: |
+            // workflow_dispatch has no PR association; treat the human
+            // dispatcher as trusted (they had to be a collaborator to dispatch).
+            if (context.eventName === 'workflow_dispatch') {
+              core.setOutput('trusted', '1');
+              core.setOutput('reason', 'workflow_dispatch');
+              return;
+            }
+            const sha = context.payload.deployment?.sha;
+            if (!sha) {
+              core.setOutput('trusted', '0');
+              core.setOutput('reason', 'no deployment sha');
+              return;
+            }
+            const { data: prs } = await github.rest.repos.listPullRequestsAssociatedWithCommit({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              commit_sha: sha,
+            });
+            // No associated PR (push to a branch outside a PR flow) — allow,
+            // since this is the repo owner's own work.
+            if (prs.length === 0) {
+              core.setOutput('trusted', '1');
+              core.setOutput('reason', 'no associated PR (direct push)');
+              return;
+            }
+            const trustedAssoc = new Set(['MEMBER', 'COLLABORATOR', 'OWNER']);
+            const allowed = prs.some(pr => {
+              const sameRepo = pr.head?.repo?.full_name === pr.base?.repo?.full_name;
+              return sameRepo || trustedAssoc.has(pr.author_association);
+            });
+            core.setOutput('trusted', allowed ? '1' : '0');
+            core.setOutput('reason', allowed ? 'trusted PR' : 'untrusted fork PR');
+      - name: Verify required secrets are present
+        id: secrets
         env:
+          E2E_SUPABASE_URL: ${{ secrets.E2E_SUPABASE_URL }}
+          E2E_SUPABASE_ANON_KEY: ${{ secrets.E2E_SUPABASE_ANON_KEY }}
           E2E_SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.E2E_SUPABASE_SERVICE_ROLE_KEY }}
         run: |
-          if [ -z "$E2E_SUPABASE_SERVICE_ROLE_KEY" ]; then
-            echo "E2E_SUPABASE_SERVICE_ROLE_KEY not set — skipping authenticated smoke."
-            echo "skip=1" >> "$GITHUB_OUTPUT"
+          missing=()
+          [ -z "$E2E_SUPABASE_URL" ] && missing+=("E2E_SUPABASE_URL")
+          [ -z "$E2E_SUPABASE_ANON_KEY" ] && missing+=("E2E_SUPABASE_ANON_KEY")
+          [ -z "$E2E_SUPABASE_SERVICE_ROLE_KEY" ] && missing+=("E2E_SUPABASE_SERVICE_ROLE_KEY")
+          if [ ${#missing[@]} -gt 0 ]; then
+            echo "ready=0" >> "$GITHUB_OUTPUT"
+            echo "Missing secrets: ${missing[*]}"
           else
-            echo "skip=0" >> "$GITHUB_OUTPUT"
+            echo "ready=1" >> "$GITHUB_OUTPUT"
           fi
+      - name: Decide
+        id: decision
+        env:
+          TRUSTED: ${{ steps.ownership.outputs.trusted }}
+          READY: ${{ steps.secrets.outputs.ready }}
+          OWNERSHIP_REASON: ${{ steps.ownership.outputs.reason }}
+        run: |
+          if [ "$TRUSTED" != "1" ]; then
+            echo "run=0" >> "$GITHUB_OUTPUT"
+            echo "reason=untrusted (${OWNERSHIP_REASON})" >> "$GITHUB_OUTPUT"
+            echo "::notice::Skipping E2E: deployment SHA is not from a trusted PR (${OWNERSHIP_REASON})."
+            exit 0
+          fi
+          if [ "$READY" != "1" ]; then
+            echo "run=0" >> "$GITHUB_OUTPUT"
+            echo "reason=missing-secrets" >> "$GITHUB_OUTPUT"
+            echo "::notice::Skipping E2E: required Supabase test secrets are not configured."
+            exit 0
+          fi
+          echo "run=1" >> "$GITHUB_OUTPUT"
+          echo "reason=ok" >> "$GITHUB_OUTPUT"
 
+  e2e:
+    name: Playwright — Preview
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    needs: gate
+    if: needs.gate.outputs.run == '1'
+    steps:
       - uses: actions/checkout@v6
-        if: steps.gate.outputs.skip != '1'
 
       - name: Resolve target URL
         id: target
-        if: steps.gate.outputs.skip != '1'
         shell: bash
         run: |
           URL="${{ github.event.inputs.target_url }}"
@@ -76,29 +158,23 @@ jobs:
           echo "Preview target: $URL"
 
       - uses: pnpm/action-setup@v6
-        if: steps.gate.outputs.skip != '1'
 
       - uses: actions/setup-node@v6
-        if: steps.gate.outputs.skip != '1'
         with:
           node-version: "20"
           cache: "pnpm"
 
       - name: Install dependencies
-        if: steps.gate.outputs.skip != '1'
         run: pnpm install --frozen-lockfile
 
       - name: Install Playwright browsers
-        if: steps.gate.outputs.skip != '1'
         run: pnpm --filter web exec playwright install --with-deps chromium
 
       - name: Readiness probe
-        if: steps.gate.outputs.skip != '1'
         run: pnpm run check:ready -- --url "${{ steps.target.outputs.url }}"
         continue-on-error: true
 
       - name: Run authenticated smoke
-        if: steps.gate.outputs.skip != '1'
         working-directory: apps/web
         env:
           E2E_AUTH_SMOKE: "1"
@@ -111,7 +187,7 @@ jobs:
         run: pnpm exec playwright test e2e/authenticated-workspace.spec.ts
 
       - name: Upload Playwright report
-        if: always() && steps.gate.outputs.skip != '1'
+        if: always()
         uses: actions/upload-artifact@v7
         with:
           name: playwright-report-${{ github.run_id }}
@@ -120,14 +196,13 @@ jobs:
           retention-days: 14
 
       - name: Comment on PR with report link
-        if: failure() && steps.gate.outputs.skip != '1' && github.event.deployment_status.environment == 'Preview'
+        if: failure() && github.event.deployment_status.environment == 'Preview'
         uses: actions/github-script@v9
         with:
           script: |
             const url = "${{ steps.target.outputs.url }}";
             const runUrl = `${context.serverUrl}/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId}`;
             const sha = context.payload.deployment.sha || context.sha;
-            // Find an open PR for this commit and leave a single comment.
             const { data: prs } = await github.rest.repos.listPullRequestsAssociatedWithCommit({
               owner: context.repo.owner,
               repo: context.repo.repo,
