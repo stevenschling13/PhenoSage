@@ -1,5 +1,6 @@
 import "server-only";
 import { createSupabaseServerClient } from "./auth";
+import { logServerEvent } from "./request-id";
 
 type GrowRow = {
   id: string;
@@ -65,7 +66,16 @@ export async function listAccessibleGrows(): Promise<GrowRecord[]> {
     return [];
   }
 
-  const supabase = await createSupabaseServerClient();
+  let supabase: Awaited<ReturnType<typeof createSupabaseServerClient>>;
+  try {
+    supabase = await createSupabaseServerClient();
+  } catch (err) {
+    logServerEvent("error", "list grows client init failed", {
+      error: err instanceof Error ? err.message : String(err),
+    });
+    return [];
+  }
+
   const { data, error } = await supabase
     .from("grows")
     .select("id,name,stage,medium,light_type,start_date,updated_at")
@@ -73,7 +83,12 @@ export async function listAccessibleGrows(): Promise<GrowRecord[]> {
     .limit(100);
 
   if (error) {
-    throw new Error(`Failed to load grows: ${error.message}`);
+    // Degrade to an empty list so list pages remain renderable. The
+    // underlying issue is captured in server logs for diagnosis.
+    logServerEvent("error", "list grows query failed", {
+      error: error.message,
+    });
+    return [];
   }
 
   return ((data ?? []) as GrowRow[]).map((grow) => ({
@@ -92,7 +107,16 @@ export async function listAccessiblePlants(): Promise<PlantRecord[]> {
     return [];
   }
 
-  const supabase = await createSupabaseServerClient();
+  let supabase: Awaited<ReturnType<typeof createSupabaseServerClient>>;
+  try {
+    supabase = await createSupabaseServerClient();
+  } catch (err) {
+    logServerEvent("error", "list plants client init failed", {
+      error: err instanceof Error ? err.message : String(err),
+    });
+    return [];
+  }
+
   const { data, error } = await supabase
     .from("plants")
     .select(
@@ -102,7 +126,10 @@ export async function listAccessiblePlants(): Promise<PlantRecord[]> {
     .limit(200);
 
   if (error) {
-    throw new Error(`Failed to load plants: ${error.message}`);
+    logServerEvent("error", "list plants query failed", {
+      error: error.message,
+    });
+    return [];
   }
 
   return ((data ?? []) as PlantRow[]).map((plant) => ({

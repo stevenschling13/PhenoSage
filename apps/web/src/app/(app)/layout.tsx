@@ -3,6 +3,7 @@ import { redirect } from "next/navigation";
 import { AppShell } from "@/components/app-shell";
 import { isNextFrameworkError } from "@/lib/server/auth-errors";
 import { getCurrentProfile } from "@/lib/server/profile";
+import { logServerEvent } from "@/lib/server/request-id";
 
 // Every page under (app) reads the authenticated user via getCurrentProfile.
 // Mark the group dynamic so `next build` doesn't try to statically prerender
@@ -21,7 +22,9 @@ export default async function AppLayout({ children }: { children: ReactNode }) {
     // If auth/db is unreachable we can't safely render the authenticated
     // shell. Bounce the user back to /auth where they'll see a friendly
     // status message instead of a generic Next.js error screen.
-    console.error("[app-layout] failed to load profile:", err);
+    logServerEvent("error", "app layout profile load failed", {
+      error: err instanceof Error ? err.message : String(err),
+    });
     redirect(
       "/auth?error=" +
         encodeURIComponent(

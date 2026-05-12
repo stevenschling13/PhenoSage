@@ -34,6 +34,12 @@ interface Props {
   params: Promise<{ plantId: string }>;
 }
 
+// Plant IDs are persisted as Postgres UUIDs. Reject malformed inputs at the
+// edge so we don't waste a Supabase round trip (and surface a clean 404
+// instead of a generic error boundary on accidental URL typos).
+const UUID_RE =
+  /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
 function formatDateTime(value: string) {
   return new Intl.DateTimeFormat("en-US", {
     month: "short",
@@ -83,14 +89,20 @@ function buildPlantActionItems(params: {
 
 export default async function PlantPage({ params }: Props) {
   const { plantId } = await params;
+  if (!UUID_RE.test(plantId)) {
+    notFound();
+  }
   const context = await getAuthorizedPlantContext(plantId);
 
   if (!context) {
     notFound();
   }
 
-  const timeline = await getPlantTimeline(plantId);
-  const latestAnalysis = await getLatestPlantAnalysis(plantId);
+  // Timeline + latest analysis are independent reads — fetch in parallel.
+  const [timeline, latestAnalysis] = await Promise.all([
+    getPlantTimeline(plantId),
+    getLatestPlantAnalysis(plantId),
+  ]);
   const shortId = context.plantId.slice(0, 8).toUpperCase();
   const imageItems =
     timeline?.items.filter((item) => item.type === "image") ?? [];
