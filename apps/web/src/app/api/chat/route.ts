@@ -115,7 +115,7 @@ export async function POST(request: NextRequest) {
   // TODO: Load grow context from DB to inject as system context
   // TODO: Persist ChatThread + ChatMessage rows via Supabase service role
 
-  const stream = openai.beta.chat.completions.stream({
+  const stream = openai.chat.completions.stream({
     model: "gpt-4o",
     messages: [
       {

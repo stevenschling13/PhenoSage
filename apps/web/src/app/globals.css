@@ -1,6 +1,10 @@
-@tailwind base;
-@tailwind components;
-@tailwind utilities;
+@import "tailwindcss";
+@config "../../tailwind.config.js";
+
+/* Tailwind v4 enables dark mode via `class` strategy through the
+ * `@variant dark` declaration below — JS config darkMode option is
+ * deprecated. Keeps existing `dark:` utility usage working. */
+@variant dark (&:where(.dark, .dark *));
 
 /* -----------------------------------------------------------
  * PhenoSage editorial design tokens

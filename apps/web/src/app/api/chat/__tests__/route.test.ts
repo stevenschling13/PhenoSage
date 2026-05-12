@@ -10,11 +10,9 @@ vi.mock("@/lib/server/auth", () => ({
 
 vi.mock("@/lib/server/ai-client", () => ({
   getAIClient: () => ({
-    beta: {
-      chat: {
-        completions: {
-          stream: (...args: unknown[]) => streamMock(...args),
-        },
+    chat: {
+      completions: {
+        stream: (...args: unknown[]) => streamMock(...args),
       },
     },
   }),

@@ -103,6 +103,10 @@ export default function GlobalError({
             >
               Try again
             </button>
+            {/* global-error.tsx renders when the root layout itself fails,
+                so the Next.js router/Link is not guaranteed to be available.
+                A plain anchor performing a full navigation is the safe choice. */}
+            {/* eslint-disable-next-line @next/next/no-html-link-for-pages */}
             <a
               href="/"
               style={{
