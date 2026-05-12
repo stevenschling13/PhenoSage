@@ -38,6 +38,10 @@ export function ThemeToggle() {
   const buttonsRef = useRef<(HTMLButtonElement | null)[]>([]);
 
   useEffect(() => {
+    // Hydration: read the persisted theme on the client only. setState
+    // inside an effect is the standard pattern for syncing client-only
+    // values into React state after SSR — disable the new react-hooks rule.
+    // eslint-disable-next-line react-hooks/set-state-in-effect
     setTheme(readTheme());
     setMounted(true);
   }, []);

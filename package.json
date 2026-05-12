@@ -31,19 +31,19 @@
   },
   "packageManager": "pnpm@9.0.0",
   "devDependencies": {
-    "@commitlint/cli": "^19.6.1",
-    "@commitlint/config-conventional": "^19.6.0",
+    "@commitlint/cli": "^21.0.0",
+    "@commitlint/config-conventional": "^21.0.0",
     "husky": "^9.1.7",
-    "lint-staged": "^15.3.0",
+    "lint-staged": "^17.0.4",
     "prettier": "^3.4.2",
-    "turbo": "^2.3.3"
+    "turbo": "^2.9.12"
   },
   "lint-staged": {
     "*.{ts,tsx,js,mjs,cjs,json,md,yml,yaml}": [
       "prettier --write"
     ],
     "apps/web/**/*.{ts,tsx}": [
-      "pnpm --filter web exec eslint --fix --max-warnings=0"
+      "pnpm --filter web exec eslint --fix --max-warnings=0 --no-warn-ignored"
     ]
   },
   "pnpm": {
