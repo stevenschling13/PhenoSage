@@ -57,4 +57,16 @@ describe("GET /api/plants/[plantId]/analysis/latest", () => {
     expect(body.plantId).toBe("plant-xyz");
     expect(body.analysis).toEqual({ score: 0.87 });
   });
+
+  it("returns 500 when the latest analysis lookup fails", async () => {
+    getServerSession.mockResolvedValue({ user: { id: "u1" } });
+    getLatestPlantAnalysis.mockRejectedValue(new Error("read failed"));
+
+    const res = await GET(makeRequest(), makeParams("plant-xyz"));
+
+    expect(res.status).toBe(500);
+    const body = await res.json();
+    expect(body.error).toBe("read failed");
+    expect(body.requestId).toEqual(expect.any(String));
+  });
 });

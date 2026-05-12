@@ -59,6 +59,63 @@ function makeSelectOrderResult(data: unknown[] | null, message?: string) {
   return { eq, order, select };
 }
 
+function makeImagesLimitResult(data: unknown[] | null, message?: string) {
+  const limit = vi.fn().mockResolvedValue({
+    data,
+    error: message ? { message } : null,
+  });
+  const order = vi.fn(() => ({ limit }));
+  const eq = vi.fn(() => ({ order }));
+  const select = vi.fn(() => ({ eq }));
+  return { eq, limit, order, select };
+}
+
+function makeAnalysisPersistenceDb(params?: {
+  imageRows?: unknown[] | null;
+  imageError?: string;
+  upsertError?: string;
+  deleteError?: string;
+  findingError?: string;
+}) {
+  const images = makeImagesLimitResult(
+    params?.imageRows ?? [
+      {
+        created_at: "2026-05-11T00:00:00Z",
+        grow_id: "grow-1",
+        id: "image-current",
+        notes: null,
+        plant_id: "plant-1",
+        source: "upload",
+        storage_path: "plant-1/current.jpg",
+        taken_at: null,
+        user_id: "user-1",
+      },
+    ],
+    params?.imageError,
+  );
+  const upsert = vi.fn().mockResolvedValue({
+    error: params?.upsertError ? { message: params.upsertError } : null,
+  });
+  const deleteEq = vi.fn().mockResolvedValue({
+    error: params?.deleteError ? { message: params.deleteError } : null,
+  });
+  const deleteFn = vi.fn(() => ({ eq: deleteEq }));
+  const insert = vi.fn().mockResolvedValue({
+    error: params?.findingError ? { message: params.findingError } : null,
+  });
+  const from = vi.fn((table: string) => {
+    if (table === "plant_images") {
+      return { select: images.select };
+    }
+    if (table === "plant_analyses") {
+      return { upsert };
+    }
+    return { delete: deleteFn, insert };
+  });
+
+  return { deleteEq, deleteFn, from, images, insert, upsert };
+}
+
 describe("plants server helpers", () => {
   beforeEach(() => {
     analyzeImage.mockReset();
@@ -127,6 +184,48 @@ describe("plants server helpers", () => {
     now.mockRestore();
   });
 
+  it("throws when signed upload URL creation fails", async () => {
+    const createSignedUploadUrl = vi.fn().mockResolvedValue({
+      data: null,
+      error: { message: "bucket unavailable" },
+    });
+    const from = vi.fn(() => ({ createSignedUploadUrl }));
+    getStorageClient.mockReturnValue({ from });
+
+    await expect(
+      preparePlantImageUpload({
+        contentType: "image/jpeg",
+        fileName: "plant.jpg",
+        plantId: "plant-1",
+        requestId: "req-1",
+      }),
+    ).rejects.toThrow("Failed to create signed upload URL: bucket unavailable");
+  });
+
+  it("returns null for finalized image persistence when the plant is not authorized", async () => {
+    getAuthorizedPlantContext.mockResolvedValue(null);
+
+    await expect(
+      persistPlantImageUpload({
+        imageId: "image-1",
+        plantId: "plant-1",
+        storagePath: "plant-1/image.jpg",
+      }),
+    ).resolves.toBeNull();
+    expect(createSupabaseServerClient).not.toHaveBeenCalled();
+  });
+
+  it("rejects finalized uploads whose storage path belongs to another plant", async () => {
+    await expect(
+      persistPlantImageUpload({
+        imageId: "image-1",
+        plantId: "plant-1",
+        storagePath: "other-plant/image.jpg",
+      }),
+    ).rejects.toThrow("Upload path does not match the requested plant.");
+    expect(createSupabaseServerClient).not.toHaveBeenCalled();
+  });
+
   it("persists finalized image metadata with the authorized grow and user", async () => {
     const insert = vi.fn().mockResolvedValue({ error: null });
     const from = vi.fn(() => ({ insert }));
@@ -156,6 +255,120 @@ describe("plants server helpers", () => {
       taken_at: "2026-05-01T00:00:00Z",
       user_id: "user-1",
     });
+  });
+
+  it("throws when finalized image metadata persistence fails", async () => {
+    const insert = vi.fn().mockResolvedValue({
+      error: { message: "insert rejected" },
+    });
+    const from = vi.fn(() => ({ insert }));
+    createSupabaseServerClient.mockResolvedValue({ from });
+
+    await expect(
+      persistPlantImageUpload({
+        imageId: "image-1",
+        plantId: "plant-1",
+        storagePath: "plant-1/image.jpg",
+      }),
+    ).rejects.toThrow(
+      "Failed to persist plant image metadata: insert rejected",
+    );
+  });
+
+  it("returns null for latest analysis when the plant is not authorized", async () => {
+    getAuthorizedPlantContext.mockResolvedValue(null);
+
+    await expect(getLatestPlantAnalysis("plant-1")).resolves.toBeNull();
+    expect(getDbClient).not.toHaveBeenCalled();
+  });
+
+  it("returns null for latest analysis when no persisted row exists", async () => {
+    const analysisMaybeSingle = vi.fn().mockResolvedValue({
+      data: null,
+      error: null,
+    });
+    const analysisLimit = vi.fn(() => ({ maybeSingle: analysisMaybeSingle }));
+    const analysisOrder = vi.fn(() => ({ limit: analysisLimit }));
+    const analysisEq = vi.fn(() => ({ order: analysisOrder }));
+    const analysisSelect = vi.fn(() => ({ eq: analysisEq }));
+    getDbClient.mockReturnValue({
+      from: vi.fn(() => ({ select: analysisSelect })),
+    });
+
+    await expect(getLatestPlantAnalysis("plant-1")).resolves.toBeNull();
+  });
+
+  it("returns null and logs when the latest analysis query fails", async () => {
+    const analysisMaybeSingle = vi.fn().mockResolvedValue({
+      data: null,
+      error: { message: "analysis table unavailable" },
+    });
+    const analysisLimit = vi.fn(() => ({ maybeSingle: analysisMaybeSingle }));
+    const analysisOrder = vi.fn(() => ({ limit: analysisLimit }));
+    const analysisEq = vi.fn(() => ({ order: analysisOrder }));
+    const analysisSelect = vi.fn(() => ({ eq: analysisEq }));
+    getDbClient.mockReturnValue({
+      from: vi.fn(() => ({ select: analysisSelect })),
+    });
+
+    await expect(getLatestPlantAnalysis("plant-1")).resolves.toBeNull();
+    expect(logServerEvent).toHaveBeenCalledWith(
+      "error",
+      "latest plant analysis query failed",
+      expect.objectContaining({
+        error: "analysis table unavailable",
+        plantId: "plant-1",
+      }),
+    );
+  });
+
+  it("keeps the latest analysis when findings fail to load", async () => {
+    const analysisMaybeSingle = vi.fn().mockResolvedValue({
+      data: {
+        analysis_mode: "model",
+        analyzed_at: "2026-05-02T00:00:00Z",
+        compared_to_image_id: null,
+        comparison_summary: null,
+        created_at: "2026-05-02T00:00:00Z",
+        fallback_reason: null,
+        grow_id: "grow-1",
+        id: "analysis-1",
+        image_id: "image-1",
+        is_fallback: false,
+        model_version: "gpt-4o-mini-vision",
+        overall_health_score: 91,
+        plant_id: "plant-1",
+        request_id: null,
+        summary: "Healthy canopy.",
+      },
+      error: null,
+    });
+    const analysisLimit = vi.fn(() => ({ maybeSingle: analysisMaybeSingle }));
+    const analysisOrder = vi.fn(() => ({ limit: analysisLimit }));
+    const analysisEq = vi.fn(() => ({ order: analysisOrder }));
+    const analysisSelect = vi.fn(() => ({ eq: analysisEq }));
+    const findings = makeSelectOrderResult(null, "findings table unavailable");
+    const from = vi.fn((table: string) =>
+      table === "plant_analyses"
+        ? { select: analysisSelect }
+        : { select: findings.select },
+    );
+    getDbClient.mockReturnValue({ from });
+
+    await expect(getLatestPlantAnalysis("plant-1")).resolves.toMatchObject({
+      findings: [],
+      imageId: "image-1",
+      overallHealthScore: 91,
+      summary: "Healthy canopy.",
+    });
+    expect(logServerEvent).toHaveBeenCalledWith(
+      "error",
+      "latest plant analysis findings query failed",
+      expect.objectContaining({
+        error: "findings table unavailable",
+        imageId: "image-1",
+      }),
+    );
   });
 
   it("maps the latest persisted analysis and associated findings", async () => {
@@ -259,7 +472,7 @@ describe("plants server helpers", () => {
           id: "finding-1",
           image_id: "image-1",
           plant_id: "plant-1",
-          recommendation: null,
+          recommendation: "Keep the current environment steady.",
           severity: "info",
           title: "Good vigor",
         },
@@ -317,6 +530,7 @@ describe("plants server helpers", () => {
           {
             category: "positive",
             description: "Strong color.",
+            recommendation: "Keep the current environment steady.",
             severity: "info",
             title: "Good vigor",
           },
@@ -328,6 +542,7 @@ describe("plants server helpers", () => {
         {
           category: "positive",
           description: "Strong color.",
+          recommendation: "Keep the current environment steady.",
           severity: "info",
           title: "Good vigor",
         },
@@ -338,6 +553,187 @@ describe("plants server helpers", () => {
       type: "image",
     });
   });
+
+  it("degrades failed timeline sources while keeping available items", async () => {
+    const tableResults: Record<string, unknown[] | null> = {
+      plant_analyses: [
+        {
+          analysis_mode: "model",
+          analyzed_at: "2026-05-04T00:00:00Z",
+          compared_to_image_id: null,
+          comparison_summary: null,
+          created_at: "2026-05-04T00:00:00Z",
+          fallback_reason: null,
+          grow_id: "grow-1",
+          id: "analysis-1",
+          image_id: "image-1",
+          is_fallback: false,
+          model_version: "gpt-4o-mini-vision",
+          overall_health_score: 88,
+          plant_id: "plant-1",
+          request_id: null,
+          summary: "Healthy canopy.",
+        },
+      ],
+      plant_findings: [
+        {
+          category: "positive",
+          created_at: "2026-05-04T00:01:00Z",
+          description: "Strong color.",
+          grow_id: "grow-1",
+          id: "finding-1",
+          image_id: "image-1",
+          plant_id: "plant-1",
+          recommendation: "Keep current feeding.",
+          severity: "info",
+          title: "Good vigor",
+        },
+      ],
+      plant_observations: null,
+    };
+    const rejectedOrder = vi
+      .fn()
+      .mockRejectedValue(new Error("plant images timeout"));
+    const observations = makeSelectOrderResult(null, "observations denied");
+    const from = vi.fn((table: string) => {
+      if (table === "plant_images") {
+        return {
+          select: vi.fn(() => ({
+            eq: vi.fn(() => ({ order: rejectedOrder })),
+          })),
+        };
+      }
+      if (table === "plant_observations") {
+        return { select: observations.select };
+      }
+      return {
+        select: makeSelectOrderResult(tableResults[table] ?? []).select,
+      };
+    });
+    getDbClient.mockReturnValue({ from });
+
+    const timeline = await getPlantTimeline("plant-1");
+
+    expect(timeline).toEqual({ plantId: "plant-1", items: [] });
+    expect(logServerEvent).toHaveBeenCalledWith(
+      "error",
+      "plant timeline query rejected",
+      expect.objectContaining({
+        error: "plant images timeout",
+        source: "plant_images",
+      }),
+    );
+    expect(logServerEvent).toHaveBeenCalledWith(
+      "error",
+      "plant timeline query failed",
+      expect.objectContaining({
+        error: "observations denied",
+        source: "plant_observations",
+      }),
+    );
+  });
+
+  it("returns null for timelines when the plant is not authorized", async () => {
+    getAuthorizedPlantContext.mockResolvedValue(null);
+
+    await expect(getPlantTimeline("plant-1")).resolves.toBeNull();
+    expect(getDbClient).not.toHaveBeenCalled();
+  });
+
+  it("returns null for analysis persistence when the plant is not authorized", async () => {
+    getAuthorizedPlantContext.mockResolvedValue(null);
+
+    await expect(
+      runAndPersistPlantAnalysis({
+        plantId: "plant-1",
+        requestId: "req-1",
+      }),
+    ).resolves.toBeNull();
+    expect(getDbClient).not.toHaveBeenCalled();
+  });
+
+  it("returns an empty analysis result when the requested image is absent", async () => {
+    const db = makeAnalysisPersistenceDb({
+      imageRows: [
+        {
+          created_at: "2026-05-10T00:00:00Z",
+          grow_id: "grow-1",
+          id: "different-image",
+          notes: null,
+          plant_id: "plant-1",
+          source: "upload",
+          storage_path: "plant-1/different.jpg",
+          taken_at: null,
+          user_id: "user-1",
+        },
+      ],
+    });
+    getDbClient.mockReturnValue({ from: db.from });
+
+    await expect(
+      runAndPersistPlantAnalysis({
+        imageId: "missing-image",
+        plantId: "plant-1",
+        requestId: "req-1",
+      }),
+    ).resolves.toEqual({ context: PLANT_CONTEXT, analysis: null });
+    expect(analyzeImage).not.toHaveBeenCalled();
+  });
+
+  it("throws when loading candidate images for analysis fails", async () => {
+    const db = makeAnalysisPersistenceDb({ imageError: "image query failed" });
+    getDbClient.mockReturnValue({ from: db.from });
+
+    await expect(
+      runAndPersistPlantAnalysis({
+        plantId: "plant-1",
+        requestId: "req-1",
+      }),
+    ).rejects.toThrow(
+      "Failed to load plant images for analysis: image query failed",
+    );
+  });
+
+  it.each([null, "not-a-date"])(
+    "omits daysSinceStart from analysis context when startDate is %s",
+    async (startDate) => {
+      getAuthorizedPlantContext.mockResolvedValue({
+        ...PLANT_CONTEXT,
+        startDate,
+      });
+      analyzeImage.mockResolvedValue({
+        analysisMode: "model",
+        analyzedAt: "2026-05-11T00:00:00Z",
+        findings: [],
+        imageId: "image-current",
+        isFallback: false,
+        modelVersion: "gpt-4o-mini-vision",
+        overallHealthScore: 88,
+        plantId: "plant-1",
+        requestId: "analysis-req",
+        summary: "Looks healthy.",
+      });
+      const db = makeAnalysisPersistenceDb();
+      getDbClient.mockReturnValue({ from: db.from });
+
+      await expect(
+        runAndPersistPlantAnalysis({
+          plantId: "plant-1",
+          requestId: "req-1",
+        }),
+      ).resolves.toMatchObject({
+        analysis: { summary: "Looks healthy." },
+      });
+      expect(analyzeImage).toHaveBeenCalledWith(
+        expect.objectContaining({
+          growContext: expect.not.objectContaining({
+            daysSinceStart: expect.any(Number),
+          }),
+        }),
+      );
+      expect(db.insert).not.toHaveBeenCalled();
+    },
+  );
 
   it("runs analysis for the newest image and replaces persisted findings", async () => {
     const now = vi
@@ -448,4 +844,54 @@ describe("plants server helpers", () => {
     ]);
     now.mockRestore();
   });
+
+  it.each([
+    [
+      "analysis upsert",
+      { upsertError: "upsert down" },
+      "Failed to persist plant analysis: upsert down",
+    ],
+    [
+      "finding deletion",
+      { deleteError: "delete down" },
+      "Failed to replace plant findings: delete down",
+    ],
+    [
+      "finding insert",
+      { findingError: "insert down" },
+      "Failed to persist plant findings: insert down",
+    ],
+  ])(
+    "throws when %s fails during analysis persistence",
+    async (_label, dbErrors, message) => {
+      analyzeImage.mockResolvedValue({
+        analysisMode: "model",
+        analyzedAt: "2026-05-11T00:00:00Z",
+        findings: [
+          {
+            category: "general",
+            description: "Needs review.",
+            severity: "info",
+            title: "Observation",
+          },
+        ],
+        imageId: "image-current",
+        isFallback: false,
+        modelVersion: "gpt-4o-mini-vision",
+        overallHealthScore: 70,
+        plantId: "plant-1",
+        requestId: "analysis-req",
+        summary: "Review recommended.",
+      });
+      const db = makeAnalysisPersistenceDb(dbErrors);
+      getDbClient.mockReturnValue({ from: db.from });
+
+      await expect(
+        runAndPersistPlantAnalysis({
+          plantId: "plant-1",
+          requestId: "req-1",
+        }),
+      ).rejects.toThrow(message);
+    },
+  );
 });

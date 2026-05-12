@@ -133,4 +133,22 @@ describe("POST /api/uploads/sign", () => {
     );
     expect(res.status).toBe(404);
   });
+
+  it("returns 500 when upload preparation fails", async () => {
+    getServerSession.mockResolvedValue(SESSION_OK);
+    preparePlantImageUpload.mockRejectedValueOnce(new Error("storage offline"));
+
+    const res = await POST(
+      jsonRequest({
+        plantId: "p1",
+        fileName: "shot.png",
+        contentType: "image/png",
+      }),
+    );
+
+    expect(res.status).toBe(500);
+    const body = await res.json();
+    expect(body.error).toBe("storage offline");
+    expect(body.requestId).toEqual(expect.any(String));
+  });
 });
