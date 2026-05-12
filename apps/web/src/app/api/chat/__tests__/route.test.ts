@@ -125,7 +125,11 @@ describe("POST /api/chat", () => {
     // A non-chat caller using the bare `u:u1` key should still be
     // unaffected — the chat bucket is namespaced.
     const { rateLimit } = await import("@/lib/server/rate-limit");
-    const otherRoute = rateLimit({ key: "u:u1", limit: 5, windowMs: 60_000 });
+    const otherRoute = await rateLimit({
+      key: "u:u1",
+      limit: 5,
+      windowMs: 60_000,
+    });
     expect(otherRoute.ok).toBe(true);
   });
 
