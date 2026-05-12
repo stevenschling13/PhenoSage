@@ -12,7 +12,10 @@
 import { readFileSync, readdirSync, statSync } from "node:fs";
 import { join, relative, sep } from "node:path";
 
-const ROOT = new URL("..", import.meta.url).pathname.replace(/^\/([A-Za-z]:)/, "$1");
+const ROOT = new URL("..", import.meta.url).pathname.replace(
+  /^\/([A-Za-z]:)/,
+  "$1",
+);
 
 // ─── Canonical env contract ────────────────────────────────────────────────
 // Public = shipped to browser. Server = must never appear in client code.
@@ -27,12 +30,11 @@ const SERVER_VARS = [
   "OPENAI_API_KEY",
   "ANALYSIS_SERVICE_URL",
   "ANALYSIS_SERVICE_API_KEY",
+  "UPSTASH_REDIS_REST_URL",
+  "UPSTASH_REDIS_REST_TOKEN",
 ];
 
-const ANALYSIS_VARS = [
-  "ANALYSIS_SERVICE_API_KEY",
-  "ALLOWED_ORIGINS",
-];
+const ANALYSIS_VARS = ["ANALYSIS_SERVICE_API_KEY", "ALLOWED_ORIGINS"];
 
 // Files where server-only env reads ARE allowed.
 const SERVER_ALLOWED_PATTERNS = [
@@ -66,9 +68,14 @@ const rootEnv = readEnvExample(join(ROOT, ".env.example"));
 assertVarsPresent(".env.example", rootEnv, [...PUBLIC_VARS, ...SERVER_VARS]);
 
 const webEnv = readEnvExample(join(ROOT, "apps", "web", ".env.example"));
-assertVarsPresent("apps/web/.env.example", webEnv, [...PUBLIC_VARS, ...SERVER_VARS]);
+assertVarsPresent("apps/web/.env.example", webEnv, [
+  ...PUBLIC_VARS,
+  ...SERVER_VARS,
+]);
 
-const analysisEnv = readEnvExample(join(ROOT, "apps", "analysis", ".env.example"));
+const analysisEnv = readEnvExample(
+  join(ROOT, "apps", "analysis", ".env.example"),
+);
 assertVarsPresent("apps/analysis/.env.example", analysisEnv, ANALYSIS_VARS);
 
 // 2. Walk apps/web/src and ensure server-only vars only appear in allowed paths
@@ -116,7 +123,8 @@ for (const [label, body] of [
   ["apps/web/.env.example", webEnv],
 ]) {
   const m = body.match(SECRET_PREFIX_RE);
-  if (m) errors.push(`${label}: ${m[1]} appears to hold a secret value (${m[2]}…)`);
+  if (m)
+    errors.push(`${label}: ${m[1]} appears to hold a secret value (${m[2]}…)`);
 }
 
 if (errors.length) {

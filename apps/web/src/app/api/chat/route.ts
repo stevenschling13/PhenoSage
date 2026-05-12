@@ -35,7 +35,7 @@ export async function POST(request: NextRequest) {
 
   // Namespace the limiter key so chat doesn't share a quota with other
   // routes (uploads, analyze) that use rateLimitKeyFromRequest.
-  const rate = rateLimit({
+  const rate = await rateLimit({
     key: `chat:${rateLimitKeyFromRequest(request, userId)}`,
     limit: 20,
     windowMs: 60_000,
