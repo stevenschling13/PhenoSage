@@ -203,9 +203,13 @@ export async function getLatestPlantAnalysis(
     .maybeSingle();
 
   if (analysisError) {
-    throw new Error(
-      `Failed to fetch latest plant analysis: ${analysisError.message}`,
-    );
+    // Degrade to "no analysis yet" rather than crashing the plant detail
+    // page. The underlying error is captured for diagnosis via server logs.
+    logServerEvent("error", "latest plant analysis query failed", {
+      plantId: context.plantId,
+      error: analysisError.message,
+    });
+    return null;
   }
 
   const persisted = analysisRow as PlantAnalysisRow | null;
@@ -220,9 +224,12 @@ export async function getLatestPlantAnalysis(
     .order("created_at", { ascending: true });
 
   if (findingError) {
-    throw new Error(
-      `Failed to fetch analysis findings: ${findingError.message}`,
-    );
+    logServerEvent("error", "latest plant analysis findings query failed", {
+      plantId: context.plantId,
+      imageId: persisted.image_id,
+      error: findingError.message,
+    });
+    return mapAnalysisFromRow(persisted, []);
   }
 
   const findings = ((findingRows ?? []) as PlantFindingRow[]).map((row) => {
@@ -248,8 +255,11 @@ export async function getPlantTimeline(plantId: string) {
   }
 
   const db = getDbClient();
-  const [imagesResult, observationsResult, analysesResult, findingsResult] =
-    await Promise.all([
+  // Run the four reads independently so a missing table, RLS denial, or
+  // transient blip on one source degrades just that source to empty
+  // instead of taking down the entire plant detail view.
+  const [imagesSettled, observationsSettled, analysesSettled, findingsSettled] =
+    await Promise.allSettled([
       db
         .from("plant_images")
         .select("*")
@@ -272,29 +282,51 @@ export async function getPlantTimeline(plantId: string) {
         .order("created_at", { ascending: true }),
     ]);
 
-  if (imagesResult.error) {
-    throw new Error(
-      `Failed to fetch plant images: ${imagesResult.error.message}`,
-    );
-  }
-  if (observationsResult.error) {
-    throw new Error(
-      `Failed to fetch plant observations: ${observationsResult.error.message}`,
-    );
-  }
-  if (analysesResult.error) {
-    throw new Error(
-      `Failed to fetch plant analyses: ${analysesResult.error.message}`,
-    );
-  }
-  if (findingsResult.error) {
-    throw new Error(
-      `Failed to fetch plant findings: ${findingsResult.error.message}`,
-    );
+  function unwrap<T>(
+    label: string,
+    settled: PromiseSettledResult<{
+      data: T[] | null;
+      error: { message: string } | null;
+    }>,
+  ): T[] {
+    if (settled.status === "rejected") {
+      logServerEvent("error", "plant timeline query rejected", {
+        plantId: context!.plantId,
+        source: label,
+        error:
+          settled.reason instanceof Error
+            ? settled.reason.message
+            : String(settled.reason),
+      });
+      return [];
+    }
+    if (settled.value.error) {
+      logServerEvent("error", "plant timeline query failed", {
+        plantId: context!.plantId,
+        source: label,
+        error: settled.value.error.message,
+      });
+      return [];
+    }
+    return settled.value.data ?? [];
   }
 
+  const imageRows = unwrap<PlantImageRow>("plant_images", imagesSettled);
+  const observationRows = unwrap<PlantObservationRow>(
+    "plant_observations",
+    observationsSettled,
+  );
+  const analysisRows = unwrap<PlantAnalysisRow>(
+    "plant_analyses",
+    analysesSettled,
+  );
+  const findingRows = unwrap<PlantFindingRow>(
+    "plant_findings",
+    findingsSettled,
+  );
+
   const findingsByImage = new Map<string, AnalysisFinding[]>();
-  for (const row of (findingsResult.data ?? []) as PlantFindingRow[]) {
+  for (const row of findingRows) {
     if (!row.image_id) {
       continue;
     }
@@ -313,30 +345,26 @@ export async function getPlantTimeline(plantId: string) {
   }
 
   const analysesByImage = new Map<string, AnalysisResponse>();
-  for (const row of (analysesResult.data ?? []) as PlantAnalysisRow[]) {
+  for (const row of analysisRows) {
     analysesByImage.set(
       row.image_id,
       mapAnalysisFromRow(row, findingsByImage.get(row.image_id) ?? []),
     );
   }
 
-  const imageItems = ((imagesResult.data ?? []) as PlantImageRow[]).map(
-    (row) => ({
-      type: "image" as const,
-      id: row.id,
-      createdAt: row.created_at,
-      takenAt: row.taken_at ?? row.created_at,
-      source: row.source,
-      notes: row.notes ?? undefined,
-      storagePath: row.storage_path,
-      analysis: analysesByImage.get(row.id) ?? null,
-      findings: findingsByImage.get(row.id) ?? [],
-    }),
-  );
+  const imageItems = imageRows.map((row) => ({
+    type: "image" as const,
+    id: row.id,
+    createdAt: row.created_at,
+    takenAt: row.taken_at ?? row.created_at,
+    source: row.source,
+    notes: row.notes ?? undefined,
+    storagePath: row.storage_path,
+    analysis: analysesByImage.get(row.id) ?? null,
+    findings: findingsByImage.get(row.id) ?? [],
+  }));
 
-  const observationItems = (
-    (observationsResult.data ?? []) as PlantObservationRow[]
-  ).map((row) => ({
+  const observationItems = observationRows.map((row) => ({
     type: "observation" as const,
     id: row.id,
     observedAt: row.observed_at,

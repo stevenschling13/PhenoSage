@@ -139,15 +139,42 @@ describe("workspace-records", () => {
     ]);
   });
 
-  it("throws a stable grow-loading error when Supabase returns an error", async () => {
+  it("degrades to an empty grow list and logs when Supabase returns an error", async () => {
+    // Resilience contract: a single Supabase failure should NOT crash the
+    // calling page. Returning [] keeps list views renderable; the failure
+    // is captured via console.error (logServerEvent) for diagnosis.
+    const consoleError = vi
+      .spyOn(console, "error")
+      .mockImplementation(() => {});
     const { client } = makeSupabaseMock({
       data: null,
       error: { message: "database unavailable" },
     });
     createSupabaseServerClient.mockResolvedValue(client);
 
-    await expect(listAccessibleGrows()).rejects.toThrow(
-      "Failed to load grows: database unavailable",
+    await expect(listAccessibleGrows()).resolves.toEqual([]);
+    expect(consoleError).toHaveBeenCalled();
+    const logged = consoleError.mock.calls
+      .map(([line]) => String(line))
+      .join("\n");
+    expect(logged).toContain("list grows query failed");
+    expect(logged).toContain("database unavailable");
+
+    consoleError.mockRestore();
+  });
+
+  it("degrades to an empty plant list and logs when client init throws", async () => {
+    const consoleError = vi
+      .spyOn(console, "error")
+      .mockImplementation(() => {});
+    createSupabaseServerClient.mockRejectedValue(new Error("cookies blocked"));
+
+    await expect(listAccessiblePlants()).resolves.toEqual([]);
+    expect(consoleError).toHaveBeenCalled();
+    expect(String(consoleError.mock.calls[0]?.[0])).toContain(
+      "list plants client init failed",
     );
+
+    consoleError.mockRestore();
   });
 });
