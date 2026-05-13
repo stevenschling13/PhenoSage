@@ -385,17 +385,76 @@ export async function POST(request: NextRequest) {
             }
             return;
           }
+          // Classify the upstream error so we can surface something
+          // useful inline. We deliberately do NOT call controller.error()
+          // here: when no bytes have been flushed yet, Vercel converts a
+          // would-be 200 streaming response into a bare 500 with empty
+          // body, which the chat client cannot parse and shows as the
+          // generic "Request failed with 500.". Instead we enqueue a
+          // human-readable error as the assistant's body and close the
+          // stream normally. The HTTP status stays 200, the user sees a
+          // specific explanation, and the underlying cause is captured in
+          // the server log with the requestId for ops correlation.
+          const errMsg = err instanceof Error ? err.message : String(err);
+          const status =
+            err && typeof err === "object" && "status" in err
+              ? Number((err as { status?: unknown }).status)
+              : undefined;
+          const code =
+            err && typeof err === "object" && "code" in err
+              ? String((err as { code?: unknown }).code)
+              : undefined;
+
+          let userFacing: string;
+          if (
+            status === 429 ||
+            code === "insufficient_quota" ||
+            /quota|rate.?limit/i.test(errMsg)
+          ) {
+            userFacing =
+              "The AI service is rate-limited or out of quota right now. Please try again in a moment, or contact support if this persists.";
+          } else if (status === 401 || status === 403) {
+            userFacing =
+              "The AI service rejected the request (auth or permission). The site operator has been notified.";
+          } else if (status && status >= 500) {
+            userFacing =
+              "The AI service is temporarily unavailable. Please try again in a few seconds.";
+          } else {
+            userFacing =
+              "Something went wrong reaching the model. Please try again.";
+          }
+
           logServerEvent("error", "chat stream failed", {
             requestId,
             userId,
             threadId,
-            error: err instanceof Error ? err.message : String(err),
+            upstreamStatus: status,
+            upstreamCode: code,
+            error: errMsg,
           });
-          controller.error(
-            new Error(
-              `Chat stream failed (request ${requestId}). Please try again.`,
-            ),
-          );
+
+          // If we'd already streamed some assistant text, separate the
+          // partial reply from the error note. If we hadn't streamed
+          // anything, this enqueue is what commits the 200 status to the
+          // wire.
+          const prefix = assistantBuffer
+            ? "\n\n_Stream interrupted before completion._\n\n"
+            : "";
+          const tail = `${prefix}${userFacing} (request ${requestId})`;
+          try {
+            controller.enqueue(encoder.encode(tail));
+            assistantBuffer += tail;
+          } catch {
+            /* controller may already be in an error state */
+          }
+          // Persist whatever the user actually saw, including the inline
+          // error, so the saved transcript matches reality.
+          await persistAssistant();
+          try {
+            controller.close();
+          } catch {
+            /* already closed */
+          }
         }
       },
     });
