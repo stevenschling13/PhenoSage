@@ -237,7 +237,16 @@ export function AssistantChat({ grows }: { grows: GrowOption[] }) {
     async (text: string) => {
       const trimmed = text.trim();
       if (!trimmed) return;
+      // Two-phase guard against double-click / double-submit races:
+      // 1. abortRef catches the case where the previous fetch hasn't yet
+      //    finished and the user clicks Send (or Enter) again.
+      // 2. We claim the abortRef BEFORE setMessages / fetch so a second
+      //    near-simultaneous click sees the claim and bails — previously
+      //    the guard relied on streaming state which is async and gives a
+      //    short race window where two fetches could fire.
       if (abortRef.current) return;
+      const controller = new AbortController();
+      abortRef.current = controller;
       setError(null);
 
       const userMsg: Message = { id: newId(), role: "user", content: trimmed };
@@ -257,9 +266,6 @@ export function AssistantChat({ grows }: { grows: GrowOption[] }) {
       });
       setInput("");
       setStreaming(true);
-
-      const controller = new AbortController();
-      abortRef.current = controller;
 
       try {
         const res = await fetch("/api/chat", {
@@ -439,6 +445,35 @@ export function AssistantChat({ grows }: { grows: GrowOption[] }) {
               Replies will use {activeGrow.name}&apos;s data.
             </span>
           )}
+
+          {/* Mobile thread picker — desktop has the sidebar; phones get
+              a select + new-chat button right next to the grow picker so
+              users on small screens can still switch / start threads. */}
+          <div className="ml-auto flex items-center gap-2 md:hidden">
+            <label htmlFor="thread-picker-mobile" className="sr-only">
+              Chat thread
+            </label>
+            <select
+              id="thread-picker-mobile"
+              value={threadId ?? ""}
+              onChange={(e) => {
+                const id = e.target.value;
+                if (!id) {
+                  startNewThread();
+                } else {
+                  void loadThread(id);
+                }
+              }}
+              className="h-8 max-w-[10rem] truncate rounded-md border border-input bg-background px-2 text-xs text-foreground focus:border-ring focus:outline-none focus:ring-2 focus:ring-ring/40"
+            >
+              <option value="">+ New chat</option>
+              {threads.map((t) => (
+                <option key={t.id} value={t.id}>
+                  {t.title ?? "Untitled chat"}
+                </option>
+              ))}
+            </select>
+          </div>
         </div>
 
         <div ref={scrollerRef} className="flex-1 overflow-y-auto bg-background">

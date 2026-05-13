@@ -151,163 +151,196 @@ const EventsArgs = z.object({
 });
 const LatestAnalysisArgs = z.object({ plantId: z.string().min(1) });
 
+type ChatToolContext = {
+  userId: string | null;
+  requestId: string;
+  // Optional cached supabase client so repeat tool calls within one request
+  // don't pay the auth-cookie-parse + client-init cost on every invocation.
+  supabase?: Awaited<ReturnType<typeof createSupabaseServerClient>>;
+};
+
 export async function executeChatTool(
   name: string,
   rawArgs: unknown,
-  ctx: { userId: string | null; requestId: string },
+  ctx: ChatToolContext,
 ): Promise<ToolResult> {
+  const started = Date.now();
   let supabase: Awaited<ReturnType<typeof createSupabaseServerClient>>;
-  try {
-    supabase = await createSupabaseServerClient();
-  } catch (err) {
-    logServerEvent("error", "chat tool client init failed", {
-      requestId: ctx.requestId,
-      userId: ctx.userId,
-      tool: name,
-      error: err instanceof Error ? err.message : String(err),
-    });
-    return { ok: false, error: "data backend unavailable" };
+  if (ctx.supabase) {
+    supabase = ctx.supabase;
+  } else {
+    try {
+      supabase = await createSupabaseServerClient();
+    } catch (err) {
+      logServerEvent("error", "chat tool client init failed", {
+        requestId: ctx.requestId,
+        userId: ctx.userId,
+        tool: name,
+        error: err instanceof Error ? err.message : String(err),
+      });
+      return { ok: false, error: "data backend unavailable" };
+    }
   }
 
-  try {
-    switch (name) {
-      case "list_grows": {
-        const args = ListGrowsArgs.parse(rawArgs ?? {});
-        const limit = numClamp(args.limit, 10, 25);
-        const { data, error } = await supabase
-          .from("grows")
-          .select(
-            "id,name,stage,medium,light_type,start_date,target_harvest_date,is_archived,updated_at",
-          )
-          .eq("is_archived", false)
-          .order("updated_at", { ascending: false })
-          .limit(limit);
-        if (error) return { ok: false, error: error.message };
-        return { ok: true, data: data ?? [] };
-      }
-
-      case "list_plants": {
-        const args = ListPlantsArgs.parse(rawArgs);
-        const limit = numClamp(args.limit, 25, 50);
-        const { data, error } = await supabase
-          .from("plants")
-          .select("id,name,strain,batch_label,notes,is_archived,updated_at")
-          .eq("grow_id", args.growId)
-          .eq("is_archived", false)
-          .order("updated_at", { ascending: false })
-          .limit(limit);
-        if (error) return { ok: false, error: error.message };
-        return { ok: true, data: data ?? [] };
-      }
-
-      case "get_recent_findings": {
-        const args = FindingsArgs.parse(rawArgs ?? {});
-        if (!args.growId && !args.plantId) {
-          return {
-            ok: false,
-            error: "Provide growId or plantId to scope findings.",
-          };
+  // Inner IIFE so we can log every tool invocation with its outcome and
+  // latency through a single return path. This is the cheapest way to give
+  // ops a clear audit trail of which tools the assistant actually ran for
+  // a given chat request — invaluable when a user reports a wrong answer.
+  const result: ToolResult = await (async (): Promise<ToolResult> => {
+    try {
+      switch (name) {
+        case "list_grows": {
+          const args = ListGrowsArgs.parse(rawArgs ?? {});
+          const limit = numClamp(args.limit, 10, 25);
+          const { data, error } = await supabase
+            .from("grows")
+            .select(
+              "id,name,stage,medium,light_type,start_date,target_harvest_date,is_archived,updated_at",
+            )
+            .eq("is_archived", false)
+            .order("updated_at", { ascending: false })
+            .limit(limit);
+          if (error) return { ok: false, error: error.message };
+          return { ok: true, data: data ?? [] };
         }
-        const limit = numClamp(args.limit, 10, 25);
-        const sinceDays = numClamp(args.sinceDays, 30, 365);
-        const since = new Date(
-          Date.now() - sinceDays * 24 * 60 * 60 * 1000,
-        ).toISOString();
 
-        let q = supabase
-          .from("plant_findings")
-          .select(
-            "id,plant_id,grow_id,image_id,category,severity,title,description,recommendation,resolved_at,created_at",
-          )
-          .gte("created_at", since)
-          .order("created_at", { ascending: false })
-          .limit(limit);
-        if (args.plantId) q = q.eq("plant_id", args.plantId);
-        if (args.growId) q = q.eq("grow_id", args.growId);
-
-        const { data, error } = await q;
-        if (error) return { ok: false, error: error.message };
-        return { ok: true, data: data ?? [] };
-      }
-
-      case "get_recent_observations": {
-        const args = ObservationsArgs.parse(rawArgs ?? {});
-        if (!args.growId && !args.plantId) {
-          return {
-            ok: false,
-            error: "Provide growId or plantId to scope observations.",
-          };
+        case "list_plants": {
+          const args = ListPlantsArgs.parse(rawArgs);
+          const limit = numClamp(args.limit, 25, 50);
+          const { data, error } = await supabase
+            .from("plants")
+            .select("id,name,strain,batch_label,notes,is_archived,updated_at")
+            .eq("grow_id", args.growId)
+            .eq("is_archived", false)
+            .order("updated_at", { ascending: false })
+            .limit(limit);
+          if (error) return { ok: false, error: error.message };
+          return { ok: true, data: data ?? [] };
         }
-        const limit = numClamp(args.limit, 10, 25);
-        let q = supabase
-          .from("plant_observations")
-          .select("id,plant_id,grow_id,observed_at,height_cm,notes,created_at")
-          .order("observed_at", { ascending: false })
-          .limit(limit);
-        if (args.plantId) q = q.eq("plant_id", args.plantId);
-        if (args.growId) q = q.eq("grow_id", args.growId);
 
-        const { data, error } = await q;
-        if (error) return { ok: false, error: error.message };
-        return { ok: true, data: data ?? [] };
-      }
+        case "get_recent_findings": {
+          const args = FindingsArgs.parse(rawArgs ?? {});
+          if (!args.growId && !args.plantId) {
+            return {
+              ok: false,
+              error: "Provide growId or plantId to scope findings.",
+            };
+          }
+          const limit = numClamp(args.limit, 10, 25);
+          const sinceDays = numClamp(args.sinceDays, 30, 365);
+          const since = new Date(
+            Date.now() - sinceDays * 24 * 60 * 60 * 1000,
+          ).toISOString();
 
-      case "get_grow_events": {
-        const args = EventsArgs.parse(rawArgs ?? {});
-        if (!args.growId && !args.plantId) {
-          return {
-            ok: false,
-            error: "Provide growId or plantId to scope events.",
-          };
+          let q = supabase
+            .from("plant_findings")
+            .select(
+              "id,plant_id,grow_id,image_id,category,severity,title,description,recommendation,resolved_at,created_at",
+            )
+            .gte("created_at", since)
+            .order("created_at", { ascending: false })
+            .limit(limit);
+          if (args.plantId) q = q.eq("plant_id", args.plantId);
+          if (args.growId) q = q.eq("grow_id", args.growId);
+
+          const { data, error } = await q;
+          if (error) return { ok: false, error: error.message };
+          return { ok: true, data: data ?? [] };
         }
-        const limit = numClamp(args.limit, 15, 50);
-        const sinceDays = numClamp(args.sinceDays, 14, 365);
-        const since = new Date(
-          Date.now() - sinceDays * 24 * 60 * 60 * 1000,
-        ).toISOString();
 
-        let q = supabase
-          .from("grow_events")
-          .select("id,grow_id,plant_id,event_type,notes,occurred_at,created_at")
-          .gte("occurred_at", since)
-          .order("occurred_at", { ascending: false })
-          .limit(limit);
-        if (args.plantId) q = q.eq("plant_id", args.plantId);
-        if (args.growId) q = q.eq("grow_id", args.growId);
+        case "get_recent_observations": {
+          const args = ObservationsArgs.parse(rawArgs ?? {});
+          if (!args.growId && !args.plantId) {
+            return {
+              ok: false,
+              error: "Provide growId or plantId to scope observations.",
+            };
+          }
+          const limit = numClamp(args.limit, 10, 25);
+          let q = supabase
+            .from("plant_observations")
+            .select(
+              "id,plant_id,grow_id,observed_at,height_cm,notes,created_at",
+            )
+            .order("observed_at", { ascending: false })
+            .limit(limit);
+          if (args.plantId) q = q.eq("plant_id", args.plantId);
+          if (args.growId) q = q.eq("grow_id", args.growId);
 
-        const { data, error } = await q;
-        if (error) return { ok: false, error: error.message };
-        return { ok: true, data: data ?? [] };
+          const { data, error } = await q;
+          if (error) return { ok: false, error: error.message };
+          return { ok: true, data: data ?? [] };
+        }
+
+        case "get_grow_events": {
+          const args = EventsArgs.parse(rawArgs ?? {});
+          if (!args.growId && !args.plantId) {
+            return {
+              ok: false,
+              error: "Provide growId or plantId to scope events.",
+            };
+          }
+          const limit = numClamp(args.limit, 15, 50);
+          const sinceDays = numClamp(args.sinceDays, 14, 365);
+          const since = new Date(
+            Date.now() - sinceDays * 24 * 60 * 60 * 1000,
+          ).toISOString();
+
+          let q = supabase
+            .from("grow_events")
+            .select(
+              "id,grow_id,plant_id,event_type,notes,occurred_at,created_at",
+            )
+            .gte("occurred_at", since)
+            .order("occurred_at", { ascending: false })
+            .limit(limit);
+          if (args.plantId) q = q.eq("plant_id", args.plantId);
+          if (args.growId) q = q.eq("grow_id", args.growId);
+
+          const { data, error } = await q;
+          if (error) return { ok: false, error: error.message };
+          return { ok: true, data: data ?? [] };
+        }
+
+        case "get_latest_analysis": {
+          const args = LatestAnalysisArgs.parse(rawArgs);
+          const { data, error } = await supabase
+            .from("plant_analyses")
+            .select(
+              "id,plant_id,grow_id,image_id,compared_to_image_id,overall_health_score,summary,comparison_summary,analysis_mode,is_fallback,model_version,created_at",
+            )
+            .eq("plant_id", args.plantId)
+            .order("created_at", { ascending: false })
+            .limit(1)
+            .maybeSingle();
+          if (error) return { ok: false, error: error.message };
+          return { ok: true, data: data ?? null };
+        }
+
+        default:
+          return { ok: false, error: `Unknown tool: ${name}` };
       }
-
-      case "get_latest_analysis": {
-        const args = LatestAnalysisArgs.parse(rawArgs);
-        const { data, error } = await supabase
-          .from("plant_analyses")
-          .select(
-            "id,plant_id,grow_id,image_id,compared_to_image_id,overall_health_score,summary,comparison_summary,analysis_mode,is_fallback,model_version,created_at",
-          )
-          .eq("plant_id", args.plantId)
-          .order("created_at", { ascending: false })
-          .limit(1)
-          .maybeSingle();
-        if (error) return { ok: false, error: error.message };
-        return { ok: true, data: data ?? null };
+    } catch (err) {
+      if (err instanceof z.ZodError) {
+        return { ok: false, error: `Invalid arguments: ${err.message}` };
       }
-
-      default:
-        return { ok: false, error: `Unknown tool: ${name}` };
+      logServerEvent("error", "chat tool execution failed", {
+        requestId: ctx.requestId,
+        userId: ctx.userId,
+        tool: name,
+        error: err instanceof Error ? err.message : String(err),
+      });
+      return { ok: false, error: "tool execution failed" };
     }
-  } catch (err) {
-    if (err instanceof z.ZodError) {
-      return { ok: false, error: `Invalid arguments: ${err.message}` };
-    }
-    logServerEvent("error", "chat tool execution failed", {
-      requestId: ctx.requestId,
-      userId: ctx.userId,
-      tool: name,
-      error: err instanceof Error ? err.message : String(err),
-    });
-    return { ok: false, error: "tool execution failed" };
-  }
+  })();
+
+  logServerEvent("info", "chat tool invoked", {
+    requestId: ctx.requestId,
+    userId: ctx.userId,
+    tool: name,
+    ok: result.ok,
+    durationMs: Date.now() - started,
+  });
+
+  return result;
 }

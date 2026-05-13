@@ -12,6 +12,7 @@ vi.mock("@/lib/server/chat-persistence", () => ({
   listThreadsForUser: (...args: unknown[]) => listThreadsForUser(...args),
 }));
 
+import { __resetRateLimitStore } from "@/lib/server/rate-limit";
 import { GET } from "../route";
 
 function getRequest(): NextRequest {
@@ -22,6 +23,7 @@ describe("GET /api/chat/threads", () => {
   beforeEach(() => {
     (getServerSession as Mock).mockReset();
     listThreadsForUser.mockReset();
+    __resetRateLimitStore();
   });
 
   it("returns 401 when unauthenticated", async () => {
@@ -59,5 +61,17 @@ describe("GET /api/chat/threads", () => {
 
     const res = await GET(getRequest());
     expect(res.status).toBe(500);
+  });
+
+  it("rate-limits at 30 requests per minute per user", async () => {
+    getServerSession.mockResolvedValue({ user: { id: "spam" } });
+    listThreadsForUser.mockResolvedValue([]);
+
+    for (let i = 0; i < 30; i++) {
+      const ok = await GET(getRequest());
+      expect(ok.status).toBe(200);
+    }
+    const limited = await GET(getRequest());
+    expect(limited.status).toBe(429);
   });
 });

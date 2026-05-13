@@ -10,14 +10,9 @@ vi.mock("@/lib/server/auth", () => ({
   getServerSession: (...args: unknown[]) => getServerSession(...args),
 }));
 
+const getAIClient = vi.fn();
 vi.mock("@/lib/server/ai-client", () => ({
-  getAIClient: () => ({
-    chat: {
-      completions: {
-        stream: (...args: unknown[]) => streamMock(...args),
-      },
-    },
-  }),
+  getAIClient: (...args: unknown[]) => getAIClient(...args),
 }));
 
 vi.mock("@/lib/server/chat-context", () => ({
@@ -128,6 +123,13 @@ describe("POST /api/chat", () => {
     createThread.mockResolvedValue("thread_new");
     appendMessage.mockResolvedValue(undefined);
     touchThread.mockResolvedValue(undefined);
+    getAIClient.mockReturnValue({
+      chat: {
+        completions: {
+          stream: (...args: unknown[]) => streamMock(...args),
+        },
+      },
+    });
     __resetRateLimitStore();
   });
 
@@ -413,5 +415,47 @@ describe("POST /api/chat", () => {
     expect(streamMock).not.toHaveBeenCalled();
     expect(createThread).not.toHaveBeenCalled();
     expect(appendMessage).not.toHaveBeenCalled();
+  });
+
+  it("returns a structured JSON 500 (not a bare 500) when prep throws synchronously", async () => {
+    // Reproduces the production bug from PR #118 / the chat 500 in Vercel
+    // logs: the synchronous throw used to propagate out of the route and
+    // Next would render a bare 500 with an empty body, which the chat
+    // client could not parse. The top-level catch must envelope it.
+    getServerSession.mockResolvedValue({ user: { id: "u1" } });
+    const internalErrorText = "internal-env-var-missing";
+    createThread.mockImplementation(() => {
+      throw new Error(internalErrorText);
+    });
+
+    const res = await POST(jsonRequest({ message: "hi" }));
+    expect(res.status).toBe(500);
+    expect(res.headers.get("content-type")).toMatch(/application\/json/);
+    expect(res.headers.get("x-request-id")).toBeTruthy();
+    const body = (await res.json()) as { error?: string; requestId?: string };
+    expect(body.error).toMatch(/Chat request failed/);
+    expect(body.requestId).toBeTruthy();
+    // The internal cause must NEVER leak to the client envelope.
+    expect(body.error).not.toMatch(new RegExp(internalErrorText));
+    expect(streamMock).not.toHaveBeenCalled();
+  });
+
+  it("returns a structured JSON 500 when getAIClient throws after persistence", async () => {
+    // appendMessage succeeds but getAIClient blows up (e.g. env var
+    // missing). Without the top-level catch this produced a bare 500 in
+    // production because the throw fired *after* appendMessage but
+    // *before* the ReadableStream was returned.
+    getServerSession.mockResolvedValue({ user: { id: "u1" } });
+    createThread.mockResolvedValue("thread_xyz");
+    const internalErrorText = "openai-client-init-failed";
+    getAIClient.mockImplementation(() => {
+      throw new Error(internalErrorText);
+    });
+
+    const res = await POST(jsonRequest({ message: "hi" }));
+    expect(res.status).toBe(500);
+    const body = (await res.json()) as { error?: string };
+    expect(body.error).toMatch(/Chat request failed/);
+    expect(body.error).not.toMatch(new RegExp(internalErrorText));
   });
 });
