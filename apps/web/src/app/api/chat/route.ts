@@ -507,23 +507,61 @@ export async function POST(request: NextRequest) {
     } else if (/fetch failed|ECONNREFUSED|ENOTFOUND|ETIMEDOUT/i.test(errMsg)) {
       reason = "upstream_unreachable";
     }
+    // For ai_unconfigured specifically, gather a presence-only inventory of
+    // env-var NAMES (never values) that look like they might hold an AI
+    // credential. This is safe to surface — names are already in the public
+    // .env.example — and it lets the operator instantly see what name they
+    // actually used on Vercel without having to ssh into a function or read
+    // server logs. Names like "FOO_API_KEY" obey the same redaction posture
+    // as anything else in the repo.
+    let aiEnvInventory: string[] | undefined;
+    if (reason === "ai_unconfigured") {
+      const NEEDLE =
+        /(GEMINI|GOOGLE|OPENAI|ANTHROPIC|VERTEX|AI[_-]?KEY|API[_-]?KEY)/i;
+      const SAFE_TO_LIST = /^[A-Z][A-Z0-9_]{2,80}$/; // conservative shape
+      aiEnvInventory = Object.keys(process.env)
+        .filter(
+          (k) =>
+            SAFE_TO_LIST.test(k) &&
+            NEEDLE.test(k) &&
+            typeof process.env[k] === "string" &&
+            (process.env[k] as string).length > 0,
+        )
+        .sort();
+    }
     logServerEvent("error", "chat request failed before stream", {
       requestId,
       userId,
       threadId,
       reason,
+      aiEnvInventory,
       error: errMsg,
       stack: err instanceof Error ? err.stack : undefined,
     });
-    const userFacing = reason
-      ? `Chat request failed (${reason}, request ${requestId}). Please contact the site operator.`
-      : `Chat request failed (request ${requestId}). Please try again.`;
+    let userFacing: string;
+    if (reason === "ai_unconfigured") {
+      const found =
+        aiEnvInventory && aiEnvInventory.length > 0
+          ? aiEnvInventory.join(", ")
+          : "none";
+      userFacing =
+        `Chat request failed (ai_unconfigured, request ${requestId}). ` +
+        `No GEMINI_API_KEY / GOOGLE_GENERATIVE_AI_API_KEY / GOOGLE_API_KEY ` +
+        `is set in this deployment's runtime env. Key-shaped vars present: ${found}. ` +
+        `Add the key under one of those three names in Vercel → Settings → ` +
+        `Environment Variables → Production, then redeploy.`;
+    } else if (reason) {
+      userFacing = `Chat request failed (${reason}, request ${requestId}). Please contact the site operator.`;
+    } else {
+      userFacing = `Chat request failed (request ${requestId}). Please try again.`;
+    }
     return attachRequestId(
       NextResponse.json(
         {
           error: userFacing,
           requestId,
           reason,
+          ...(aiEnvInventory ? { aiEnvInventory } : {}),
         },
         { status: 500 },
       ),
