@@ -76,7 +76,7 @@ export default async function DashboardPage() {
   const lastCapture = formatDateLabel(overview.recentActivity.lastCaptureAt);
 
   return (
-    <main className="app-page">
+    <main className="app-page outline-none" id="main-content" tabIndex={-1}>
       {/* ── Editorial header ─────────────────────────── */}
       <header className="workspace-hero">
         <div className="flex flex-col gap-6 lg:flex-row lg:items-end lg:justify-between">
@@ -150,7 +150,7 @@ export default async function DashboardPage() {
       </Card>
 
       {/* ── Stat row ─────────────────────────────────── */}
-      <section className="grid gap-3.5 md:grid-cols-2 xl:grid-cols-4">
+      <section className="grid gap-3.5 sm:grid-cols-2 lg:grid-cols-4">
         <StatCard
           detail={
             hasWorkspaceData
