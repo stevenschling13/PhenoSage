@@ -30,6 +30,18 @@ vi.mock("@/lib/server/chat-tools", () => ({
   executeChatTool: (...args: unknown[]) => executeChatTool(...args),
 }));
 
+const assertThreadOwner = vi.fn();
+const createThread = vi.fn();
+const appendMessage = vi.fn();
+const touchThread = vi.fn();
+
+vi.mock("@/lib/server/chat-persistence", () => ({
+  assertThreadOwner: (...args: unknown[]) => assertThreadOwner(...args),
+  createThread: (...args: unknown[]) => createThread(...args),
+  appendMessage: (...args: unknown[]) => appendMessage(...args),
+  touchThread: (...args: unknown[]) => touchThread(...args),
+}));
+
 import { __resetRateLimitStore } from "@/lib/server/rate-limit";
 import { POST } from "../route";
 
@@ -109,6 +121,13 @@ describe("POST /api/chat", () => {
     loadGrowContextSummary.mockReset();
     executeChatTool.mockReset();
     loadGrowContextSummary.mockResolvedValue(null);
+    assertThreadOwner.mockReset();
+    createThread.mockReset();
+    appendMessage.mockReset();
+    touchThread.mockReset();
+    createThread.mockResolvedValue("thread_new");
+    appendMessage.mockResolvedValue(undefined);
+    touchThread.mockResolvedValue(undefined);
     __resetRateLimitStore();
   });
 
@@ -328,5 +347,71 @@ describe("POST /api/chat", () => {
     const message = caught instanceof Error ? caught.message : "";
     expect(message).toMatch(/Chat stream failed \(request /);
     expect(message).not.toMatch(/secret context here/);
+  });
+
+  it("creates a new thread, persists the user + assistant messages, and returns the thread id", async () => {
+    getServerSession.mockResolvedValue({ user: { id: "u1" } });
+    streamMock.mockImplementation(() => textOnlyStream(["ans"]));
+    createThread.mockResolvedValue("thread_abc");
+
+    const res = await POST(jsonRequest({ message: "hi" }));
+    expect(res.status).toBe(200);
+    expect(res.headers.get("X-Chat-Thread-Id")).toBe("thread_abc");
+    await res.text();
+
+    expect(createThread).toHaveBeenCalledWith({
+      userId: "u1",
+      growId: null,
+      firstUserMessage: "hi",
+    });
+    // user message is persisted before the stream, assistant after.
+    expect(appendMessage).toHaveBeenCalledWith({
+      threadId: "thread_abc",
+      role: "user",
+      content: "hi",
+    });
+    expect(appendMessage).toHaveBeenCalledWith(
+      expect.objectContaining({
+        threadId: "thread_abc",
+        role: "assistant",
+        content: "ans",
+      }),
+    );
+    expect(touchThread).toHaveBeenCalledWith("thread_abc");
+  });
+
+  it("reuses an existing thread when the user owns it", async () => {
+    getServerSession.mockResolvedValue({ user: { id: "u1" } });
+    streamMock.mockImplementation(() => textOnlyStream(["ok"]));
+    assertThreadOwner.mockResolvedValue(true);
+
+    const res = await POST(
+      jsonRequest({ message: "follow up", threadId: "thread_existing" }),
+    );
+    expect(res.status).toBe(200);
+    expect(res.headers.get("X-Chat-Thread-Id")).toBe("thread_existing");
+    await res.text();
+
+    expect(assertThreadOwner).toHaveBeenCalledWith("thread_existing", "u1");
+    expect(createThread).not.toHaveBeenCalled();
+    expect(appendMessage).toHaveBeenCalledWith(
+      expect.objectContaining({
+        threadId: "thread_existing",
+        role: "user",
+      }),
+    );
+  });
+
+  it("returns 404 when a threadId is supplied that the user does not own", async () => {
+    getServerSession.mockResolvedValue({ user: { id: "u1" } });
+    assertThreadOwner.mockResolvedValue(false);
+
+    const res = await POST(
+      jsonRequest({ message: "sneaky", threadId: "thread_someone_else" }),
+    );
+    expect(res.status).toBe(404);
+    expect(streamMock).not.toHaveBeenCalled();
+    expect(createThread).not.toHaveBeenCalled();
+    expect(appendMessage).not.toHaveBeenCalled();
   });
 });

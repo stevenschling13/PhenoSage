@@ -17,6 +17,12 @@ import {
   CHAT_TOOL_DEFINITIONS,
   executeChatTool,
 } from "@/lib/server/chat-tools";
+import {
+  appendMessage,
+  assertThreadOwner,
+  createThread,
+  touchThread,
+} from "@/lib/server/chat-persistence";
 import type {
   ChatCompletionMessageParam,
   ChatCompletionMessageToolCall,
@@ -167,6 +173,46 @@ export async function POST(request: NextRequest) {
       ? body.growId
       : null;
 
+  // Resolve / create the chat thread. We only persist when we have an
+  // authenticated user id; anonymous flows shouldn't happen here (we 401'd
+  // upstream) but we guard anyway.
+  let threadId: string | null = null;
+  if (userId) {
+    const incomingThreadId =
+      typeof body.threadId === "string" && body.threadId.length > 0
+        ? body.threadId
+        : null;
+    if (incomingThreadId) {
+      const owns = await assertThreadOwner(incomingThreadId, userId);
+      if (!owns) {
+        return attachRequestId(
+          NextResponse.json(
+            { error: "Thread not found.", requestId },
+            { status: 404 },
+          ),
+          requestId,
+        );
+      }
+      threadId = incomingThreadId;
+    } else {
+      threadId = await createThread({
+        userId,
+        growId,
+        firstUserMessage: message,
+      });
+    }
+
+    // Persist the user message before we call out to the model so the
+    // transcript is durable even if the stream errors.
+    if (threadId) {
+      await appendMessage({
+        threadId,
+        role: "user",
+        content: message,
+      });
+    }
+  }
+
   // Load grow context up-front so the model has the basics without needing
   // a tool call on every turn. Tool calls remain available for deeper data.
   const growContext = await loadGrowContextSummary(growId);
@@ -186,6 +232,21 @@ export async function POST(request: NextRequest) {
   const encoder = new TextEncoder();
   const toolCtx = { userId, requestId };
 
+  // Buffer the assistant tokens as they stream so we can persist a single
+  // chat_messages row once the response completes.
+  let assistantBuffer = "";
+
+  const persistAssistant = async () => {
+    if (!threadId || !assistantBuffer) return;
+    await appendMessage({
+      threadId,
+      role: "assistant",
+      content: assistantBuffer,
+      metadata: { model: MODEL },
+    });
+    await touchThread(threadId);
+  };
+
   const readable = new ReadableStream({
     async start(controller) {
       const working: ChatCompletionMessageParam[] = [...baseMessages];
@@ -204,6 +265,7 @@ export async function POST(request: NextRequest) {
           for await (const chunk of stream) {
             const delta = chunk.choices[0]?.delta?.content;
             if (delta) {
+              assistantBuffer += delta;
               controller.enqueue(encoder.encode(delta));
             }
           }
@@ -216,6 +278,7 @@ export async function POST(request: NextRequest) {
 
           if (!toolCalls || toolCalls.length === 0) {
             // Final answer already streamed.
+            await persistAssistant();
             controller.close();
             return;
           }
@@ -255,16 +318,18 @@ export async function POST(request: NextRequest) {
 
         // Hit iteration cap without a final answer. Surface a fallback so the
         // user isn't left with silence.
-        controller.enqueue(
-          encoder.encode(
-            "\n\nI gathered some data but couldn't finalize a response. Could you rephrase or narrow the question?",
-          ),
-        );
+        const fallback =
+          "\n\nI gathered some data but couldn't finalize a response. Could you rephrase or narrow the question?";
+        controller.enqueue(encoder.encode(fallback));
+        assistantBuffer += fallback;
+        await persistAssistant();
         controller.close();
       } catch (err) {
         const isAbort = err instanceof Error && err.name === "AbortError";
         if (isAbort) {
-          // Browser disconnected mid-stream. Close cleanly.
+          // Browser disconnected mid-stream. Persist whatever we already
+          // streamed so the user still sees their partial reply on reload.
+          await persistAssistant();
           try {
             controller.close();
           } catch {
@@ -286,13 +351,20 @@ export async function POST(request: NextRequest) {
     },
   });
 
+  const responseHeaders: Record<string, string> = {
+    "Content-Type": "text/plain; charset=utf-8",
+    "Transfer-Encoding": "chunked",
+  };
+  if (threadId) {
+    responseHeaders["X-Chat-Thread-Id"] = threadId;
+    // Browser fetch() only exposes headers in this allow-list when reading
+    // from a Next.js Route Handler that surfaces them via Access-Control-
+    // Expose-Headers. Same-origin reads work without it but we set it to be
+    // safe if a preview URL ever serves the page from a different origin.
+    responseHeaders["Access-Control-Expose-Headers"] = "X-Chat-Thread-Id";
+  }
+
   return new NextResponse(readable, {
-    headers: withRequestIdHeader(
-      {
-        "Content-Type": "text/plain; charset=utf-8",
-        "Transfer-Encoding": "chunked",
-      },
-      requestId,
-    ),
+    headers: withRequestIdHeader(responseHeaders, requestId),
   });
 }

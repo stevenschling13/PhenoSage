@@ -10,7 +10,6 @@ import {
   type KeyboardEvent,
   type ReactNode,
 } from "react";
-import { useSearchParams } from "next/navigation";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { SendIcon } from "@/components/ui/icons";
@@ -28,6 +27,19 @@ interface Message {
 type PromptCategory = {
   label: string;
   prompts: string[];
+};
+
+export type GrowOption = {
+  id: string;
+  name: string;
+  stage: string | null;
+};
+
+type ThreadSummary = {
+  id: string;
+  title: string | null;
+  growId: string | null;
+  updatedAt: string;
 };
 
 const PROMPT_CATEGORIES: PromptCategory[] = [
@@ -85,7 +97,7 @@ const WELCOME: Message = {
   id: "welcome",
   role: "assistant",
   content:
-    "I'm your cultivation copilot — environment, nutrition, IPM, training, harvest. I can read your grow data via tools and ground advice in what's actually happening in your tent. Pick a category below or ask anything specific.",
+    "I'm your cultivation copilot — environment, nutrition, IPM, training, harvest. Pick a grow above to scope my answers to your data, or ask anything specific.",
 };
 
 function newId(): string {
@@ -107,11 +119,7 @@ function newId(): string {
 
 const MAX_HISTORY = 24;
 
-export function AssistantChat() {
-  const searchParams = useSearchParams();
-  const growId = searchParams?.get("growId") ?? null;
-  const plantId = searchParams?.get("plantId") ?? null;
-
+export function AssistantChat({ grows }: { grows: GrowOption[] }) {
   const [messages, setMessages] = useState<Message[]>([WELCOME]);
   const [input, setInput] = useState("");
   const [streaming, setStreaming] = useState(false);
@@ -119,6 +127,10 @@ export function AssistantChat() {
   const [activeCategory, setActiveCategory] = useState<string>(
     PROMPT_CATEGORIES[0]?.label ?? "",
   );
+  const [growId, setGrowId] = useState<string | null>(null);
+  const [threadId, setThreadId] = useState<string | null>(null);
+  const [threads, setThreads] = useState<ThreadSummary[]>([]);
+  const [threadsLoading, setThreadsLoading] = useState(false);
 
   const abortRef = useRef<AbortController | null>(null);
   const scrollerRef = useRef<HTMLDivElement | null>(null);
@@ -141,6 +153,86 @@ export function AssistantChat() {
     return () => abortRef.current?.abort();
   }, []);
 
+  const refreshThreads = useCallback(async () => {
+    setThreadsLoading(true);
+    try {
+      const res = await fetch("/api/chat/threads");
+      if (!res.ok) return;
+      const data = (await res.json()) as {
+        threads?: Array<{
+          id: string;
+          title: string | null;
+          growId: string | null;
+          updatedAt: string;
+        }>;
+      };
+      setThreads(data.threads ?? []);
+    } catch {
+      /* ignore */
+    } finally {
+      setThreadsLoading(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    // The sidebar's initial thread list is loaded on mount; the setState
+    // calls inside refreshThreads only fire after the fetch resolves, so the
+    // cascading-render risk this rule guards against doesn't apply here.
+    // eslint-disable-next-line react-hooks/set-state-in-effect
+    void refreshThreads();
+  }, [refreshThreads]);
+
+  const startNewThread = useCallback(() => {
+    setThreadId(null);
+    setMessages([WELCOME]);
+    setError(null);
+  }, []);
+
+  const loadThread = useCallback(async (id: string) => {
+    setError(null);
+    try {
+      const res = await fetch(`/api/chat/threads/${id}`);
+      if (!res.ok) {
+        if (res.status === 404) {
+          setError("Thread no longer exists.");
+        } else {
+          setError(`Failed to load thread (${res.status}).`);
+        }
+        return;
+      }
+      const data = (await res.json()) as {
+        messages: Array<{ id: string; role: Role; content: string }>;
+      };
+      const loaded: Message[] = (data.messages ?? [])
+        .filter((m) => m.role === "user" || m.role === "assistant")
+        .map((m) => ({ id: m.id, role: m.role, content: m.content }));
+      setMessages(loaded.length > 0 ? loaded : [WELCOME]);
+      setThreadId(id);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to load thread.");
+    }
+  }, []);
+
+  const deleteThread = useCallback(
+    async (id: string) => {
+      try {
+        const res = await fetch(`/api/chat/threads/${id}`, {
+          method: "DELETE",
+        });
+        if (!res.ok) {
+          setError(`Failed to delete (${res.status}).`);
+          return;
+        }
+        // If the user deleted the currently-open thread, reset the UI.
+        if (id === threadId) startNewThread();
+        void refreshThreads();
+      } catch (err) {
+        setError(err instanceof Error ? err.message : "Failed to delete.");
+      }
+    },
+    [refreshThreads, startNewThread, threadId],
+  );
+
   const send = useCallback(
     async (text: string) => {
       const trimmed = text.trim();
@@ -151,13 +243,8 @@ export function AssistantChat() {
       const userMsg: Message = { id: newId(), role: "user", content: trimmed };
       const assistantId = newId();
 
-      // Snapshot history BEFORE we append the new user message, so the
-      // server-side prompt sees prior turns and then the new user content
-      // injected as the canonical final user message.
       let historyToSend: Array<{ role: Role; content: string }> = [];
       setMessages((m) => {
-        // Exclude the welcome bubble + drop the assistant placeholder we're
-        // about to add. Cap at MAX_HISTORY to keep payloads bounded.
         historyToSend = m
           .filter((x) => x.id !== "welcome")
           .slice(-MAX_HISTORY)
@@ -182,7 +269,7 @@ export function AssistantChat() {
             message: trimmed,
             history: historyToSend,
             growId,
-            plantId,
+            threadId,
           }),
           signal: controller.signal,
         });
@@ -197,6 +284,10 @@ export function AssistantChat() {
           }
           throw new Error(detail);
         }
+
+        // Capture the thread id the server created (or echoed back).
+        const newThreadId = res.headers.get("X-Chat-Thread-Id");
+        if (newThreadId && newThreadId !== threadId) setThreadId(newThreadId);
 
         const reader = res.body.getReader();
         const decoder = new TextDecoder();
@@ -215,6 +306,9 @@ export function AssistantChat() {
           }
           if (done) break;
         }
+
+        // Refresh the sidebar so the new / updated thread floats to the top.
+        void refreshThreads();
       } catch (err) {
         const aborted = err instanceof Error && err.name === "AbortError";
         const message = aborted
@@ -231,7 +325,7 @@ export function AssistantChat() {
         abortRef.current = null;
       }
     },
-    [growId, plantId],
+    [growId, refreshThreads, threadId],
   );
 
   const onSubmit = (e: FormEvent<HTMLFormElement>) => {
@@ -256,108 +350,203 @@ export function AssistantChat() {
   const activePrompts =
     PROMPT_CATEGORIES.find((c) => c.label === activeCategory)?.prompts ?? [];
 
+  const activeGrow = grows.find((g) => g.id === growId) ?? null;
+
   return (
-    <>
-      <div ref={scrollerRef} className="flex-1 overflow-y-auto bg-background">
-        <div className="mx-auto w-full max-w-3xl px-5 py-8 sm:px-6 lg:px-8">
-          <div className="space-y-6">
-            {messages.map((m) => (
-              <ChatBubble key={m.id} message={m} streaming={streaming} />
-            ))}
-
-            {showSuggestions && (
-              <div className="ml-12 space-y-3">
-                <div className="flex flex-wrap gap-1.5">
-                  {PROMPT_CATEGORIES.map((c) => {
-                    const active = c.label === activeCategory;
-                    return (
-                      <button
-                        key={c.label}
-                        type="button"
-                        onClick={() => setActiveCategory(c.label)}
-                        className={cn(
-                          "rounded-full px-3 py-1 text-xs font-medium transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
-                          active
-                            ? "bg-primary text-primary-foreground"
-                            : "border border-border bg-card text-muted-foreground hover:text-foreground",
-                        )}
-                      >
-                        {c.label}
-                      </button>
-                    );
-                  })}
-                </div>
-                <div className="flex flex-wrap gap-2">
-                  {activePrompts.map((s) => (
-                    <button
-                      key={s}
-                      type="button"
-                      onClick={() => void send(s)}
-                      className="max-w-full rounded-full border border-border bg-card px-3 py-1.5 text-left text-xs text-muted-foreground transition hover:border-primary/40 hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+    <div className="flex min-h-0 flex-1">
+      <aside className="hidden w-64 shrink-0 flex-col border-r border-border bg-card md:flex">
+        <div className="border-b border-border p-3">
+          <Button
+            type="button"
+            variant="outline"
+            size="md"
+            className="w-full"
+            onClick={startNewThread}
+          >
+            + New chat
+          </Button>
+        </div>
+        <div className="flex-1 overflow-y-auto p-2">
+          {threadsLoading && threads.length === 0 ? (
+            <p className="px-2 py-3 text-xs text-muted-foreground">Loading…</p>
+          ) : threads.length === 0 ? (
+            <p className="px-2 py-3 text-xs text-muted-foreground">
+              No saved chats yet. Ask a question and it&apos;ll appear here.
+            </p>
+          ) : (
+            <ul className="space-y-1">
+              {threads.map((t) => {
+                const isActive = t.id === threadId;
+                return (
+                  <li key={t.id}>
+                    <div
+                      className={cn(
+                        "group flex items-center gap-1 rounded-md px-2 py-1.5 text-xs transition",
+                        isActive
+                          ? "bg-primary/10 text-foreground"
+                          : "text-muted-foreground hover:bg-muted hover:text-foreground",
+                      )}
                     >
-                      {s}
-                    </button>
-                  ))}
-                </div>
-              </div>
-            )}
+                      <button
+                        type="button"
+                        onClick={() => void loadThread(t.id)}
+                        className="flex-1 truncate text-left focus:outline-none"
+                        title={t.title ?? "Untitled chat"}
+                      >
+                        {t.title ?? "Untitled chat"}
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => void deleteThread(t.id)}
+                        aria-label={`Delete chat ${t.title ?? ""}`}
+                        className="opacity-0 transition group-hover:opacity-100 hover:text-destructive focus-visible:opacity-100"
+                      >
+                        ×
+                      </button>
+                    </div>
+                  </li>
+                );
+              })}
+            </ul>
+          )}
+        </div>
+      </aside>
 
-            {error && (
-              <div
-                role="alert"
-                className="ml-12 max-w-xl rounded-md border border-destructive/30 bg-destructive/10 px-3 py-2 text-sm text-destructive"
-              >
-                {error}
-              </div>
-            )}
+      <div className="flex min-w-0 flex-1 flex-col">
+        <div className="flex flex-wrap items-center gap-2 border-b border-border bg-card/60 px-5 py-2 sm:px-6 lg:px-8">
+          <label
+            htmlFor="grow-picker"
+            className="text-xs font-medium text-muted-foreground"
+          >
+            Grow context
+          </label>
+          <select
+            id="grow-picker"
+            value={growId ?? ""}
+            onChange={(e) => setGrowId(e.target.value || null)}
+            className="h-8 rounded-md border border-input bg-background px-2 text-xs text-foreground focus:border-ring focus:outline-none focus:ring-2 focus:ring-ring/40"
+          >
+            <option value="">Any grow (ask me to pick one)</option>
+            {grows.map((g) => (
+              <option key={g.id} value={g.id}>
+                {g.name}
+                {g.stage ? ` · ${g.stage}` : ""}
+              </option>
+            ))}
+          </select>
+          {activeGrow && (
+            <span className="text-[11px] text-muted-foreground">
+              Replies will use {activeGrow.name}&apos;s data.
+            </span>
+          )}
+        </div>
+
+        <div ref={scrollerRef} className="flex-1 overflow-y-auto bg-background">
+          <div className="mx-auto w-full max-w-3xl px-5 py-8 sm:px-6 lg:px-8">
+            <div className="space-y-6">
+              {messages.map((m) => (
+                <ChatBubble key={m.id} message={m} streaming={streaming} />
+              ))}
+
+              {showSuggestions && (
+                <div className="ml-12 space-y-3">
+                  <div className="flex flex-wrap gap-1.5">
+                    {PROMPT_CATEGORIES.map((c) => {
+                      const active = c.label === activeCategory;
+                      return (
+                        <button
+                          key={c.label}
+                          type="button"
+                          onClick={() => setActiveCategory(c.label)}
+                          className={cn(
+                            "rounded-full px-3 py-1 text-xs font-medium transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
+                            active
+                              ? "bg-primary text-primary-foreground"
+                              : "border border-border bg-card text-muted-foreground hover:text-foreground",
+                          )}
+                        >
+                          {c.label}
+                        </button>
+                      );
+                    })}
+                  </div>
+                  <div className="flex flex-wrap gap-2">
+                    {activePrompts.map((s) => (
+                      <button
+                        key={s}
+                        type="button"
+                        onClick={() => void send(s)}
+                        className="max-w-full rounded-full border border-border bg-card px-3 py-1.5 text-left text-xs text-muted-foreground transition hover:border-primary/40 hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                      >
+                        {s}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              )}
+
+              {error && (
+                <div
+                  role="alert"
+                  className="ml-12 max-w-xl rounded-md border border-destructive/30 bg-destructive/10 px-3 py-2 text-sm text-destructive"
+                >
+                  {error}
+                </div>
+              )}
+            </div>
+          </div>
+        </div>
+
+        <div className="border-t border-border bg-card">
+          <div className="mx-auto w-full max-w-3xl px-5 py-4 sm:px-6 lg:px-8">
+            <form
+              onSubmit={onSubmit}
+              className="flex items-end gap-2 rounded-lg border border-input bg-background p-2 shadow-elevation-1 focus-within:border-ring focus-within:ring-2 focus-within:ring-ring/40"
+              aria-label="Send message"
+            >
+              <label htmlFor="composer" className="sr-only">
+                Ask the copilot
+              </label>
+              <textarea
+                ref={textareaRef}
+                id="composer"
+                rows={1}
+                value={input}
+                onChange={(e) => setInput(e.target.value)}
+                onKeyDown={onKeyDown}
+                maxLength={4000}
+                placeholder="Ask about your grow — symptoms, EC, training, IPM…  (Enter to send, Shift+Enter for newline)"
+                disabled={streaming}
+                className="max-h-48 min-h-[2.5rem] flex-1 resize-none border-0 bg-transparent px-2 py-2 text-sm text-foreground placeholder:text-muted-foreground focus:outline-none disabled:cursor-not-allowed disabled:opacity-60"
+              />
+              {streaming ? (
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="md"
+                  onClick={stop}
+                >
+                  Stop
+                </Button>
+              ) : (
+                <Button
+                  type="submit"
+                  size="md"
+                  disabled={!input.trim()}
+                  rightIcon={<SendIcon width={14} height={14} />}
+                >
+                  Send
+                </Button>
+              )}
+            </form>
+            <p className="mt-2 text-center text-[11px] text-muted-foreground">
+              Replies are generated by AI grounded in your grow data. Verify
+              numeric targets before acting on plant-health advice.
+            </p>
           </div>
         </div>
       </div>
-
-      <div className="border-t border-border bg-card">
-        <div className="mx-auto w-full max-w-3xl px-5 py-4 sm:px-6 lg:px-8">
-          <form
-            onSubmit={onSubmit}
-            className="flex items-end gap-2 rounded-lg border border-input bg-background p-2 shadow-elevation-1 focus-within:border-ring focus-within:ring-2 focus-within:ring-ring/40"
-            aria-label="Send message"
-          >
-            <label htmlFor="composer" className="sr-only">
-              Ask the copilot
-            </label>
-            <textarea
-              ref={textareaRef}
-              id="composer"
-              rows={1}
-              value={input}
-              onChange={(e) => setInput(e.target.value)}
-              onKeyDown={onKeyDown}
-              maxLength={4000}
-              placeholder="Ask about your grow — symptoms, EC, training, IPM…  (Enter to send, Shift+Enter for newline)"
-              disabled={streaming}
-              className="max-h-48 min-h-[2.5rem] flex-1 resize-none border-0 bg-transparent px-2 py-2 text-sm text-foreground placeholder:text-muted-foreground focus:outline-none disabled:cursor-not-allowed disabled:opacity-60"
-            />
-            {streaming ? (
-              <Button type="button" variant="outline" size="md" onClick={stop}>
-                Stop
-              </Button>
-            ) : (
-              <Button
-                type="submit"
-                size="md"
-                disabled={!input.trim()}
-                rightIcon={<SendIcon width={14} height={14} />}
-              >
-                Send
-              </Button>
-            )}
-          </form>
-          <p className="mt-2 text-center text-[11px] text-muted-foreground">
-            Replies are generated by AI grounded in your grow data. Verify
-            numeric targets before acting on plant-health advice.
-          </p>
-        </div>
-      </div>
-    </>
+    </div>
   );
 }
 
