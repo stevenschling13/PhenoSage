@@ -8,11 +8,14 @@ import {
   useState,
   type FormEvent,
   type KeyboardEvent,
+  type ReactNode,
 } from "react";
+import { useSearchParams } from "next/navigation";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { SendIcon } from "@/components/ui/icons";
 import { cn } from "@/lib/cn";
+import { renderMarkdown } from "./markdown";
 
 type Role = "user" | "assistant";
 
@@ -22,17 +25,67 @@ interface Message {
   content: string;
 }
 
-const SUGGESTIONS = [
-  "What's the most likely cause of yellowing on lower leaves?",
-  "When should I switch this grow to flower?",
-  "Summarize what changed in the last 7 days.",
+type PromptCategory = {
+  label: string;
+  prompts: string[];
+};
+
+const PROMPT_CATEGORIES: PromptCategory[] = [
+  {
+    label: "Diagnose",
+    prompts: [
+      "Yellowing started on the lower leaves and is creeping up. Walk me through the diagnosis.",
+      "I see clawing on the new growth tips. What am I looking at, and what would confirm it?",
+      "Brown spots with yellow halos showing up on a few fan leaves. Pathogen or deficiency?",
+    ],
+  },
+  {
+    label: "Environment",
+    prompts: [
+      "What VPD, PPFD, and RH should I be targeting at my current stage?",
+      "My night-time temp is dropping into the high 50s°F. How worried should I be and what should I change?",
+      "How do I tune defoliation and airflow to lower botrytis risk in late flower?",
+    ],
+  },
+  {
+    label: "Feeding",
+    prompts: [
+      "Recommend an EC schedule for the next two weeks given my medium and stage.",
+      "Runoff pH is drifting up. How do I bring it back without shocking the plants?",
+      "Am I dialing in cal-mag correctly? What signs tell me I'm over- or under-feeding it?",
+    ],
+  },
+  {
+    label: "Training",
+    prompts: [
+      "Should I top, FIM, or move straight to LST given where my plants are now?",
+      "How aggressive should my defoliation be at day 21 of flower?",
+      "Build me a SCROG fill plan for the next 10 days.",
+    ],
+  },
+  {
+    label: "Flowering",
+    prompts: [
+      "When should I flip to 12/12 and what should change in the room when I do?",
+      "How do I read trichomes to time the harvest window?",
+      "Walk me through a proper dry and cure for my current setup.",
+    ],
+  },
+  {
+    label: "IPM",
+    prompts: [
+      "Tiny webs near the tops and stippled leaves — confirm or rule out spider mites.",
+      "What's a stage-appropriate rotation for preventative IPM in veg?",
+      "I think fungus gnats. How do I confirm and what's the fastest safe knockdown?",
+    ],
+  },
 ];
 
 const WELCOME: Message = {
   id: "welcome",
   role: "assistant",
   content:
-    "Hi — I'm your grow copilot. I can see your plants, timeline, and observations. Ask me anything about your grow, or pick a starter below.",
+    "I'm your cultivation copilot — environment, nutrition, IPM, training, harvest. I can read your grow data via tools and ground advice in what's actually happening in your tent. Pick a category below or ask anything specific.",
 };
 
 function newId(): string {
@@ -47,119 +100,139 @@ function newId(): string {
   }
   const values = new Uint32Array(2);
   cryptoApi.getRandomValues(values);
-  // Two uint32 values provide 64 bits of entropy. Base-36 keeps this UI-only ID
-  // compact; uint32 max is 7 base-36 chars, so padding fixes segment width.
   return Array.from(values, (value) =>
     value.toString(36).padStart(7, "0"),
   ).join("");
 }
 
+const MAX_HISTORY = 24;
+
 export function AssistantChat() {
+  const searchParams = useSearchParams();
+  const growId = searchParams?.get("growId") ?? null;
+  const plantId = searchParams?.get("plantId") ?? null;
+
   const [messages, setMessages] = useState<Message[]>([WELCOME]);
   const [input, setInput] = useState("");
   const [streaming, setStreaming] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [activeCategory, setActiveCategory] = useState<string>(
+    PROMPT_CATEGORIES[0]?.label ?? "",
+  );
 
   const abortRef = useRef<AbortController | null>(null);
   const scrollerRef = useRef<HTMLDivElement | null>(null);
   const textareaRef = useRef<HTMLTextAreaElement | null>(null);
 
-  // Auto-scroll on new content
   useEffect(() => {
     const el = scrollerRef.current;
     if (!el) return;
     el.scrollTop = el.scrollHeight;
   }, [messages, streaming]);
 
-  // Auto-grow textarea
   useEffect(() => {
     const ta = textareaRef.current;
     if (!ta) return;
     ta.style.height = "auto";
-    ta.style.height = `${Math.min(ta.scrollHeight, 160)}px`;
+    ta.style.height = `${Math.min(ta.scrollHeight, 200)}px`;
   }, [input]);
 
-  // Cancel in-flight stream on unmount
   useEffect(() => {
     return () => abortRef.current?.abort();
   }, []);
 
-  const send = useCallback(async (text: string) => {
-    const trimmed = text.trim();
-    if (!trimmed) return;
-    // Ref-based guard: state-based `streaming` updates async, so rapid clicks
-    // could otherwise enqueue concurrent streams.
-    if (abortRef.current) return;
-    setError(null);
+  const send = useCallback(
+    async (text: string) => {
+      const trimmed = text.trim();
+      if (!trimmed) return;
+      if (abortRef.current) return;
+      setError(null);
 
-    const userMsg: Message = { id: newId(), role: "user", content: trimmed };
-    const assistantId = newId();
-    setMessages((m) => [
-      ...m,
-      userMsg,
-      { id: assistantId, role: "assistant", content: "" },
-    ]);
-    setInput("");
-    setStreaming(true);
+      const userMsg: Message = { id: newId(), role: "user", content: trimmed };
+      const assistantId = newId();
 
-    const controller = new AbortController();
-    abortRef.current = controller;
-
-    try {
-      const res = await fetch("/api/chat", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ message: trimmed }),
-        signal: controller.signal,
+      // Snapshot history BEFORE we append the new user message, so the
+      // server-side prompt sees prior turns and then the new user content
+      // injected as the canonical final user message.
+      let historyToSend: Array<{ role: Role; content: string }> = [];
+      setMessages((m) => {
+        // Exclude the welcome bubble + drop the assistant placeholder we're
+        // about to add. Cap at MAX_HISTORY to keep payloads bounded.
+        historyToSend = m
+          .filter((x) => x.id !== "welcome")
+          .slice(-MAX_HISTORY)
+          .map((x) => ({ role: x.role, content: x.content }));
+        return [
+          ...m,
+          userMsg,
+          { id: assistantId, role: "assistant", content: "" },
+        ];
       });
+      setInput("");
+      setStreaming(true);
 
-      if (!res.ok || !res.body) {
-        let detail = `Request failed with ${res.status}.`;
-        try {
-          const data = (await res.json()) as { error?: string };
-          if (data?.error) detail = data.error;
-        } catch {
-          /* ignore */
+      const controller = new AbortController();
+      abortRef.current = controller;
+
+      try {
+        const res = await fetch("/api/chat", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            message: trimmed,
+            history: historyToSend,
+            growId,
+            plantId,
+          }),
+          signal: controller.signal,
+        });
+
+        if (!res.ok || !res.body) {
+          let detail = `Request failed with ${res.status}.`;
+          try {
+            const data = (await res.json()) as { error?: string };
+            if (data?.error) detail = data.error;
+          } catch {
+            /* ignore */
+          }
+          throw new Error(detail);
         }
-        throw new Error(detail);
-      }
 
-      const reader = res.body.getReader();
-      const decoder = new TextDecoder();
-      let buffer = "";
+        const reader = res.body.getReader();
+        const decoder = new TextDecoder();
+        let buffer = "";
 
-      for (;;) {
-        const { value, done } = await reader.read();
-        const chunk = decoder.decode(value, { stream: !done });
-        if (chunk) {
-          buffer += chunk;
-          setMessages((prev) =>
-            prev.map((m) =>
-              m.id === assistantId ? { ...m, content: buffer } : m,
-            ),
-          );
+        for (;;) {
+          const { value, done } = await reader.read();
+          const chunk = decoder.decode(value, { stream: !done });
+          if (chunk) {
+            buffer += chunk;
+            setMessages((prev) =>
+              prev.map((m) =>
+                m.id === assistantId ? { ...m, content: buffer } : m,
+              ),
+            );
+          }
+          if (done) break;
         }
-        if (done) break;
+      } catch (err) {
+        const aborted = err instanceof Error && err.name === "AbortError";
+        const message = aborted
+          ? null
+          : err instanceof Error
+            ? err.message
+            : "Something went wrong.";
+        if (message) setError(message);
+        setMessages((prev) =>
+          prev.filter((m) => m.id !== assistantId || m.content.length > 0),
+        );
+      } finally {
+        setStreaming(false);
+        abortRef.current = null;
       }
-    } catch (err) {
-      const aborted = err instanceof Error && err.name === "AbortError";
-      const message = aborted
-        ? null
-        : err instanceof Error
-          ? err.message
-          : "Something went wrong.";
-      if (message) setError(message);
-      // Always drop an empty placeholder — whether the user stopped early or
-      // the request errored before any content streamed. Preserve partial
-      // replies the user already saw.
-      setMessages((prev) =>
-        prev.filter((m) => m.id !== assistantId || m.content.length > 0),
-      );
-    } finally {
-      setStreaming(false);
-      abortRef.current = null;
-    }
-  }, []);
+    },
+    [growId, plantId],
+  );
 
   const onSubmit = (e: FormEvent<HTMLFormElement>) => {
     e.preventDefault();
@@ -180,6 +253,9 @@ export function AssistantChat() {
     [messages.length, streaming],
   );
 
+  const activePrompts =
+    PROMPT_CATEGORIES.find((c) => c.label === activeCategory)?.prompts ?? [];
+
   return (
     <>
       <div ref={scrollerRef} className="flex-1 overflow-y-auto bg-background">
@@ -190,17 +266,39 @@ export function AssistantChat() {
             ))}
 
             {showSuggestions && (
-              <div className="ml-12 flex flex-wrap gap-2">
-                {SUGGESTIONS.map((s) => (
-                  <button
-                    key={s}
-                    type="button"
-                    onClick={() => void send(s)}
-                    className="rounded-full border border-border bg-card px-3 py-1.5 text-xs text-muted-foreground transition hover:border-primary/40 hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-                  >
-                    {s}
-                  </button>
-                ))}
+              <div className="ml-12 space-y-3">
+                <div className="flex flex-wrap gap-1.5">
+                  {PROMPT_CATEGORIES.map((c) => {
+                    const active = c.label === activeCategory;
+                    return (
+                      <button
+                        key={c.label}
+                        type="button"
+                        onClick={() => setActiveCategory(c.label)}
+                        className={cn(
+                          "rounded-full px-3 py-1 text-xs font-medium transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
+                          active
+                            ? "bg-primary text-primary-foreground"
+                            : "border border-border bg-card text-muted-foreground hover:text-foreground",
+                        )}
+                      >
+                        {c.label}
+                      </button>
+                    );
+                  })}
+                </div>
+                <div className="flex flex-wrap gap-2">
+                  {activePrompts.map((s) => (
+                    <button
+                      key={s}
+                      type="button"
+                      onClick={() => void send(s)}
+                      className="max-w-full rounded-full border border-border bg-card px-3 py-1.5 text-left text-xs text-muted-foreground transition hover:border-primary/40 hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                    >
+                      {s}
+                    </button>
+                  ))}
+                </div>
               </div>
             )}
 
@@ -234,9 +332,9 @@ export function AssistantChat() {
               onChange={(e) => setInput(e.target.value)}
               onKeyDown={onKeyDown}
               maxLength={4000}
-              placeholder="Ask about your grow…  (Enter to send, Shift+Enter for newline)"
+              placeholder="Ask about your grow — symptoms, EC, training, IPM…  (Enter to send, Shift+Enter for newline)"
               disabled={streaming}
-              className="max-h-40 min-h-[2.5rem] flex-1 resize-none border-0 bg-transparent px-2 py-2 text-sm text-foreground placeholder:text-muted-foreground focus:outline-none disabled:cursor-not-allowed disabled:opacity-60"
+              className="max-h-48 min-h-[2.5rem] flex-1 resize-none border-0 bg-transparent px-2 py-2 text-sm text-foreground placeholder:text-muted-foreground focus:outline-none disabled:cursor-not-allowed disabled:opacity-60"
             />
             {streaming ? (
               <Button type="button" variant="outline" size="md" onClick={stop}>
@@ -254,8 +352,8 @@ export function AssistantChat() {
             )}
           </form>
           <p className="mt-2 text-center text-[11px] text-muted-foreground">
-            Replies are generated by AI. Verify before acting on plant-health
-            advice.
+            Replies are generated by AI grounded in your grow data. Verify
+            numeric targets before acting on plant-health advice.
           </p>
         </div>
       </div>
@@ -272,6 +370,27 @@ function ChatBubble({
 }) {
   const isUser = message.role === "user";
   const isPending = !isUser && streaming && message.content.length === 0;
+  let rendered: ReactNode;
+  if (isPending) {
+    rendered = (
+      <span className="inline-flex items-center gap-1.5 text-muted-foreground">
+        <Dot delay="0ms" />
+        <Dot delay="120ms" />
+        <Dot delay="240ms" />
+      </span>
+    );
+  } else if (isUser) {
+    rendered = (
+      <span className="whitespace-pre-wrap break-words">{message.content}</span>
+    );
+  } else {
+    rendered = (
+      <div className="prose-chat break-words">
+        {renderMarkdown(message.content)}
+      </div>
+    );
+  }
+
   return (
     <div
       className={cn(
@@ -292,17 +411,7 @@ function ChatBubble({
       </div>
       <Card className={cn("max-w-xl", isUser && "bg-accent")}>
         <CardContent className="p-4 text-sm leading-relaxed">
-          {isPending ? (
-            <span className="inline-flex items-center gap-1.5 text-muted-foreground">
-              <Dot delay="0ms" />
-              <Dot delay="120ms" />
-              <Dot delay="240ms" />
-            </span>
-          ) : (
-            <span className="whitespace-pre-wrap break-words">
-              {message.content}
-            </span>
-          )}
+          {rendered}
         </CardContent>
       </Card>
     </div>

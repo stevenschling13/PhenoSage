@@ -3,6 +3,8 @@ import { NextRequest } from "next/server";
 
 const getServerSession = vi.fn();
 const streamMock = vi.fn();
+const loadGrowContextSummary = vi.fn();
+const executeChatTool = vi.fn();
 
 vi.mock("@/lib/server/auth", () => ({
   getServerSession: (...args: unknown[]) => getServerSession(...args),
@@ -18,6 +20,16 @@ vi.mock("@/lib/server/ai-client", () => ({
   }),
 }));
 
+vi.mock("@/lib/server/chat-context", () => ({
+  loadGrowContextSummary: (...args: unknown[]) =>
+    loadGrowContextSummary(...args),
+}));
+
+vi.mock("@/lib/server/chat-tools", () => ({
+  CHAT_TOOL_DEFINITIONS: [],
+  executeChatTool: (...args: unknown[]) => executeChatTool(...args),
+}));
+
 import { __resetRateLimitStore } from "@/lib/server/rate-limit";
 import { POST } from "../route";
 
@@ -29,30 +41,64 @@ function jsonRequest(body: unknown, init?: { rawBody?: string }): NextRequest {
   });
 }
 
-/** Minimal async iterator simulating an OpenAI streaming response. */
-function fakeStream(chunks: string[]): AsyncIterable<{
-  choices: Array<{ delta: { content?: string } }>;
-}> {
-  return {
-    async *[Symbol.asyncIterator]() {
+type Chunk = { choices: Array<{ delta: { content?: string } }> };
+
+/** Simulates a streamed OpenAI completion that ends without tool_calls. */
+function textOnlyStream(chunks: string[]) {
+  const iter = {
+    async *[Symbol.asyncIterator](): AsyncGenerator<Chunk> {
       for (const c of chunks) {
         yield { choices: [{ delta: { content: c } }] };
       }
-      // Include a chunk with no delta to exercise the falsy branch.
       yield { choices: [{ delta: {} }] };
     },
+    finalChatCompletion: () =>
+      Promise.resolve({
+        choices: [{ message: { content: chunks.join(""), tool_calls: [] } }],
+      }),
+  };
+  return iter;
+}
+
+/** Simulates a stream that yields tool_calls instead of text. */
+function toolCallStream(
+  toolCalls: Array<{
+    id: string;
+    name: string;
+    args: Record<string, unknown>;
+  }>,
+) {
+  return {
+    async *[Symbol.asyncIterator](): AsyncGenerator<Chunk> {
+      // No text content streamed when the model is calling tools.
+      yield { choices: [{ delta: {} }] };
+    },
+    finalChatCompletion: () =>
+      Promise.resolve({
+        choices: [
+          {
+            message: {
+              content: null,
+              tool_calls: toolCalls.map((t) => ({
+                id: t.id,
+                type: "function" as const,
+                function: { name: t.name, arguments: JSON.stringify(t.args) },
+              })),
+            },
+          },
+        ],
+      }),
   };
 }
 
 /** Stream that throws mid-iteration to simulate an OpenAI failure. */
-function failingStream(): AsyncIterable<{
-  choices: Array<{ delta: { content?: string } }>;
-}> {
+function failingStream() {
   return {
-    async *[Symbol.asyncIterator]() {
+    async *[Symbol.asyncIterator](): AsyncGenerator<Chunk> {
       yield { choices: [{ delta: { content: "first " } }] };
       throw new Error("upstream model error: secret context here");
     },
+    finalChatCompletion: () => Promise.reject(new Error("never")),
   };
 }
 
@@ -60,6 +106,9 @@ describe("POST /api/chat", () => {
   beforeEach(() => {
     (getServerSession as Mock).mockReset();
     streamMock.mockReset();
+    loadGrowContextSummary.mockReset();
+    executeChatTool.mockReset();
+    loadGrowContextSummary.mockResolvedValue(null);
     __resetRateLimitStore();
   });
 
@@ -101,11 +150,12 @@ describe("POST /api/chat", () => {
 
   it("returns 429 once the per-user limit is exhausted", async () => {
     getServerSession.mockResolvedValue({ user: { id: "spam" } });
-    streamMock.mockReturnValue(fakeStream([""]));
+    streamMock.mockImplementation(() => textOnlyStream([""]));
 
     for (let i = 0; i < 20; i++) {
       const ok = await POST(jsonRequest({ message: `m${i}` }));
       expect(ok.status).toBe(200);
+      await ok.text();
     }
 
     const limited = await POST(jsonRequest({ message: "one too many" }));
@@ -113,17 +163,15 @@ describe("POST /api/chat", () => {
   });
 
   it("uses a chat-namespaced rate-limit key so other routes' quotas are independent", async () => {
-    // Drive the chat limit to exhaustion for u1.
     getServerSession.mockResolvedValue({ user: { id: "u1" } });
-    streamMock.mockReturnValue(fakeStream([""]));
+    streamMock.mockImplementation(() => textOnlyStream([""]));
     for (let i = 0; i < 20; i++) {
-      await POST(jsonRequest({ message: `m${i}` }));
+      const r = await POST(jsonRequest({ message: `m${i}` }));
+      await r.text();
     }
     const exhausted = await POST(jsonRequest({ message: "blocked" }));
     expect(exhausted.status).toBe(429);
 
-    // A non-chat caller using the bare `u:u1` key should still be
-    // unaffected — the chat bucket is namespaced.
     const { rateLimit } = await import("@/lib/server/rate-limit");
     const otherRoute = await rateLimit({
       key: "u:u1",
@@ -133,9 +181,11 @@ describe("POST /api/chat", () => {
     expect(otherRoute.ok).toBe(true);
   });
 
-  it("streams the OpenAI deltas back as text", async () => {
+  it("streams the OpenAI deltas back as text and forwards the system prompt + user message", async () => {
     getServerSession.mockResolvedValue({ user: { id: "u1" } });
-    streamMock.mockReturnValue(fakeStream(["Hello, ", "world", "!"]));
+    streamMock.mockImplementation(() =>
+      textOnlyStream(["Hello, ", "world", "!"]),
+    );
 
     const res = await POST(jsonRequest({ message: "hi" }));
     expect(res.status).toBe(200);
@@ -145,7 +195,6 @@ describe("POST /api/chat", () => {
     const text = await res.text();
     expect(text).toBe("Hello, world!");
 
-    // The system prompt + user message were forwarded to OpenAI.
     expect(streamMock).toHaveBeenCalledTimes(1);
     const args = streamMock.mock.calls[0]?.[0] as {
       model: string;
@@ -154,21 +203,121 @@ describe("POST /api/chat", () => {
     };
     expect(args.model).toBe("gpt-4o");
     expect(args.stream).toBe(true);
+    // First two messages are the canonical system prompts; the user message
+    // is appended last.
     expect(args.messages[0]?.role).toBe("system");
+    expect(args.messages[1]?.role).toBe("system");
     expect(args.messages[args.messages.length - 1]).toEqual({
       role: "user",
       content: "hi",
     });
   });
 
+  it("forwards client-supplied conversation history before the new user message", async () => {
+    getServerSession.mockResolvedValue({ user: { id: "u1" } });
+    streamMock.mockImplementation(() => textOnlyStream(["ack"]));
+
+    const history = [
+      { role: "user", content: "I'm in week 3 of flower." },
+      { role: "assistant", content: "Got it." },
+    ];
+    const res = await POST(jsonRequest({ message: "next steps?", history }));
+    expect(res.status).toBe(200);
+    await res.text();
+
+    const args = streamMock.mock.calls[0]?.[0] as {
+      messages: Array<{ role: string; content: string }>;
+    };
+    const roles = args.messages.map((m) => m.role);
+    // system, system, user, assistant, user(new)
+    expect(roles.slice(0, 2)).toEqual(["system", "system"]);
+    expect(args.messages[2]).toEqual({
+      role: "user",
+      content: "I'm in week 3 of flower.",
+    });
+    expect(args.messages[3]).toEqual({ role: "assistant", content: "Got it." });
+    expect(args.messages[4]).toEqual({ role: "user", content: "next steps?" });
+  });
+
+  it("executes tool calls and loops until the model returns a final answer", async () => {
+    getServerSession.mockResolvedValue({ user: { id: "u1" } });
+
+    // First call: model requests list_grows. Second call: model produces text.
+    streamMock
+      .mockImplementationOnce(() =>
+        toolCallStream([
+          { id: "call_1", name: "list_grows", args: { limit: 5 } },
+        ]),
+      )
+      .mockImplementationOnce(() =>
+        textOnlyStream(["Your veg grow looks healthy."]),
+      );
+
+    executeChatTool.mockResolvedValue({
+      ok: true,
+      data: [{ id: "g1", name: "Tent A", stage: "vegetative" }],
+    });
+
+    const res = await POST(
+      jsonRequest({ message: "Anything to worry about?" }),
+    );
+    expect(res.status).toBe(200);
+    const text = await res.text();
+    expect(text).toBe("Your veg grow looks healthy.");
+
+    expect(executeChatTool).toHaveBeenCalledTimes(1);
+    expect(executeChatTool).toHaveBeenCalledWith(
+      "list_grows",
+      { limit: 5 },
+      expect.objectContaining({ userId: "u1" }),
+    );
+
+    // Second model call should include the tool result.
+    expect(streamMock).toHaveBeenCalledTimes(2);
+    const secondArgs = streamMock.mock.calls[1]?.[0] as {
+      messages: Array<{ role: string; tool_call_id?: string }>;
+    };
+    expect(
+      secondArgs.messages.some(
+        (m) => m.role === "tool" && m.tool_call_id === "call_1",
+      ),
+    ).toBe(true);
+  });
+
+  it("loads grow context when a growId is provided", async () => {
+    getServerSession.mockResolvedValue({ user: { id: "u1" } });
+    streamMock.mockImplementation(() => textOnlyStream(["ok"]));
+    loadGrowContextSummary.mockResolvedValue({
+      growId: "g1",
+      name: "Tent A",
+      stage: "flower",
+      medium: "coco",
+      lightType: "led",
+      startDate: "2026-04-01",
+      daysSinceStart: 42,
+      plantCount: 4,
+      recentFindings: [],
+    });
+
+    const res = await POST(jsonRequest({ message: "status?", growId: "g1" }));
+    expect(res.status).toBe(200);
+    await res.text();
+
+    expect(loadGrowContextSummary).toHaveBeenCalledWith("g1");
+    const args = streamMock.mock.calls[0]?.[0] as {
+      messages: Array<{ role: string; content: string }>;
+    };
+    // Second system message is the rendered grow context block.
+    expect(args.messages[1]?.content).toContain("Tent A");
+    expect(args.messages[1]?.content).toContain("flower");
+  });
+
   it("surfaces a SANITISED error to the client when the upstream fails", async () => {
     getServerSession.mockResolvedValue({ user: { id: "u1" } });
-    streamMock.mockReturnValue(failingStream());
+    streamMock.mockImplementation(() => failingStream());
 
     const res = await POST(jsonRequest({ message: "hi" }));
     expect(res.status).toBe(200);
-    // The client gets a generic message + the request id for support
-    // correlation. The upstream wording must not leak.
     let caught: unknown = null;
     try {
       await res.text();
