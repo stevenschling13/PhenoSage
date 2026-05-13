@@ -333,22 +333,41 @@ describe("POST /api/chat", () => {
     expect(args.messages[1]?.content).toContain("flower");
   });
 
-  it("surfaces a SANITISED error to the client when the upstream fails", async () => {
+  it("renders a SANITISED inline error in the response body when the upstream fails mid-stream", async () => {
+    // Regression: when controller.error() was used here, Vercel converted
+    // the 200 streaming response into a bare 500 with empty body and the
+    // chat client showed the generic "Request failed with 500.". We now
+    // enqueue a human-readable note and close cleanly so the user gets a
+    // useful inline explanation and a requestId for support.
     getServerSession.mockResolvedValue({ user: { id: "u1" } });
     streamMock.mockImplementation(() => failingStream());
 
     const res = await POST(jsonRequest({ message: "hi" }));
     expect(res.status).toBe(200);
-    let caught: unknown = null;
-    try {
-      await res.text();
-    } catch (err) {
-      caught = err;
-    }
-    expect(caught).toBeInstanceOf(Error);
-    const message = caught instanceof Error ? caught.message : "";
-    expect(message).toMatch(/Chat stream failed \(request /);
-    expect(message).not.toMatch(/secret context here/);
+    const text = await res.text();
+    expect(text).toMatch(/Something went wrong reaching the model/);
+    expect(text).toMatch(/request /);
+    // The upstream wording must never leak to the client envelope.
+    expect(text).not.toMatch(/secret context here/);
+  });
+
+  it("classifies upstream 429 / quota failures with a specific user-facing message", async () => {
+    getServerSession.mockResolvedValue({ user: { id: "u1" } });
+    streamMock.mockImplementation(() => ({
+      async *[Symbol.asyncIterator](): AsyncGenerator<Chunk> {
+        const e = new Error("You exceeded your current quota");
+        (e as Error & { status?: number }).status = 429;
+        throw e;
+      },
+      finalChatCompletion: () => Promise.reject(new Error("never")),
+    }));
+
+    const res = await POST(jsonRequest({ message: "hi" }));
+    expect(res.status).toBe(200);
+    const text = await res.text();
+    expect(text).toMatch(/rate-limited or out of quota/);
+    // Must not echo OpenAI's specific wording verbatim.
+    expect(text).not.toMatch(/You exceeded your current quota/);
   });
 
   it("creates a new thread, persists the user + assistant messages, and returns the thread id", async () => {
