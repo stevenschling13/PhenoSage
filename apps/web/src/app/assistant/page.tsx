@@ -5,7 +5,8 @@ import { Badge } from "@/components/ui/badge";
 import { Container } from "@/components/ui/container";
 import { ChatIcon, SparklesIcon } from "@/components/ui/icons";
 import { getServerUser } from "@/lib/server/auth";
-import { AssistantChat } from "./chat-client";
+import { listAccessibleGrows } from "@/lib/server/workspace-records";
+import { AssistantChat, type GrowOption } from "./chat-client";
 
 export const metadata: Metadata = { title: "Assistant" };
 export const dynamic = "force-dynamic";
@@ -13,6 +14,13 @@ export const dynamic = "force-dynamic";
 export default async function AssistantPage() {
   const user = await getServerUser();
   if (!user) redirect("/auth?next=/assistant");
+
+  const grows = await listAccessibleGrows();
+  const growOptions: GrowOption[] = grows.map((g) => ({
+    id: g.id,
+    name: g.name,
+    stage: g.stage,
+  }));
 
   return (
     <AppShell user={{ email: user.email ?? user.id }}>
@@ -45,7 +53,7 @@ export default async function AssistantPage() {
           </Container>
         </div>
 
-        <AssistantChat />
+        <AssistantChat grows={growOptions} />
       </div>
     </AppShell>
   );
