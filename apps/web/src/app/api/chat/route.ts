@@ -538,6 +538,16 @@ export async function POST(request: NextRequest) {
       error: errMsg,
       stack: err instanceof Error ? err.stack : undefined,
     });
+    // Embed the build SHA in every error so that when a user pastes the
+    // message we can immediately tell which deployment served the request
+    // (Vercel deployment URLs are pinned per build, so a stale tab can hit
+    // an old build forever — this label removes that ambiguity).
+    const buildSha =
+      process.env.VERCEL_GIT_COMMIT_SHA ||
+      process.env.COMMIT_SHA ||
+      process.env.GITHUB_SHA ||
+      "unknown";
+    const buildShaShort = buildSha.slice(0, 7);
     let userFacing: string;
     if (reason === "ai_unconfigured") {
       const found =
@@ -545,15 +555,16 @@ export async function POST(request: NextRequest) {
           ? aiEnvInventory.join(", ")
           : "none";
       userFacing =
-        `Chat request failed (ai_unconfigured, request ${requestId}). ` +
+        `Chat request failed (ai_unconfigured, request ${requestId}, build ${buildShaShort}). ` +
         `No GEMINI_API_KEY / GOOGLE_GENERATIVE_AI_API_KEY / GOOGLE_API_KEY ` +
         `is set in this deployment's runtime env. Key-shaped vars present: ${found}. ` +
         `Add the key under one of those three names in Vercel → Settings → ` +
-        `Environment Variables → Production, then redeploy.`;
+        `Environment Variables → Production, then redeploy. ` +
+        `Visit /api/chat/diag for a live env-presence check.`;
     } else if (reason) {
-      userFacing = `Chat request failed (${reason}, request ${requestId}). Please contact the site operator.`;
+      userFacing = `Chat request failed (${reason}, request ${requestId}, build ${buildShaShort}). Please contact the site operator.`;
     } else {
-      userFacing = `Chat request failed (request ${requestId}). Please try again.`;
+      userFacing = `Chat request failed (request ${requestId}, build ${buildShaShort}). Please try again.`;
     }
     return attachRequestId(
       NextResponse.json(
@@ -561,6 +572,7 @@ export async function POST(request: NextRequest) {
           error: userFacing,
           requestId,
           reason,
+          buildSha,
           ...(aiEnvInventory ? { aiEnvInventory } : {}),
         },
         { status: 500 },
