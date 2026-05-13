@@ -222,7 +222,7 @@ describe("POST /api/chat", () => {
       stream: boolean;
       messages: Array<{ role: string; content: string }>;
     };
-    expect(args.model).toBe("gemini-2.0-flash");
+    expect(args.model).toBe("gemini-2.5-flash");
     expect(args.stream).toBe(true);
     // First two messages are the canonical system prompts; the user message
     // is appended last.

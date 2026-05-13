@@ -40,10 +40,15 @@ const MAX_GROW_ID_LENGTH = 64;
 const MAX_PLANT_ID_LENGTH = 64;
 const MAX_TOOL_ITERATIONS = 4;
 // Google Gemini's OpenAI-compatible endpoint accepts the model name in the
-// same `model:` field. gemini-2.0-flash is GA, free-tier (1,500 req/day),
-// supports streaming + tool calls + multi-turn conversations — ideal fit
-// for the cultivator-assistant workload.
-const MODEL = "gemini-2.0-flash";
+// same `model:` field. We default to gemini-2.5-flash because gemini-2.0-flash
+// no longer carries free-tier allocation on most projects (returns 429 with
+// `limit: 0`), while gemini-2.5-flash is the current free-tier-eligible
+// generation that still supports streaming + tool calls + multi-turn.
+//
+// Override via CHAT_MODEL when billing is enabled (e.g. CHAT_MODEL=gemini-2.5-pro
+// or CHAT_MODEL=gemini-3.1-pro-preview) to promote to a pro model without code
+// changes.
+const MODEL = process.env["CHAT_MODEL"] || "gemini-2.5-flash";
 
 type IncomingMessage = {
   role: "user" | "assistant";
@@ -486,18 +491,39 @@ export async function POST(request: NextRequest) {
     // key, Supabase URL, env-misconfig hints, or stack frames). Operators
     // can correlate the requestId between this log line and the user's
     // browser console / network tab.
+    const errMsg = err instanceof Error ? err.message : String(err);
+    // Classify common configuration / dependency failures into a short,
+    // non-sensitive code. The code names a *category* (which env var or
+    // upstream is misconfigured) without echoing the secret value or the
+    // raw exception text. Operators can map the code to the relevant
+    // Vercel env var without needing log access.
+    let reason: string | null = null;
+    if (/GEMINI_API_KEY/i.test(errMsg)) {
+      reason = "ai_unconfigured"; // GEMINI_API_KEY missing on this deployment
+    } else if (
+      /SUPABASE_SERVICE_ROLE_KEY|NEXT_PUBLIC_SUPABASE_URL/i.test(errMsg)
+    ) {
+      reason = "db_unconfigured"; // service-role env missing on this deployment
+    } else if (/fetch failed|ECONNREFUSED|ENOTFOUND|ETIMEDOUT/i.test(errMsg)) {
+      reason = "upstream_unreachable";
+    }
     logServerEvent("error", "chat request failed before stream", {
       requestId,
       userId,
       threadId,
-      error: err instanceof Error ? err.message : String(err),
+      reason,
+      error: errMsg,
       stack: err instanceof Error ? err.stack : undefined,
     });
+    const userFacing = reason
+      ? `Chat request failed (${reason}, request ${requestId}). Please contact the site operator.`
+      : `Chat request failed (request ${requestId}). Please try again.`;
     return attachRequestId(
       NextResponse.json(
         {
-          error: `Chat request failed (request ${requestId}). Please try again.`,
+          error: userFacing,
           requestId,
+          reason,
         },
         { status: 500 },
       ),
