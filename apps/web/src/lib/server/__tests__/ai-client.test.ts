@@ -19,11 +19,11 @@ const ORIGINAL_ENV = process.env;
 describe("getAIClient", () => {
   beforeEach(() => {
     process.env = { ...ORIGINAL_ENV };
-    delete process.env["OPENAI_API_KEY"];
+    delete process.env["GEMINI_API_KEY"];
     openAICtor.mockReset();
     openAICtor.mockImplementation(function mockClient(
       this: unknown,
-      opts: { apiKey: string },
+      opts: { apiKey: string; baseURL?: string },
     ) {
       // Return a sentinel object so we can identify singleton reuse.
       return { __mock: true, opts };
@@ -35,25 +35,27 @@ describe("getAIClient", () => {
     process.env = ORIGINAL_ENV;
   });
 
-  it("throws when OPENAI_API_KEY is missing", async () => {
+  it("throws when GEMINI_API_KEY is missing", async () => {
     const { getAIClient } = await import("../ai-client");
-    expect(() => getAIClient()).toThrow(/OPENAI_API_KEY/);
+    expect(() => getAIClient()).toThrow(/GEMINI_API_KEY/);
     expect(openAICtor).not.toHaveBeenCalled();
   });
 
-  it("constructs an OpenAI client with the env key when present", async () => {
-    process.env["OPENAI_API_KEY"] = "sk-test-abc";
+  it("constructs the SDK pointed at Gemini's OpenAI-compat endpoint", async () => {
+    process.env["GEMINI_API_KEY"] = "AIzaTestAbcDefGhiJklMnoPqrStuVwx";
     const { getAIClient } = await import("../ai-client");
     const client = getAIClient();
     expect(openAICtor).toHaveBeenCalledTimes(1);
-    expect((openAICtor as unknown as Mock).mock.calls[0]?.[0]).toEqual({
-      apiKey: "sk-test-abc",
+    const args = (openAICtor as unknown as Mock).mock.calls[0]?.[0];
+    expect(args).toMatchObject({
+      apiKey: "AIzaTestAbcDefGhiJklMnoPqrStuVwx",
+      baseURL: "https://generativelanguage.googleapis.com/v1beta/openai/",
     });
     expect(client).toBeDefined();
   });
 
   it("returns the same client on subsequent calls (singleton)", async () => {
-    process.env["OPENAI_API_KEY"] = "sk-test-abc";
+    process.env["GEMINI_API_KEY"] = "AIzaTestAbcDefGhiJklMnoPqrStuVwx";
     const { getAIClient } = await import("../ai-client");
     const first = getAIClient();
     const second = getAIClient();

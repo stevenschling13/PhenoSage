@@ -39,7 +39,11 @@ const MAX_THREAD_ID_LENGTH = 64;
 const MAX_GROW_ID_LENGTH = 64;
 const MAX_PLANT_ID_LENGTH = 64;
 const MAX_TOOL_ITERATIONS = 4;
-const MODEL = "gpt-4o";
+// Google Gemini's OpenAI-compatible endpoint accepts the model name in the
+// same `model:` field. gemini-2.0-flash is GA, free-tier (1,500 req/day),
+// supports streaming + tool calls + multi-turn conversations — ideal fit
+// for the cultivator-assistant workload.
+const MODEL = "gemini-2.0-flash";
 
 type IncomingMessage = {
   role: "user" | "assistant";

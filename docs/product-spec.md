@@ -46,7 +46,7 @@ Users upload photos of their plants. The system:
 ### 3. Grow-aware Chat Copilot
 
 - The assistant has access to the user's grow data: strains, stage, recent findings, events
-- Context is assembled server-side and injected into the OpenAI system prompt
+- Context is assembled server-side and injected into the Gemini system prompt
 - Chat threads are scoped per grow (optional) or general
 - Streaming responses via `/api/chat`
 
@@ -74,7 +74,7 @@ Users upload photos of their plants. The system:
 │  The ONLY public origin                                        │
 │                                                                │
 │  /api/health              → status check                       │
-│  /api/chat                → OpenAI streaming proxy             │
+│  /api/chat                → Gemini streaming proxy (OpenAI SDK)│
 │  /api/uploads/sign        → Supabase Storage signed URL        │
 │  /api/plants/*/timeline   → DB query via service role          │
 │  /api/plants/*/analysis   → analysis service proxy             │
@@ -94,18 +94,18 @@ Users upload photos of their plants. The system:
 
 ## Data Model (Summary)
 
-| Table | Purpose |
-|---|---|
-| `profiles` | User display names, avatars |
-| `grows` | Grow rooms/tents — the top-level container |
-| `grow_members` | RBAC: owner / collaborator / viewer |
-| `plants` | Individual plants within a grow |
-| `plant_images` | Photo uploads with storage paths |
-| `plant_observations` | Manual height/notes logs |
-| `plant_findings` | AI-generated or manual diagnostic findings |
-| `grow_events` | Water, feed, topping, etc. |
-| `chat_threads` | Conversation threads |
-| `chat_messages` | Individual messages (user + assistant) |
+| Table                | Purpose                                    |
+| -------------------- | ------------------------------------------ |
+| `profiles`           | User display names, avatars                |
+| `grows`              | Grow rooms/tents — the top-level container |
+| `grow_members`       | RBAC: owner / collaborator / viewer        |
+| `plants`             | Individual plants within a grow            |
+| `plant_images`       | Photo uploads with storage paths           |
+| `plant_observations` | Manual height/notes logs                   |
+| `plant_findings`     | AI-generated or manual diagnostic findings |
+| `grow_events`        | Water, feed, topping, etc.                 |
+| `chat_threads`       | Conversation threads                       |
+| `chat_messages`      | Individual messages (user + assistant)     |
 
 ---
 
@@ -136,7 +136,7 @@ Users upload photos of their plants. The system:
 
 1. `SUPABASE_SERVICE_ROLE_KEY` — server-side only (never in `NEXT_PUBLIC_*`)
 2. `ANALYSIS_SERVICE_API_KEY` — server-side only
-3. `OPENAI_API_KEY` — server-side only
+3. `GEMINI_API_KEY` — server-side only (chat). Analysis service has its own server-only `OPENAI_API_KEY`.
 4. All Supabase Storage buckets are **private** — signed URLs only
 5. Browser communicates only with Vercel (Next.js) — never directly with Railway
 6. Vercel Cron endpoints protected by `CRON_SECRET`

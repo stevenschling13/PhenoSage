@@ -34,18 +34,18 @@ Set these in Vercel project settings → Environment Variables.
 
 Mark server-only variables as **Server** exposure only (not Preview/Production client-side).
 
-| Variable                        | Exposure        | Description                                        |
-| ------------------------------- | --------------- | -------------------------------------------------- |
-| `NEXT_PUBLIC_SUPABASE_URL`      | Public          | Supabase project URL                               |
-| `NEXT_PUBLIC_SUPABASE_ANON_KEY` | Public          | Supabase anon/public key                           |
-| `NEXT_PUBLIC_APP_URL`           | Public          | App base URL (e.g. `https://phenosage.vercel.app`) |
-| `SUPABASE_SERVICE_ROLE_KEY`     | **Server only** | Supabase service role — bypasses RLS               |
-| `ANALYSIS_SERVICE_URL`          | **Server only** | Railway analysis service base URL                  |
-| `ANALYSIS_SERVICE_API_KEY`      | **Server only** | Shared secret for proxy auth                       |
-| `OPENAI_API_KEY`                | **Server only** | OpenAI API key                                     |
-| `CRON_SECRET`                   | **Server only** | Protects `/api/internal/cron/*` endpoints          |
-| `SENTRY_DSN`                    | **Server only** | Optional Sentry DSN for web error reporting        |
-| `SENTRY_TRACES_SAMPLE_RATE`     | **Server only** | Optional trace sample rate                         |
+| Variable                        | Exposure        | Description                                                       |
+| ------------------------------- | --------------- | ----------------------------------------------------------------- |
+| `NEXT_PUBLIC_SUPABASE_URL`      | Public          | Supabase project URL                                              |
+| `NEXT_PUBLIC_SUPABASE_ANON_KEY` | Public          | Supabase anon/public key                                          |
+| `NEXT_PUBLIC_APP_URL`           | Public          | App base URL (e.g. `https://phenosage.vercel.app`)                |
+| `SUPABASE_SERVICE_ROLE_KEY`     | **Server only** | Supabase service role — bypasses RLS                              |
+| `ANALYSIS_SERVICE_URL`          | **Server only** | Railway analysis service base URL                                 |
+| `ANALYSIS_SERVICE_API_KEY`      | **Server only** | Shared secret for proxy auth                                      |
+| `GEMINI_API_KEY`                | **Server only** | Google Gemini API key (chat) — free tier from aistudio.google.com |
+| `CRON_SECRET`                   | **Server only** | Protects `/api/internal/cron/*` endpoints                         |
+| `SENTRY_DSN`                    | **Server only** | Optional Sentry DSN for web error reporting                       |
+| `SENTRY_TRACES_SAMPLE_RATE`     | **Server only** | Optional trace sample rate                                        |
 
 ### apps/analysis (Railway)
 

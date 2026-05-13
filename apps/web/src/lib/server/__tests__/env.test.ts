@@ -12,7 +12,7 @@ function baseValidEnv(): NodeJS.ProcessEnv {
     SUPABASE_SERVICE_ROLE_KEY: "service-role",
     ANALYSIS_SERVICE_URL: "https://analysis.railway.app",
     ANALYSIS_SERVICE_API_KEY: "api-key",
-    OPENAI_API_KEY: "sk-test-123",
+    GEMINI_API_KEY: "AIzaTestAbcDefGhiJklMnoPqrStuVwx",
     NEXT_PUBLIC_APP_URL: "http://localhost:3000",
   } as unknown as NodeJS.ProcessEnv;
 }
@@ -38,11 +38,11 @@ describe("env validation", () => {
     expect(errs.some((e) => e.includes("NEXT_PUBLIC_SUPABASE_URL"))).toBe(true);
   });
 
-  it("rejects malformed openai key", () => {
+  it("rejects malformed gemini key", () => {
     const env = baseValidEnv();
-    env["OPENAI_API_KEY"] = "not-a-key";
+    env["GEMINI_API_KEY"] = "not-a-key";
     const errs = getServerEnvErrors(env);
-    expect(errs.some((e) => e.includes("OPENAI_API_KEY"))).toBe(true);
+    expect(errs.some((e) => e.includes("GEMINI_API_KEY"))).toBe(true);
   });
 
   it("throws EnvValidationError with all violations", () => {
