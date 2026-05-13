@@ -20,6 +20,8 @@ describe("getAIClient", () => {
   beforeEach(() => {
     process.env = { ...ORIGINAL_ENV };
     delete process.env["GEMINI_API_KEY"];
+    delete process.env["GOOGLE_GENERATIVE_AI_API_KEY"];
+    delete process.env["GOOGLE_API_KEY"];
     openAICtor.mockReset();
     openAICtor.mockImplementation(function mockClient(
       this: unknown,
@@ -61,5 +63,32 @@ describe("getAIClient", () => {
     const second = getAIClient();
     expect(second).toBe(first);
     expect(openAICtor).toHaveBeenCalledTimes(1);
+  });
+
+  it("falls back to GOOGLE_GENERATIVE_AI_API_KEY (Vercel AI SDK convention)", async () => {
+    process.env["GOOGLE_GENERATIVE_AI_API_KEY"] =
+      "AIzaTestVercelAiSdkKeyXxxxxxxxxx";
+    const { getAIClient } = await import("../ai-client");
+    getAIClient();
+    const args = (openAICtor as unknown as Mock).mock.calls[0]?.[0];
+    expect(args.apiKey).toBe("AIzaTestVercelAiSdkKeyXxxxxxxxxx");
+  });
+
+  it("falls back to GOOGLE_API_KEY (generic Google convention)", async () => {
+    process.env["GOOGLE_API_KEY"] = "AIzaTestGenericGoogleKeyXxxxxxxx";
+    const { getAIClient } = await import("../ai-client");
+    getAIClient();
+    const args = (openAICtor as unknown as Mock).mock.calls[0]?.[0];
+    expect(args.apiKey).toBe("AIzaTestGenericGoogleKeyXxxxxxxx");
+  });
+
+  it("prefers GEMINI_API_KEY when multiple aliases are set", async () => {
+    process.env["GEMINI_API_KEY"] = "AIzaTestPrimaryGeminiKeyXxxxxxxx";
+    process.env["GOOGLE_GENERATIVE_AI_API_KEY"] = "AIzaTestShouldBeIgnored1";
+    process.env["GOOGLE_API_KEY"] = "AIzaTestShouldBeIgnored2";
+    const { getAIClient } = await import("../ai-client");
+    getAIClient();
+    const args = (openAICtor as unknown as Mock).mock.calls[0]?.[0];
+    expect(args.apiKey).toBe("AIzaTestPrimaryGeminiKeyXxxxxxxx");
   });
 });
