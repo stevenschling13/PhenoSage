@@ -42,7 +42,7 @@ browser ──► apps/web (Next.js 15, Vercel)
 
 Source of truth: `.env.example`. Validator: `scripts/check-env-contract.mjs` + `apps/web/src/lib/env.ts`.
 
-Server-only (never expose to browser): `SUPABASE_SERVICE_ROLE_KEY`, `OPENAI_API_KEY`, `ANALYSIS_SERVICE_URL`, `ANALYSIS_SERVICE_API_KEY`, `CRON_SECRET`, `SENTRY_AUTH_TOKEN`.
+Server-only (never expose to browser): `SUPABASE_SERVICE_ROLE_KEY`, `GEMINI_API_KEY`, `ANALYSIS_SERVICE_URL`, `ANALYSIS_SERVICE_API_KEY`, `CRON_SECRET`, `SENTRY_AUTH_TOKEN`. (The analysis service on Railway still uses its own `OPENAI_API_KEY` for vision.)
 
 Public (prefix `NEXT_PUBLIC_`): `NEXT_PUBLIC_SUPABASE_URL`, `NEXT_PUBLIC_SUPABASE_ANON_KEY`, `NEXT_PUBLIC_APP_URL`, `NEXT_PUBLIC_APP_ENV`.
 

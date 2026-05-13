@@ -33,7 +33,12 @@ const SERVER_RULES: Rule[] = [
     hint: "https://<service>.railway.app",
   },
   { name: "ANALYSIS_SERVICE_API_KEY", required: true },
-  { name: "OPENAI_API_KEY", required: true, pattern: /^sk-/ },
+  {
+    name: "GEMINI_API_KEY",
+    required: true,
+    pattern: /^AIza[0-9A-Za-z_-]{20,}$/,
+    hint: "AIza...  (from https://aistudio.google.com/app/apikey)",
+  },
   { name: "NEXT_PUBLIC_APP_URL", required: true, pattern: /^https?:\/\// },
 ];
 
