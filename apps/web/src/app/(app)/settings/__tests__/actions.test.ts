@@ -65,7 +65,7 @@ describe("updateDisplayNameAction", () => {
 
   it("returns structured error (does NOT throw) when service-role env is missing", async () => {
     mocks.getDbClient.mockImplementationOnce(() => {
-      throw new Error("SUPABASE_SERVICE_ROLE_KEY is required");
+      throw new Error("supabase service-role credential is required");
     });
     const result = await updateDisplayNameAction(buildFormData("Steve"));
     expect(result.status).toBe("error");
