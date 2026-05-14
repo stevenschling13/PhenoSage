@@ -20,8 +20,12 @@ type QueryResult = {
 };
 
 function makeSupabaseMock(result: QueryResult) {
+  // supabase-js makes `.order()` chainable so callers can stack
+  // multiple orderings (e.g. archived ASC, then updated_at DESC).
+  // Mirror that here so the test fixture reflects how the real
+  // client behaves.
   const limit = vi.fn().mockResolvedValue(result);
-  const order = vi.fn(() => ({ limit }));
+  const order: ReturnType<typeof vi.fn> = vi.fn(() => ({ limit, order }));
   const select = vi.fn(() => ({ order }));
   const from = vi.fn(() => ({ select }));
 
@@ -56,12 +60,23 @@ describe("workspace-records", () => {
       data: [
         {
           id: "grow-1",
+          is_archived: false,
           light_type: "LED",
           medium: "coco",
           name: "Flower tent",
           stage: "flower",
           start_date: "2026-04-01",
           updated_at: "2026-05-01T00:00:00Z",
+        },
+        {
+          id: "grow-old",
+          is_archived: true,
+          light_type: "HPS",
+          medium: "soil",
+          name: "Winter run",
+          stage: "harvest",
+          start_date: "2025-09-01",
+          updated_at: "2025-12-20T00:00:00Z",
         },
       ],
       error: null,
@@ -71,6 +86,7 @@ describe("workspace-records", () => {
     await expect(listAccessibleGrows()).resolves.toEqual([
       {
         id: "grow-1",
+        isArchived: false,
         lightType: "LED",
         medium: "coco",
         name: "Flower tent",
@@ -78,12 +94,28 @@ describe("workspace-records", () => {
         startDate: "2026-04-01",
         updatedAt: "2026-05-01T00:00:00Z",
       },
+      {
+        id: "grow-old",
+        isArchived: true,
+        lightType: "HPS",
+        medium: "soil",
+        name: "Winter run",
+        stage: "harvest",
+        startDate: "2025-09-01",
+        updatedAt: "2025-12-20T00:00:00Z",
+      },
     ]);
     expect(from).toHaveBeenCalledWith("grows");
     expect(select).toHaveBeenCalledWith(
-      "id,name,stage,medium,light_type,start_date,updated_at",
+      "id,name,stage,medium,light_type,start_date,is_archived,updated_at",
     );
-    expect(order).toHaveBeenCalledWith("updated_at", { ascending: false });
+    // Active grows first (is_archived ASC), then most-recently-updated.
+    expect(order).toHaveBeenNthCalledWith(1, "is_archived", {
+      ascending: true,
+    });
+    expect(order).toHaveBeenNthCalledWith(2, "updated_at", {
+      ascending: false,
+    });
     expect(limit).toHaveBeenCalledWith(100);
   });
 

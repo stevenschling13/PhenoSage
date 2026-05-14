@@ -20,7 +20,13 @@ type QueryResult = {
 function makeSupabaseMock(results: Record<TableName, QueryResult>) {
   const from = vi.fn((table: TableName) => {
     const limit = vi.fn().mockResolvedValue(results[table]);
-    const order = vi.fn(() => ({ limit }));
+    // supabase-js's .order() is chainable. The grows query now stacks
+    // two orderings (archived ASC, updated_at DESC); mirror that so
+    // the mock matches real behaviour.
+    const order: ReturnType<typeof vi.fn> = vi.fn(() => ({
+      limit,
+      order,
+    }));
     const select = vi.fn(() => ({ order }));
     return { select };
   });

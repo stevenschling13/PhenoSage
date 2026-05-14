@@ -53,11 +53,10 @@ export default async function GrowsPage({ searchParams }: GrowsPageProps) {
     : null;
 
   // `just_created=1` signals the user just completed the new-grow form.
-  // We surface a banner naming the grow so the action's success is
-  // obviously visible — and we tolerate read-after-write lag by
-  // falling back to "Grow created" when the row isn't yet in the
-  // overview slice. Either way the registry below is the user's
-  // confirmation that the grow exists.
+  // The current redirect lands on /grows/[id]?just_created=1, so this
+  // path only fires when the form's recovery CTA (or an old
+  // bookmark) lands here instead. We still surface the banner so the
+  // fallback path is just as confirmation-rich as the happy path.
   const justCreated = firstParam(resolvedParams?.just_created) === "1";
   const justCreatedGrowId = justCreated
     ? firstParam(resolvedParams?.growId)
@@ -124,8 +123,19 @@ export default async function GrowsPage({ searchParams }: GrowsPageProps) {
             uploads and assistant context, or keep exploring the registry.
           </p>
           <div className="mt-3 flex flex-wrap gap-2">
+            {justCreatedGrow ? (
+              <Link
+                className={buttonStyles({ size: "sm" })}
+                href={`/grows/${justCreatedGrow.id}`}
+              >
+                Open the grow
+              </Link>
+            ) : null}
             <Link
-              className={buttonStyles({ size: "sm" })}
+              className={buttonStyles({
+                size: "sm",
+                variant: justCreatedGrow ? "surface" : "primary",
+              })}
               href={
                 justCreatedGrow
                   ? `/plants/new?growId=${justCreatedGrow.id}`
@@ -133,12 +143,6 @@ export default async function GrowsPage({ searchParams }: GrowsPageProps) {
               }
             >
               Add a plant
-            </Link>
-            <Link
-              className={buttonStyles({ size: "sm", variant: "surface" })}
-              href="/grows"
-            >
-              View grow registry
             </Link>
           </div>
         </div>
@@ -161,17 +165,28 @@ export default async function GrowsPage({ searchParams }: GrowsPageProps) {
                 {overview.grows.map((grow) => (
                   <div
                     key={grow.id}
-                    className="rounded-[1.15rem] border border-border/70 bg-background-subtle/60 px-4 py-4"
+                    className={
+                      "rounded-[1.15rem] border px-4 py-4 transition " +
+                      (grow.isArchived
+                        ? "border-border/50 bg-background-subtle/30 opacity-80"
+                        : "border-border/70 bg-background-subtle/60")
+                    }
                   >
                     <div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
                       <div className="space-y-2">
                         <div className="flex flex-wrap items-center gap-2">
-                          <p className="text-base font-semibold text-foreground">
+                          <Link
+                            className="text-base font-semibold text-foreground hover:underline"
+                            href={`/grows/${grow.id}`}
+                          >
                             {grow.name}
-                          </p>
+                          </Link>
                           <Badge tone="accent">
                             {grow.stage ?? "stage pending"}
                           </Badge>
+                          {grow.isArchived ? (
+                            <Badge tone="default">Archived</Badge>
+                          ) : null}
                         </div>
                         <p className="text-sm leading-6 text-muted-foreground">
                           {grow.plantCount} plants · {grow.imageCount} captures
@@ -182,27 +197,40 @@ export default async function GrowsPage({ searchParams }: GrowsPageProps) {
                           {grow.lightType ?? "light profile pending"}
                         </p>
                       </div>
-                      {grow.primaryPlantId ? (
+                      <div className="flex flex-wrap gap-2">
                         <Link
                           className={buttonStyles({
                             size: "sm",
                             variant: "surface",
                           })}
-                          href={`/plants/${grow.primaryPlantId}`}
+                          href={`/grows/${grow.id}`}
                         >
-                          Open {grow.primaryPlantName ?? "plant"}
+                          Open grow
                         </Link>
-                      ) : (
-                        <Link
-                          className={buttonStyles({
-                            size: "sm",
-                            variant: "surface",
-                          })}
-                          href={`/plants/new?growId=${grow.id}`}
-                        >
-                          Add plant
-                        </Link>
-                      )}
+                        {!grow.isArchived ? (
+                          grow.primaryPlantId ? (
+                            <Link
+                              className={buttonStyles({
+                                size: "sm",
+                                variant: "surface",
+                              })}
+                              href={`/plants/${grow.primaryPlantId}`}
+                            >
+                              Open {grow.primaryPlantName ?? "plant"}
+                            </Link>
+                          ) : (
+                            <Link
+                              className={buttonStyles({
+                                size: "sm",
+                                variant: "surface",
+                              })}
+                              href={`/plants/new?growId=${grow.id}`}
+                            >
+                              Add plant
+                            </Link>
+                          )
+                        ) : null}
+                      </div>
                     </div>
                   </div>
                 ))}
