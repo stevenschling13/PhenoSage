@@ -53,12 +53,17 @@ test.describe("Authenticated workspace smoke", () => {
         await page.getByLabel("Light type").selectOption("led");
         await page.getByRole("button", { name: "Create grow" }).click();
 
-        // Post-create now lands directly on the add-plant flow with a
-        // success banner naming the new grow.
-        await page.waitForURL(/\/plants\/new\?growId=[^&]+&just_created=1/);
+        // Post-create lands on the grow registry with the new grow
+        // highlighted so the user sees the grow they just created
+        // instead of being force-funneled into a plant-intake form.
+        await page.waitForURL(/\/grows\?growId=[^&]+&just_created=1/);
         await expect(
           page.getByText(new RegExp(`Grow .${growName}. is ready`, "i")),
         ).toBeVisible();
+        // The banner's "Add a plant" CTA carries the new grow id and
+        // is the natural next step for an empty grow.
+        await page.getByRole("link", { name: "Add a plant" }).first().click();
+        await page.waitForURL(/\/plants\/new\?growId=/);
       });
 
       let plantId = "";

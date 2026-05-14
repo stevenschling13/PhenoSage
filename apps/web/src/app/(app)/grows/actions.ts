@@ -185,11 +185,14 @@ export async function createGrowAction(
   // as an error boundary hit. Letting the client perform router.push avoids
   // that entire failure mode.
   //
-  // Send the operator straight to the add-plant flow with the new grow
-  // pre-selected. The plant page renders a "grow ready" banner with an
-  // explicit "back to grow registry" exit so this isn't a forced path.
+  // Land on the grow registry with the new grow highlighted so the user
+  // sees what they just created. The previous redirect to /plants/new
+  // visually buried the success in a plant-intake form, which made the
+  // action feel like it had failed. The registry page recognises the
+  // `just_created=1` flag and shows a recovery-friendly banner with
+  // both "Add a plant" and "View grow registry" CTAs.
   const redirectTo = newGrowId
-    ? `/plants/new?growId=${encodeURIComponent(newGrowId)}&just_created=1`
+    ? `/grows?growId=${encodeURIComponent(newGrowId)}&just_created=1`
     : "/grows";
   return {
     message: "Grow created.",
