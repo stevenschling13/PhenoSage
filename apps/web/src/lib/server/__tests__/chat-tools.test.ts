@@ -26,6 +26,16 @@ function makeInsertMock(result: SingleResult) {
   return { client: { from }, from, insert, select, single };
 }
 
+// .update(payload).eq(col, val).select(...).maybeSingle()
+function makeUpdateEqMaybeSingleMock(result: SingleResult) {
+  const maybeSingle = vi.fn().mockResolvedValue(result);
+  const select = vi.fn(() => ({ maybeSingle }));
+  const eq = vi.fn(() => ({ select }));
+  const update = vi.fn(() => ({ eq }));
+  const from = vi.fn(() => ({ update }));
+  return { client: { from }, eq, from, maybeSingle, select, update };
+}
+
 // Note: `supabase` is intentionally omitted (not set to undefined) because
 // the project's `exactOptionalPropertyTypes: true` rejects explicit-undefined
 // assignment to optional fields. Tool executor falls back to constructing a
@@ -326,6 +336,287 @@ describe("chat-tools — log_plant_observation", () => {
 
     expect(result).toEqual({
       error: "you do not have access to this plant",
+      ok: false,
+    });
+  });
+});
+
+describe("chat-tools — mark_finding_resolved", () => {
+  beforeEach(() => {
+    createSupabaseServerClient.mockReset();
+    logServerEvent.mockReset();
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  it("is exposed in the tool list and requires findingId + resolved", () => {
+    const def = CHAT_TOOL_DEFINITIONS.find(
+      (t) => t.function.name === "mark_finding_resolved",
+    );
+    expect(def).toBeDefined();
+    expect(def?.function.parameters?.required).toEqual([
+      "findingId",
+      "resolved",
+    ]);
+  });
+
+  it("sets resolved_at to now when resolved=true and no resolvedAt supplied", async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-05-14T12:00:00.000Z"));
+
+    const { client, from, update, eq, select } = makeUpdateEqMaybeSingleMock({
+      data: {
+        category: "nutrient_deficiency",
+        grow_id: "grow-1",
+        id: "finding-1",
+        plant_id: "plant-3",
+        resolved_at: "2026-05-14T12:00:00.000Z",
+        severity: "medium",
+        title: "Nitrogen deficiency",
+      },
+      error: null,
+    });
+    createSupabaseServerClient.mockResolvedValue(client);
+
+    const result = await executeChatTool(
+      "mark_finding_resolved",
+      { findingId: "finding-1", resolved: true },
+      CTX_AUTHED,
+    );
+
+    expect(result).toEqual({
+      data: expect.objectContaining({
+        id: "finding-1",
+        resolved_at: "2026-05-14T12:00:00.000Z",
+      }),
+      ok: true,
+    });
+    expect(from).toHaveBeenCalledWith("plant_findings");
+    expect(update).toHaveBeenCalledWith({
+      resolved_at: "2026-05-14T12:00:00.000Z",
+    });
+    expect(eq).toHaveBeenCalledWith("id", "finding-1");
+    expect(select).toHaveBeenCalled();
+
+    const audit = logServerEvent.mock.calls.at(-1)?.[2];
+    expect(audit).toMatchObject({
+      ok: true,
+      rowId: "finding-1",
+      tool: "mark_finding_resolved",
+      write: true,
+    });
+  });
+
+  it("clears resolved_at when resolved=false (re-open)", async () => {
+    const { client, update } = makeUpdateEqMaybeSingleMock({
+      data: { id: "finding-1", resolved_at: null },
+      error: null,
+    });
+    createSupabaseServerClient.mockResolvedValue(client);
+
+    await executeChatTool(
+      "mark_finding_resolved",
+      { findingId: "finding-1", resolved: false },
+      CTX_AUTHED,
+    );
+
+    expect(update).toHaveBeenCalledWith({ resolved_at: null });
+  });
+
+  it("ignores resolvedAt when resolved=false", async () => {
+    const { client, update } = makeUpdateEqMaybeSingleMock({
+      data: { id: "finding-1", resolved_at: null },
+      error: null,
+    });
+    createSupabaseServerClient.mockResolvedValue(client);
+
+    await executeChatTool(
+      "mark_finding_resolved",
+      {
+        findingId: "finding-1",
+        resolved: false,
+        resolvedAt: "2026-05-13T08:00:00.000Z",
+      },
+      CTX_AUTHED,
+    );
+
+    expect(update).toHaveBeenCalledWith({ resolved_at: null });
+  });
+
+  it("rejects a future resolvedAt and does not call the database", async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-05-14T12:00:00.000Z"));
+    const future = new Date("2026-05-14T12:05:00.000Z").toISOString();
+
+    const { client, update } = makeUpdateEqMaybeSingleMock({
+      data: null,
+      error: null,
+    });
+    createSupabaseServerClient.mockResolvedValue(client);
+
+    const result = await executeChatTool(
+      "mark_finding_resolved",
+      { findingId: "finding-1", resolved: true, resolvedAt: future },
+      CTX_AUTHED,
+    );
+
+    expect(result.ok).toBe(false);
+    expect(update).not.toHaveBeenCalled();
+  });
+
+  it("returns 'not found or not accessible' when zero rows match", async () => {
+    const { client } = makeUpdateEqMaybeSingleMock({
+      data: null,
+      error: null,
+    });
+    createSupabaseServerClient.mockResolvedValue(client);
+
+    const result = await executeChatTool(
+      "mark_finding_resolved",
+      { findingId: "missing", resolved: true },
+      CTX_AUTHED,
+    );
+
+    expect(result).toEqual({
+      error: "finding not found or not accessible",
+      ok: false,
+    });
+  });
+
+  it("translates an RLS denial into a permission error", async () => {
+    const { client } = makeUpdateEqMaybeSingleMock({
+      data: null,
+      error: {
+        code: "42501",
+        message: "permission denied for table plant_findings",
+      },
+    });
+    createSupabaseServerClient.mockResolvedValue(client);
+
+    const result = await executeChatTool(
+      "mark_finding_resolved",
+      { findingId: "f", resolved: true },
+      CTX_AUTHED,
+    );
+
+    expect(result).toEqual({
+      error:
+        "you do not have permission to update this finding (owner or collaborator only)",
+      ok: false,
+    });
+  });
+
+  it("rejects when the user is not authenticated", async () => {
+    const { client, update } = makeUpdateEqMaybeSingleMock({
+      data: null,
+      error: null,
+    });
+    createSupabaseServerClient.mockResolvedValue(client);
+
+    const result = await executeChatTool(
+      "mark_finding_resolved",
+      { findingId: "f", resolved: true },
+      { requestId: "req-x", userId: null },
+    );
+
+    expect(result).toEqual({ error: "not authenticated", ok: false });
+    expect(update).not.toHaveBeenCalled();
+  });
+});
+
+describe("chat-tools — update_grow_stage", () => {
+  beforeEach(() => {
+    createSupabaseServerClient.mockReset();
+    logServerEvent.mockReset();
+  });
+
+  it("is exposed in the tool list and requires growId + stage", () => {
+    const def = CHAT_TOOL_DEFINITIONS.find(
+      (t) => t.function.name === "update_grow_stage",
+    );
+    expect(def).toBeDefined();
+    expect(def?.function.parameters?.required).toEqual(["growId", "stage"]);
+  });
+
+  it("updates grows.stage and returns the new row", async () => {
+    const { client, from, update, eq } = makeUpdateEqMaybeSingleMock({
+      data: { id: "grow-1", name: "Tent A", stage: "flower" },
+      error: null,
+    });
+    createSupabaseServerClient.mockResolvedValue(client);
+
+    const result = await executeChatTool(
+      "update_grow_stage",
+      { growId: "grow-1", stage: "flower" },
+      CTX_AUTHED,
+    );
+
+    expect(result).toEqual({
+      data: { id: "grow-1", name: "Tent A", stage: "flower" },
+      ok: true,
+    });
+    expect(from).toHaveBeenCalledWith("grows");
+    expect(update).toHaveBeenCalledWith({ stage: "flower" });
+    expect(eq).toHaveBeenCalledWith("id", "grow-1");
+  });
+
+  it("rejects an invalid stage without touching the database", async () => {
+    const { client, update } = makeUpdateEqMaybeSingleMock({
+      data: null,
+      error: null,
+    });
+    createSupabaseServerClient.mockResolvedValue(client);
+
+    const result = await executeChatTool(
+      "update_grow_stage",
+      { growId: "grow-1", stage: "blooming" },
+      CTX_AUTHED,
+    );
+
+    expect(result.ok).toBe(false);
+    expect(update).not.toHaveBeenCalled();
+  });
+
+  it("returns 'not found or not accessible' when zero rows match", async () => {
+    const { client } = makeUpdateEqMaybeSingleMock({
+      data: null,
+      error: null,
+    });
+    createSupabaseServerClient.mockResolvedValue(client);
+
+    const result = await executeChatTool(
+      "update_grow_stage",
+      { growId: "missing", stage: "flower" },
+      CTX_AUTHED,
+    );
+
+    expect(result).toEqual({
+      error: "grow not found or not accessible",
+      ok: false,
+    });
+  });
+
+  it("translates an RLS denial into an owner-only permission error", async () => {
+    const { client } = makeUpdateEqMaybeSingleMock({
+      data: null,
+      error: {
+        code: "42501",
+        message: "row-level security blocks update",
+      },
+    });
+    createSupabaseServerClient.mockResolvedValue(client);
+
+    const result = await executeChatTool(
+      "update_grow_stage",
+      { growId: "g", stage: "flower" },
+      CTX_AUTHED,
+    );
+
+    expect(result).toEqual({
+      error:
+        "you do not have permission to change this grow's stage (owners only)",
       ok: false,
     });
   });
