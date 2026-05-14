@@ -6,4 +6,8 @@
  * The body is intentionally minimal and contains zero secrets / env-var
  * inventory — public probers can hit this without auth.
  */
-export { GET, runtime } from "../health/route";
+export { GET } from "../health/route";
+
+// `runtime` must be declared directly in each route file — Next.js
+// route-segment config cannot be re-exported from another module.
+export const runtime = "edge";
