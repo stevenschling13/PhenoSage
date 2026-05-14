@@ -138,6 +138,99 @@ export const CHAT_TOOL_DEFINITIONS = [
       },
     },
   },
+  {
+    type: "function" as const,
+    function: {
+      name: "log_grow_event",
+      description:
+        "Record a cultivation action the grower just performed: water, feed, top, fim, lst, defoliate, transplant, ipm (pest treatment), harvest, observation, note, other. Use this when the user describes something they DID — 'I just watered tent 2', 'fed plant 3 with FloraNova at 800 EC', 'topped #4 above the 5th node'. Always confirm the grow (and plant, if specific) and the event_type before calling. The event is attributed to the current user and timestamped to now unless occurredAt is supplied. Returns the new event id.",
+      parameters: {
+        type: "object",
+        properties: {
+          growId: {
+            type: "string",
+            description:
+              "Grow ID the event belongs to. Required. If unknown, call list_grows first.",
+          },
+          plantId: {
+            type: "string",
+            description:
+              "Optional plant ID when the action targeted a single plant. Omit for whole-grow events (e.g. environmental adjustments).",
+          },
+          eventType: {
+            type: "string",
+            enum: [
+              "water",
+              "feed",
+              "top",
+              "fim",
+              "lst",
+              "defoliate",
+              "transplant",
+              "ipm",
+              "harvest",
+              "observation",
+              "note",
+              "other",
+            ],
+            description:
+              "Event category. Pick the most specific match. Use 'other' only when no category fits.",
+          },
+          notes: {
+            type: "string",
+            description:
+              "Free-text detail (product, dose, EC/pH, observed runoff, branch trained, etc.). Up to 2000 chars.",
+          },
+          occurredAt: {
+            type: "string",
+            description:
+              "ISO 8601 timestamp the action actually happened. Omit to use now. Cannot be in the future.",
+          },
+        },
+        required: ["growId", "eventType"],
+        additionalProperties: false,
+      },
+    },
+  },
+  {
+    type: "function" as const,
+    function: {
+      name: "log_plant_observation",
+      description:
+        "Record a manual observation about a single plant — typically height in cm and/or a free-text note ('node 5 inter-nodal spacing tightening, pistils fattening'). Use when the user reports a measurement or qualitative observation. Returns the new observation id.",
+      parameters: {
+        type: "object",
+        properties: {
+          plantId: {
+            type: "string",
+            description: "Plant ID being observed. Required.",
+          },
+          growId: {
+            type: "string",
+            description:
+              "Grow ID the plant belongs to. Required so the row can be RLS-checked.",
+          },
+          heightCm: {
+            type: "number",
+            description:
+              "Height in centimetres (numeric, two decimals). Omit if not measured.",
+          },
+          notes: {
+            type: "string",
+            description:
+              "Free-text observation (up to 2000 chars). At least one of heightCm or notes must be supplied.",
+          },
+          observedAt: {
+            type: "string",
+            description:
+              "ISO 8601 timestamp the observation was made. Omit to use now. Cannot be in the future.",
+          },
+        },
+        required: ["plantId", "growId"],
+        additionalProperties: false,
+      },
+    },
+  },
 ];
 
 type ToolResult = { ok: true; data: unknown } | { ok: false; error: string };
@@ -174,6 +267,61 @@ const AnalysisHistoryArgs = z.object({
   plantId: z.string().min(1),
   limit: z.number().optional(),
 });
+
+const EVENT_TYPES = [
+  "water",
+  "feed",
+  "top",
+  "fim",
+  "lst",
+  "defoliate",
+  "transplant",
+  "ipm",
+  "harvest",
+  "observation",
+  "note",
+  "other",
+] as const;
+
+const MAX_NOTES_LENGTH = 2_000;
+
+const isoDatetimeNotFuture = z
+  .string()
+  .min(1)
+  .refine((s) => !Number.isNaN(Date.parse(s)), {
+    message: "must be a valid ISO 8601 datetime",
+  })
+  .refine((s) => Date.parse(s) <= Date.now() + 60_000, {
+    message: "must not be more than 1 minute in the future",
+  });
+
+const LogGrowEventArgs = z.object({
+  growId: z.string().min(1),
+  plantId: z.string().min(1).optional(),
+  eventType: z.enum(EVENT_TYPES),
+  notes: z.string().max(MAX_NOTES_LENGTH).optional(),
+  occurredAt: isoDatetimeNotFuture.optional(),
+});
+
+const LogPlantObservationArgs = z
+  .object({
+    plantId: z.string().min(1),
+    growId: z.string().min(1),
+    heightCm: z.number().positive().max(1_000).optional(),
+    notes: z.string().max(MAX_NOTES_LENGTH).optional(),
+    observedAt: isoDatetimeNotFuture.optional(),
+  })
+  .refine((v) => v.heightCm !== undefined || (v.notes && v.notes.length > 0), {
+    message: "supply at least one of heightCm or notes",
+  });
+
+// Tools whose names start the model down a write path. The executor logs
+// arg keys (never values) for these so we have an audit trail without
+// retaining free-text user content in the request log.
+const WRITE_TOOLS = new Set<string>([
+  "log_grow_event",
+  "log_plant_observation",
+]);
 
 type ChatToolContext = {
   userId: string | null;
@@ -356,6 +504,73 @@ export async function executeChatTool(
           return { ok: true, data: data ?? [] };
         }
 
+        case "log_grow_event": {
+          if (!ctx.userId) {
+            return { ok: false, error: "not authenticated" };
+          }
+          const args = LogGrowEventArgs.parse(rawArgs);
+          const row = {
+            grow_id: args.growId,
+            plant_id: args.plantId ?? null,
+            user_id: ctx.userId,
+            event_type: args.eventType,
+            notes: args.notes ?? null,
+            occurred_at: args.occurredAt ?? new Date().toISOString(),
+          };
+          const { data, error } = await supabase
+            .from("grow_events")
+            .insert(row)
+            .select("id,grow_id,plant_id,event_type,notes,occurred_at")
+            .single();
+          if (error) {
+            // RLS denials surface as PostgREST errors. Map them to a
+            // model-friendly message that doesn't leak the underlying
+            // policy text.
+            const denied =
+              error.code === "42501" ||
+              /permission denied|row-level security/i.test(error.message);
+            return {
+              ok: false,
+              error: denied
+                ? "you do not have access to this grow"
+                : `could not log event: ${error.message}`,
+            };
+          }
+          return { ok: true, data };
+        }
+
+        case "log_plant_observation": {
+          if (!ctx.userId) {
+            return { ok: false, error: "not authenticated" };
+          }
+          const args = LogPlantObservationArgs.parse(rawArgs);
+          const row = {
+            plant_id: args.plantId,
+            grow_id: args.growId,
+            user_id: ctx.userId,
+            height_cm: args.heightCm ?? null,
+            notes: args.notes ?? null,
+            observed_at: args.observedAt ?? new Date().toISOString(),
+          };
+          const { data, error } = await supabase
+            .from("plant_observations")
+            .insert(row)
+            .select("id,plant_id,grow_id,height_cm,notes,observed_at")
+            .single();
+          if (error) {
+            const denied =
+              error.code === "42501" ||
+              /permission denied|row-level security/i.test(error.message);
+            return {
+              ok: false,
+              error: denied
+                ? "you do not have access to this plant"
+                : `could not log observation: ${error.message}`,
+            };
+          }
+          return { ok: true, data };
+        }
+
         default:
           return { ok: false, error: `Unknown tool: ${name}` };
       }
@@ -373,12 +588,34 @@ export async function executeChatTool(
     }
   })();
 
-  logServerEvent("info", "chat tool invoked", {
+  // Write tools get an extra audit field: which arg keys the model supplied
+  // and (on success) the new row id. Values are deliberately excluded from
+  // the log so we don't retain user free-text in ops storage.
+  const isWrite = WRITE_TOOLS.has(name);
+  const writeAudit = isWrite
+    ? {
+        write: true,
+        argKeys:
+          rawArgs && typeof rawArgs === "object"
+            ? Object.keys(rawArgs as Record<string, unknown>).sort()
+            : [],
+        rowId:
+          result.ok &&
+          result.data &&
+          typeof result.data === "object" &&
+          "id" in (result.data as Record<string, unknown>)
+            ? String((result.data as Record<string, unknown>)["id"])
+            : null,
+      }
+    : null;
+
+  logServerEvent(isWrite && !result.ok ? "warn" : "info", "chat tool invoked", {
     requestId: ctx.requestId,
     userId: ctx.userId,
     tool: name,
     ok: result.ok,
     durationMs: Date.now() - started,
+    ...(writeAudit ?? {}),
   });
 
   return result;
