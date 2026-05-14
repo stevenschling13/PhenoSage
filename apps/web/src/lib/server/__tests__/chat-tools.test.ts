@@ -61,6 +61,33 @@ function makeInsertMock(result: SingleResult) {
   return { client: { from }, from, insert, select, single };
 }
 
+// Bulk insert chain: .from(t).insert(rows).select(...) → thenable yielding
+// { data: rows[], error }. Mirrors the chain used by createPlantAction.
+function makeBulkInsertMock(result: ListResult) {
+  const select = vi.fn(
+    (..._args: unknown[]) =>
+      ({
+        then: (
+          onFulfilled: (_v: ListResult) => unknown,
+          onRejected?: (_e: unknown) => unknown,
+        ) => Promise.resolve(result).then(onFulfilled, onRejected),
+      }) as PromiseLike<ListResult>,
+  );
+  let lastRows: unknown[] = [];
+  const insert = vi.fn((rows: unknown) => {
+    lastRows = Array.isArray(rows) ? rows : [rows];
+    return { select };
+  });
+  const from = vi.fn(() => ({ insert }));
+  return {
+    client: { from },
+    from,
+    insert,
+    select,
+    lastRows: () => lastRows,
+  };
+}
+
 // .update(payload).eq(col, val).select(...).maybeSingle()
 function makeUpdateEqMaybeSingleMock(result: SingleResult) {
   const maybeSingle = vi.fn().mockResolvedValue(result);
@@ -870,5 +897,446 @@ describe("chat-tools — update_task_status", () => {
 
     expect(result).toEqual({ error: "not authenticated", ok: false });
     expect(update).not.toHaveBeenCalled();
+  });
+});
+
+describe("chat-tools — create_grow", () => {
+  beforeEach(() => {
+    createSupabaseServerClient.mockReset();
+    logServerEvent.mockReset();
+  });
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  it("is exposed in the tool list and requires name+stage+medium+lightType", () => {
+    const def = CHAT_TOOL_DEFINITIONS.find(
+      (t) => t.function.name === "create_grow",
+    );
+    expect(def).toBeDefined();
+    expect(def?.function.parameters).toMatchObject({
+      required: ["name", "stage", "medium", "lightType"],
+    });
+  });
+
+  it("inserts a grow owned by the current user and returns the new row", async () => {
+    const { client, insert } = makeInsertMock({
+      data: {
+        id: "g-1",
+        name: "North Tent A",
+        stage: "seedling",
+        medium: "soil",
+        light_type: "led",
+        start_date: "2026-05-14",
+        target_harvest_date: null,
+      },
+      error: null,
+    });
+    createSupabaseServerClient.mockResolvedValue(client);
+
+    const result = await executeChatTool(
+      "create_grow",
+      {
+        name: "North Tent A",
+        stage: "seedling",
+        medium: "soil",
+        lightType: "led",
+      },
+      CTX_AUTHED,
+    );
+
+    expect(result).toEqual({
+      ok: true,
+      data: expect.objectContaining({ id: "g-1", name: "North Tent A" }),
+    });
+    expect(insert).toHaveBeenCalledWith(
+      expect.objectContaining({
+        owner_id: "user-1",
+        name: "North Tent A",
+        stage: "seedling",
+        medium: "soil",
+        light_type: "led",
+        target_harvest_date: null,
+      }),
+    );
+  });
+
+  it("defaults start_date to today and trims name + description", async () => {
+    const { client, insert } = makeInsertMock({
+      data: { id: "g-2" },
+      error: null,
+    });
+    createSupabaseServerClient.mockResolvedValue(client);
+
+    await executeChatTool(
+      "create_grow",
+      {
+        name: "  Greenhouse  ",
+        stage: "vegetative",
+        medium: "coco",
+        lightType: "sun",
+        description: "  outdoor program  ",
+      },
+      CTX_AUTHED,
+    );
+
+    expect(insert).toHaveBeenCalledWith(
+      expect.objectContaining({
+        name: "Greenhouse",
+        description: "outdoor program",
+        start_date: expect.stringMatching(/^\d{4}-\d{2}-\d{2}$/),
+      }),
+    );
+  });
+
+  it("rejects an invalid stage without touching the database", async () => {
+    const { client, insert } = makeInsertMock({ data: null, error: null });
+    createSupabaseServerClient.mockResolvedValue(client);
+
+    const result = await executeChatTool(
+      "create_grow",
+      {
+        name: "X",
+        stage: "bogus",
+        medium: "soil",
+        lightType: "led",
+      },
+      CTX_AUTHED,
+    );
+
+    expect(result.ok).toBe(false);
+    expect(insert).not.toHaveBeenCalled();
+  });
+
+  it("rejects targetHarvestDate before startDate", async () => {
+    const { client, insert } = makeInsertMock({ data: null, error: null });
+    createSupabaseServerClient.mockResolvedValue(client);
+
+    const result = await executeChatTool(
+      "create_grow",
+      {
+        name: "X",
+        stage: "seedling",
+        medium: "soil",
+        lightType: "led",
+        startDate: "2026-06-01",
+        targetHarvestDate: "2026-05-01",
+      },
+      CTX_AUTHED,
+    );
+
+    expect(result.ok).toBe(false);
+    expect(insert).not.toHaveBeenCalled();
+  });
+
+  it("surfaces a friendly duplicate-name message on 23505", async () => {
+    const { client } = makeInsertMock({
+      data: null,
+      error: { code: "23505", message: "duplicate key" },
+    });
+    createSupabaseServerClient.mockResolvedValue(client);
+
+    const result = await executeChatTool(
+      "create_grow",
+      {
+        name: "Existing",
+        stage: "seedling",
+        medium: "soil",
+        lightType: "led",
+      },
+      CTX_AUTHED,
+    );
+
+    expect(result.ok).toBe(false);
+    if (!result.ok) expect(result.error).toMatch(/already exists/i);
+  });
+
+  it("rejects when the user is not authenticated", async () => {
+    const { client, insert } = makeInsertMock({ data: null, error: null });
+    createSupabaseServerClient.mockResolvedValue(client);
+
+    const result = await executeChatTool(
+      "create_grow",
+      {
+        name: "X",
+        stage: "seedling",
+        medium: "soil",
+        lightType: "led",
+      },
+      { requestId: "req-x", userId: null },
+    );
+
+    expect(result).toEqual({ error: "not authenticated", ok: false });
+    expect(insert).not.toHaveBeenCalled();
+  });
+});
+
+describe("chat-tools — create_plants", () => {
+  beforeEach(() => {
+    createSupabaseServerClient.mockReset();
+    logServerEvent.mockReset();
+  });
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  it("is exposed in the tool list and requires growId + name", () => {
+    const def = CHAT_TOOL_DEFINITIONS.find(
+      (t) => t.function.name === "create_plants",
+    );
+    expect(def).toBeDefined();
+    expect(def?.function.parameters).toMatchObject({
+      required: ["growId", "name"],
+    });
+  });
+
+  it("creates a single plant when count is omitted", async () => {
+    const mock = makeBulkInsertMock({
+      data: [{ id: "p-1", grow_id: "g-1", name: "Plant Alpha" }],
+      error: null,
+    });
+    createSupabaseServerClient.mockResolvedValue(mock.client);
+
+    const result = await executeChatTool(
+      "create_plants",
+      { growId: "g-1", name: "Plant Alpha" },
+      CTX_AUTHED,
+    );
+
+    expect(result).toEqual({
+      ok: true,
+      data: {
+        count: 1,
+        plants: [{ id: "p-1", grow_id: "g-1", name: "Plant Alpha" }],
+      },
+    });
+    expect(mock.lastRows()).toEqual([
+      expect.objectContaining({ grow_id: "g-1", name: "Plant Alpha" }),
+    ]);
+  });
+
+  it("bulk-creates N plants with zero-padded numeric suffixes", async () => {
+    const mock = makeBulkInsertMock({
+      data: Array.from({ length: 5 }, (_, i) => ({ id: `p-${i + 1}` })),
+      error: null,
+    });
+    createSupabaseServerClient.mockResolvedValue(mock.client);
+
+    const result = await executeChatTool(
+      "create_plants",
+      { growId: "g-1", name: "Plant", count: 5, strain: "NL" },
+      CTX_AUTHED,
+    );
+
+    expect(result.ok).toBe(true);
+    const rows = mock.lastRows() as Array<{
+      name: string;
+      strain: string | null;
+      grow_id: string;
+    }>;
+    expect(rows.map((r) => r.name)).toEqual([
+      "Plant 1",
+      "Plant 2",
+      "Plant 3",
+      "Plant 4",
+      "Plant 5",
+    ]);
+    expect(rows.every((r) => r.strain === "NL")).toBe(true);
+  });
+
+  it("zero-pads to two digits when count >= 10", async () => {
+    const mock = makeBulkInsertMock({
+      data: Array.from({ length: 10 }, (_, i) => ({ id: `p-${i + 1}` })),
+      error: null,
+    });
+    createSupabaseServerClient.mockResolvedValue(mock.client);
+
+    await executeChatTool(
+      "create_plants",
+      { growId: "g-1", name: "NL", count: 10 },
+      CTX_AUTHED,
+    );
+
+    const rows = mock.lastRows() as Array<{ name: string }>;
+    expect(rows.map((r) => r.name)).toEqual([
+      "NL 01",
+      "NL 02",
+      "NL 03",
+      "NL 04",
+      "NL 05",
+      "NL 06",
+      "NL 07",
+      "NL 08",
+      "NL 09",
+      "NL 10",
+    ]);
+  });
+
+  it("rejects count above 25 without touching the database", async () => {
+    const mock = makeBulkInsertMock({ data: null, error: null });
+    createSupabaseServerClient.mockResolvedValue(mock.client);
+
+    const result = await executeChatTool(
+      "create_plants",
+      { growId: "g-1", name: "Plant", count: 100 },
+      CTX_AUTHED,
+    );
+
+    expect(result.ok).toBe(false);
+    expect(mock.insert).not.toHaveBeenCalled();
+  });
+
+  it("translates an RLS denial into a grow-access error", async () => {
+    const mock = makeBulkInsertMock({
+      data: null,
+      error: { code: "42501", message: "row-level security" },
+    });
+    createSupabaseServerClient.mockResolvedValue(mock.client);
+
+    const result = await executeChatTool(
+      "create_plants",
+      { growId: "g-1", name: "Plant" },
+      CTX_AUTHED,
+    );
+
+    expect(result).toEqual({
+      ok: false,
+      error: "you do not have access to this grow",
+    });
+  });
+
+  it("returns a bulk-tailored 23505 message when count > 1", async () => {
+    const mock = makeBulkInsertMock({
+      data: null,
+      error: { code: "23505", message: "duplicate key" },
+    });
+    createSupabaseServerClient.mockResolvedValue(mock.client);
+
+    const result = await executeChatTool(
+      "create_plants",
+      { growId: "g-1", name: "Plant", count: 3 },
+      CTX_AUTHED,
+    );
+
+    expect(result.ok).toBe(false);
+    if (!result.ok)
+      expect(result.error).toMatch(/generated plant names already exists/i);
+  });
+
+  it("rejects when the user is not authenticated", async () => {
+    const mock = makeBulkInsertMock({ data: null, error: null });
+    createSupabaseServerClient.mockResolvedValue(mock.client);
+
+    const result = await executeChatTool(
+      "create_plants",
+      { growId: "g-1", name: "Plant" },
+      { requestId: "req-x", userId: null },
+    );
+
+    expect(result).toEqual({ error: "not authenticated", ok: false });
+    expect(mock.insert).not.toHaveBeenCalled();
+  });
+});
+
+describe("chat-tools — create_grow_task", () => {
+  beforeEach(() => {
+    createSupabaseServerClient.mockReset();
+    logServerEvent.mockReset();
+  });
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  it("is exposed in the tool list and requires growId + title", () => {
+    const def = CHAT_TOOL_DEFINITIONS.find(
+      (t) => t.function.name === "create_grow_task",
+    );
+    expect(def).toBeDefined();
+    expect(def?.function.parameters).toMatchObject({
+      required: ["growId", "title"],
+    });
+  });
+
+  it("inserts a task with default priority=medium and status=open", async () => {
+    const { client, insert } = makeInsertMock({
+      data: {
+        id: "t-1",
+        grow_id: "g-1",
+        plant_id: null,
+        title: "Flush plants Friday",
+        priority: "medium",
+        status: "open",
+        due_at: null,
+      },
+      error: null,
+    });
+    createSupabaseServerClient.mockResolvedValue(client);
+
+    const result = await executeChatTool(
+      "create_grow_task",
+      { growId: "g-1", title: "Flush plants Friday" },
+      CTX_AUTHED,
+    );
+
+    expect(result).toEqual({
+      ok: true,
+      data: expect.objectContaining({ id: "t-1", status: "open" }),
+    });
+    expect(insert).toHaveBeenCalledWith(
+      expect.objectContaining({
+        priority: "medium",
+        status: "open",
+        plant_id: null,
+      }),
+    );
+  });
+
+  it("rejects a past dueAt without touching the database", async () => {
+    const { client, insert } = makeInsertMock({ data: null, error: null });
+    createSupabaseServerClient.mockResolvedValue(client);
+
+    const result = await executeChatTool(
+      "create_grow_task",
+      {
+        growId: "g-1",
+        title: "Old",
+        dueAt: "2000-01-01T00:00:00Z",
+      },
+      CTX_AUTHED,
+    );
+
+    expect(result.ok).toBe(false);
+    expect(insert).not.toHaveBeenCalled();
+  });
+
+  it("translates an RLS denial into a contributor-only message", async () => {
+    const { client } = makeInsertMock({
+      data: null,
+      error: { code: "42501", message: "row-level security" },
+    });
+    createSupabaseServerClient.mockResolvedValue(client);
+
+    const result = await executeChatTool(
+      "create_grow_task",
+      { growId: "g-1", title: "X" },
+      CTX_AUTHED,
+    );
+
+    expect(result.ok).toBe(false);
+    if (!result.ok) expect(result.error).toMatch(/owner or collaborator only/i);
+  });
+
+  it("rejects when the user is not authenticated", async () => {
+    const { client, insert } = makeInsertMock({ data: null, error: null });
+    createSupabaseServerClient.mockResolvedValue(client);
+
+    const result = await executeChatTool(
+      "create_grow_task",
+      { growId: "g-1", title: "X" },
+      { requestId: "req-x", userId: null },
+    );
+
+    expect(result).toEqual({ error: "not authenticated", ok: false });
+    expect(insert).not.toHaveBeenCalled();
   });
 });
