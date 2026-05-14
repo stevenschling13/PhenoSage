@@ -21,12 +21,22 @@ export type ChatThreadRow = {
   updatedAt: string;
 };
 
+export type ChatMessageAttachment = {
+  id: string;
+  kind: "image";
+  plantId: string;
+  imageId: string;
+  storagePath: string;
+  analysisId: string | null;
+};
+
 export type ChatMessageRow = {
   id: string;
   threadId: string;
   role: "user" | "assistant" | "system";
   content: string;
   createdAt: string;
+  attachments: ChatMessageAttachment[];
 };
 
 function deriveTitle(firstUserMessage: string): string {
@@ -84,8 +94,11 @@ export async function appendMessage(params: {
   role: "user" | "assistant" | "system";
   content: string;
   metadata?: Record<string, unknown>;
-}): Promise<void> {
-  if (!params.content) return;
+}): Promise<string | null> {
+  // Allow empty content when an attachment is the user's only payload.
+  // (Empty assistant rows are still skipped — the streaming path only calls
+  // this after at least one token landed.)
+  if (params.role !== "user" && !params.content) return null;
   const db = getDbClient();
   // The chat_messages.valid_metadata constraint requires the JSON object to
   // contain at least one of tokens / model / context. We don't try to write
@@ -98,11 +111,48 @@ export async function appendMessage(params: {
   if (params.metadata && Object.keys(params.metadata).length > 0) {
     insertRow["metadata"] = params.metadata;
   }
-  const { error } = await db.from("chat_messages").insert(insertRow);
-  if (error) {
+  const { data, error } = await db
+    .from("chat_messages")
+    .insert(insertRow)
+    .select("id")
+    .single();
+  if (error || !data) {
     logServerEvent("error", "chat message insert failed", {
       threadId: params.threadId,
       role: params.role,
+      error: error?.message ?? "no row",
+    });
+    return null;
+  }
+  return (data as { id: string }).id;
+}
+
+/**
+ * Records a chat-message attachment row (image uploaded inline in the
+ * assistant chat). Service-role insert; RLS on the table gates downstream
+ * reads to the thread owner.
+ */
+export async function appendChatAttachment(params: {
+  messageId: string;
+  kind: "image";
+  plantId: string;
+  imageId: string;
+  storagePath: string;
+  analysisId?: string | null;
+}): Promise<void> {
+  const db = getDbClient();
+  const { error } = await db.from("chat_message_attachments").insert({
+    message_id: params.messageId,
+    kind: params.kind,
+    plant_id: params.plantId,
+    image_id: params.imageId,
+    storage_path: params.storagePath,
+    analysis_id: params.analysisId ?? null,
+  });
+  if (error) {
+    logServerEvent("error", "chat attachment insert failed", {
+      messageId: params.messageId,
+      imageId: params.imageId,
       error: error.message,
     });
   }
@@ -169,7 +219,9 @@ export async function getThreadMessages(
 
   const { data, error } = await supabase
     .from("chat_messages")
-    .select("id,thread_id,role,content,created_at")
+    .select(
+      "id,thread_id,role,content,created_at,chat_message_attachments(id,kind,plant_id,image_id,storage_path,analysis_id)",
+    )
     .eq("thread_id", threadId)
     .order("created_at", { ascending: true })
     .limit(500);
@@ -187,6 +239,14 @@ export async function getThreadMessages(
       role: "user" | "assistant" | "system";
       content: string;
       created_at: string;
+      chat_message_attachments?: Array<{
+        id: string;
+        kind: "image";
+        plant_id: string;
+        image_id: string;
+        storage_path: string;
+        analysis_id: string | null;
+      }> | null;
     }>
   ).map((row) => ({
     id: row.id,
@@ -194,6 +254,14 @@ export async function getThreadMessages(
     role: row.role,
     content: row.content,
     createdAt: row.created_at,
+    attachments: (row.chat_message_attachments ?? []).map((a) => ({
+      id: a.id,
+      kind: a.kind,
+      plantId: a.plant_id,
+      imageId: a.image_id,
+      storagePath: a.storage_path,
+      analysisId: a.analysis_id,
+    })),
   }));
 }
 

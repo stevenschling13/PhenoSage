@@ -6,6 +6,8 @@ import {
   useMemo,
   useRef,
   useState,
+  type ChangeEvent,
+  type DragEvent,
   type FormEvent,
   type KeyboardEvent,
   type ReactNode,
@@ -14,14 +16,24 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { SendIcon } from "@/components/ui/icons";
 import { cn } from "@/lib/cn";
+import { createSupabaseBrowserClient } from "@/lib/supabase-client";
 import { renderMarkdown } from "./markdown";
 
 type Role = "user" | "assistant";
+
+type ChatAttachment = {
+  id?: string;
+  kind: "image";
+  plantId: string;
+  imageId: string;
+  storagePath: string;
+};
 
 interface Message {
   id: string;
   role: Role;
   content: string;
+  attachments?: ChatAttachment[];
 }
 
 type PromptCategory = {
@@ -132,6 +144,16 @@ export function AssistantChat({ grows }: { grows: GrowOption[] }) {
   const [threads, setThreads] = useState<ThreadSummary[]>([]);
   const [threadsLoading, setThreadsLoading] = useState(false);
 
+  // Image upload state. We support a single pending attachment per turn
+  // (server enforces the same limit for the inline analysis path); the
+  // resolved plant id is sticky across the thread so the user only has
+  // to pick a target plant on the FIRST attachment of a thread.
+  const [pendingFile, setPendingFile] = useState<File | null>(null);
+  const [attachmentUploading, setAttachmentUploading] = useState(false);
+  const [threadPlantId, setThreadPlantId] = useState<string | null>(null);
+  const [dragActive, setDragActive] = useState(false);
+  const fileInputRef = useRef<HTMLInputElement | null>(null);
+
   const abortRef = useRef<AbortController | null>(null);
   const scrollerRef = useRef<HTMLDivElement | null>(null);
   const textareaRef = useRef<HTMLTextAreaElement | null>(null);
@@ -186,6 +208,8 @@ export function AssistantChat({ grows }: { grows: GrowOption[] }) {
     setThreadId(null);
     setMessages([WELCOME]);
     setError(null);
+    setPendingFile(null);
+    setThreadPlantId(null);
   }, []);
 
   const loadThread = useCallback(async (id: string) => {
@@ -201,13 +225,44 @@ export function AssistantChat({ grows }: { grows: GrowOption[] }) {
         return;
       }
       const data = (await res.json()) as {
-        messages: Array<{ id: string; role: Role; content: string }>;
+        messages: Array<{
+          id: string;
+          role: Role;
+          content: string;
+          attachments?: Array<{
+            id?: string;
+            kind: string;
+            plantId: string;
+            imageId: string;
+            storagePath: string;
+          }>;
+        }>;
       };
       const loaded: Message[] = (data.messages ?? [])
         .filter((m) => m.role === "user" || m.role === "assistant")
-        .map((m) => ({ id: m.id, role: m.role, content: m.content }));
+        .map((m) => ({
+          id: m.id,
+          role: m.role,
+          content: m.content,
+          attachments: (m.attachments ?? [])
+            .filter((a) => a.kind === "image")
+            .map((a) => {
+              const att: ChatAttachment = {
+                kind: "image",
+                plantId: a.plantId,
+                imageId: a.imageId,
+                storagePath: a.storagePath,
+              };
+              if (a.id) att.id = a.id;
+              return att;
+            }),
+        }));
       setMessages(loaded.length > 0 ? loaded : [WELCOME]);
       setThreadId(id);
+      // Reset attachment selection when switching threads — last thread's
+      // selected plant should not bleed into the new one.
+      setPendingFile(null);
+      setThreadPlantId(null);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to load thread.");
     }
@@ -233,10 +288,140 @@ export function AssistantChat({ grows }: { grows: GrowOption[] }) {
     [refreshThreads, startNewThread, threadId],
   );
 
+  // Resolves the plant id to attach images to. Sticky per thread: once
+  // resolved (either via the user picking a specific plant or the
+  // auto-created "Quick captures" inbox for the active grow) we reuse it
+  // for subsequent attachments in the same thread.
+  const resolveAttachmentPlantId = useCallback(async (): Promise<
+    string | null
+  > => {
+    if (threadPlantId) return threadPlantId;
+    if (!growId) {
+      setError(
+        "Pick a grow before attaching an image — uploads are organized per grow.",
+      );
+      return null;
+    }
+    try {
+      const res = await fetch(
+        `/api/grows/${encodeURIComponent(growId)}/quick-capture-plant`,
+        { method: "POST" },
+      );
+      if (!res.ok) {
+        const data = (await res.json().catch(() => ({}))) as {
+          error?: string;
+        };
+        setError(
+          data.error || `Failed to prepare plant for upload (${res.status}).`,
+        );
+        return null;
+      }
+      const data = (await res.json()) as { plantId?: string };
+      if (!data.plantId) {
+        setError("Server did not return a plant id for the upload.");
+        return null;
+      }
+      setThreadPlantId(data.plantId);
+      return data.plantId;
+    } catch (err) {
+      setError(
+        err instanceof Error ? err.message : "Failed to prepare attachment.",
+      );
+      return null;
+    }
+  }, [growId, threadPlantId]);
+
+  const uploadPendingAttachment = useCallback(
+    async (file: File): Promise<ChatAttachment | null> => {
+      const plantId = await resolveAttachmentPlantId();
+      if (!plantId) return null;
+
+      setAttachmentUploading(true);
+      try {
+        const signRes = await fetch("/api/uploads/sign", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            plantId,
+            fileName: file.name,
+            contentType: file.type || "image/jpeg",
+            chatThreadId: threadId,
+          }),
+        });
+        const signPayload = (await signRes.json()) as {
+          error?: string;
+          reason?: string;
+          imageId?: string;
+          storagePath?: string;
+          token?: string;
+        };
+        if (!signRes.ok) {
+          if (signPayload.reason === "video_unsupported") {
+            setError("Video uploads aren't supported yet — try an image.");
+          } else {
+            setError(signPayload.error || "Failed to prepare upload.");
+          }
+          return null;
+        }
+        if (
+          !signPayload.storagePath ||
+          !signPayload.token ||
+          !signPayload.imageId
+        ) {
+          setError("Upload signing did not return the required fields.");
+          return null;
+        }
+
+        const supabase = createSupabaseBrowserClient();
+        const { error: uploadError } = await supabase.storage
+          .from("plant-images")
+          .uploadToSignedUrl(signPayload.storagePath, signPayload.token, file, {
+            contentType: file.type || "image/jpeg",
+          });
+        if (uploadError) {
+          setError(uploadError.message);
+          return null;
+        }
+
+        // Persist the plant_images row so the existing analysis +
+        // timeline pipelines can find it.
+        const persistRes = await fetch(`/api/plants/${plantId}/images`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            imageId: signPayload.imageId,
+            storagePath: signPayload.storagePath,
+            source: "upload",
+          }),
+        });
+        if (!persistRes.ok) {
+          const data = (await persistRes.json().catch(() => ({}))) as {
+            error?: string;
+          };
+          setError(data.error || "Failed to record uploaded image.");
+          return null;
+        }
+
+        return {
+          kind: "image",
+          plantId,
+          imageId: signPayload.imageId,
+          storagePath: signPayload.storagePath,
+        };
+      } finally {
+        setAttachmentUploading(false);
+      }
+    },
+    [resolveAttachmentPlantId, threadId],
+  );
+
   const send = useCallback(
     async (text: string) => {
       const trimmed = text.trim();
-      if (!trimmed) return;
+      const hasFile = pendingFile !== null;
+      // Either text or a file is required — server allows the file-only
+      // case and synthesizes a default prompt.
+      if (!trimmed && !hasFile) return;
       // Two-phase guard against double-click / double-submit races:
       // 1. abortRef catches the case where the previous fetch hasn't yet
       //    finished and the user clicks Send (or Enter) again.
@@ -245,11 +430,37 @@ export function AssistantChat({ grows }: { grows: GrowOption[] }) {
       //    the guard relied on streaming state which is async and gives a
       //    short race window where two fetches could fire.
       if (abortRef.current) return;
+      if (attachmentUploading) return;
       const controller = new AbortController();
       abortRef.current = controller;
       setError(null);
 
-      const userMsg: Message = { id: newId(), role: "user", content: trimmed };
+      // If there's a pending file we have to upload it BEFORE we POST to
+      // /api/chat — the chat route consumes attachment refs and runs
+      // analysis inline. We deliberately do this before any UI state
+      // mutation so an upload failure leaves the composer intact for
+      // retry.
+      let uploadedAttachment: ChatAttachment | null = null;
+      if (pendingFile) {
+        uploadedAttachment = await uploadPendingAttachment(pendingFile);
+        if (!uploadedAttachment) {
+          abortRef.current = null;
+          return;
+        }
+      }
+
+      const displayText =
+        trimmed ||
+        "Please analyze this plant image and tell me what you see, including changes from prior images.";
+      const attachments: ChatAttachment[] = uploadedAttachment
+        ? [uploadedAttachment]
+        : [];
+      const userMsg: Message = {
+        id: newId(),
+        role: "user",
+        content: displayText,
+        attachments,
+      };
       const assistantId = newId();
 
       let historyToSend: Array<{ role: Role; content: string }> = [];
@@ -265,6 +476,7 @@ export function AssistantChat({ grows }: { grows: GrowOption[] }) {
         ];
       });
       setInput("");
+      setPendingFile(null);
       setStreaming(true);
 
       try {
@@ -276,6 +488,12 @@ export function AssistantChat({ grows }: { grows: GrowOption[] }) {
             history: historyToSend,
             growId,
             threadId,
+            attachments: attachments.map((a) => ({
+              kind: a.kind,
+              plantId: a.plantId,
+              imageId: a.imageId,
+              storagePath: a.storagePath,
+            })),
           }),
           signal: controller.signal,
         });
@@ -331,8 +549,62 @@ export function AssistantChat({ grows }: { grows: GrowOption[] }) {
         abortRef.current = null;
       }
     },
-    [growId, refreshThreads, threadId],
+    [
+      attachmentUploading,
+      growId,
+      pendingFile,
+      refreshThreads,
+      threadId,
+      uploadPendingAttachment,
+    ],
   );
+
+  const onFileSelected = (e: ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0] ?? null;
+    if (!file) return;
+    if (file.type.startsWith("video/")) {
+      setError("Video uploads aren't supported yet — try an image.");
+      return;
+    }
+    if (!file.type.startsWith("image/")) {
+      setError("Only image files can be attached right now.");
+      return;
+    }
+    setPendingFile(file);
+    setError(null);
+    // Allow re-selecting the same file later (browsers don't fire change
+    // for an unchanged value).
+    e.target.value = "";
+  };
+
+  const onDragEnter = (e: DragEvent<HTMLFormElement>) => {
+    if (e.dataTransfer?.types.includes("Files")) {
+      e.preventDefault();
+      setDragActive(true);
+    }
+  };
+  const onDragLeave = (e: DragEvent<HTMLFormElement>) => {
+    if (e.currentTarget === e.target) setDragActive(false);
+  };
+  const onDragOver = (e: DragEvent<HTMLFormElement>) => {
+    if (e.dataTransfer?.types.includes("Files")) e.preventDefault();
+  };
+  const onDrop = (e: DragEvent<HTMLFormElement>) => {
+    e.preventDefault();
+    setDragActive(false);
+    const file = e.dataTransfer?.files?.[0];
+    if (!file) return;
+    if (file.type.startsWith("video/")) {
+      setError("Video uploads aren't supported yet — try an image.");
+      return;
+    }
+    if (!file.type.startsWith("image/")) {
+      setError("Only image files can be attached right now.");
+      return;
+    }
+    setPendingFile(file);
+    setError(null);
+  };
 
   const onSubmit = (e: FormEvent<HTMLFormElement>) => {
     e.preventDefault();
@@ -536,43 +808,106 @@ export function AssistantChat({ grows }: { grows: GrowOption[] }) {
           <div className="mx-auto w-full max-w-3xl px-5 py-4 sm:px-6 lg:px-8">
             <form
               onSubmit={onSubmit}
-              className="flex items-end gap-2 rounded-lg border border-input bg-background p-2 shadow-elevation-1 focus-within:border-ring focus-within:ring-2 focus-within:ring-ring/40"
+              onDragEnter={onDragEnter}
+              onDragLeave={onDragLeave}
+              onDragOver={onDragOver}
+              onDrop={onDrop}
+              className={cn(
+                "flex flex-col gap-2 rounded-lg border border-input bg-background p-2 shadow-elevation-1 focus-within:border-ring focus-within:ring-2 focus-within:ring-ring/40",
+                dragActive && "border-primary ring-2 ring-primary/40",
+              )}
               aria-label="Send message"
             >
-              <label htmlFor="composer" className="sr-only">
-                Ask the copilot
-              </label>
-              <textarea
-                ref={textareaRef}
-                id="composer"
-                rows={1}
-                value={input}
-                onChange={(e) => setInput(e.target.value)}
-                onKeyDown={onKeyDown}
-                maxLength={4000}
-                placeholder="Ask about your grow — symptoms, EC, training, IPM…  (Enter to send, Shift+Enter for newline)"
-                disabled={streaming}
-                className="max-h-48 min-h-[2.5rem] flex-1 resize-none border-0 bg-transparent px-2 py-2 text-sm text-foreground placeholder:text-muted-foreground focus:outline-none disabled:cursor-not-allowed disabled:opacity-60"
+              <input
+                ref={fileInputRef}
+                type="file"
+                accept="image/jpeg,image/png,image/webp,image/heic"
+                className="sr-only"
+                onChange={onFileSelected}
+                aria-label="Attach a plant image"
               />
-              {streaming ? (
-                <Button
-                  type="button"
-                  variant="outline"
-                  size="md"
-                  onClick={stop}
-                >
-                  Stop
-                </Button>
-              ) : (
-                <Button
-                  type="submit"
-                  size="md"
-                  disabled={!input.trim()}
-                  rightIcon={<SendIcon width={14} height={14} />}
-                >
-                  Send
-                </Button>
+              {pendingFile && (
+                <div className="flex items-center gap-2 rounded-md border border-border bg-muted/40 px-2 py-1.5 text-xs">
+                  <span aria-hidden>📷</span>
+                  <span
+                    className="truncate font-medium"
+                    title={pendingFile.name}
+                  >
+                    {pendingFile.name}
+                  </span>
+                  <span className="text-muted-foreground">
+                    {(pendingFile.size / 1024).toFixed(0)} KB
+                  </span>
+                  {attachmentUploading && (
+                    <span className="text-muted-foreground">uploading…</span>
+                  )}
+                  <button
+                    type="button"
+                    onClick={() => setPendingFile(null)}
+                    aria-label="Remove attachment"
+                    disabled={attachmentUploading || streaming}
+                    className="ml-auto rounded p-0.5 text-muted-foreground hover:bg-muted hover:text-foreground disabled:opacity-50"
+                  >
+                    ×
+                  </button>
+                </div>
               )}
+              <div className="flex items-end gap-2">
+                <button
+                  type="button"
+                  onClick={() => fileInputRef.current?.click()}
+                  disabled={streaming || attachmentUploading}
+                  className="inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-md text-muted-foreground transition hover:bg-muted hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:opacity-50"
+                  aria-label="Attach an image"
+                  title={
+                    growId
+                      ? "Attach a plant image"
+                      : "Pick a grow first to attach an image"
+                  }
+                >
+                  <span className="text-lg leading-none">📎</span>
+                </button>
+                <label htmlFor="composer" className="sr-only">
+                  Ask the copilot
+                </label>
+                <textarea
+                  ref={textareaRef}
+                  id="composer"
+                  rows={1}
+                  value={input}
+                  onChange={(e) => setInput(e.target.value)}
+                  onKeyDown={onKeyDown}
+                  maxLength={4000}
+                  placeholder={
+                    pendingFile
+                      ? "Add an optional note about the image…"
+                      : "Ask about your grow — symptoms, EC, training, IPM…  (Enter to send, Shift+Enter for newline). Drag in an image to analyze it."
+                  }
+                  disabled={streaming}
+                  className="max-h-48 min-h-[2.5rem] flex-1 resize-none border-0 bg-transparent px-2 py-2 text-sm text-foreground placeholder:text-muted-foreground focus:outline-none disabled:cursor-not-allowed disabled:opacity-60"
+                />
+                {streaming ? (
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="md"
+                    onClick={stop}
+                  >
+                    Stop
+                  </Button>
+                ) : (
+                  <Button
+                    type="submit"
+                    size="md"
+                    disabled={
+                      attachmentUploading || (!input.trim() && !pendingFile)
+                    }
+                    rightIcon={<SendIcon width={14} height={14} />}
+                  >
+                    Send
+                  </Button>
+                )}
+              </div>
             </form>
             <p className="mt-2 text-center text-[11px] text-muted-foreground">
               Replies are generated by AI grounded in your grow data. Verify
@@ -605,7 +940,24 @@ function ChatBubble({
     );
   } else if (isUser) {
     rendered = (
-      <span className="whitespace-pre-wrap break-words">{message.content}</span>
+      <div className="space-y-2">
+        {message.attachments && message.attachments.length > 0 && (
+          <div className="flex flex-wrap gap-1.5">
+            {message.attachments.map((a, idx) => (
+              <span
+                key={a.id ?? `${a.imageId}-${idx}`}
+                className="inline-flex items-center gap-1 rounded-md bg-primary/20 px-2 py-0.5 text-[11px] font-medium text-primary-foreground/90"
+                title={`Image ${a.imageId}`}
+              >
+                <span aria-hidden>📷</span> image attached
+              </span>
+            ))}
+          </div>
+        )}
+        <span className="whitespace-pre-wrap break-words">
+          {message.content}
+        </span>
+      </div>
     );
   } else {
     rendered = (

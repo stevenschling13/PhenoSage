@@ -10,6 +10,7 @@ import {
   SparkIcon,
   TimelineIcon,
 } from "@/components/icons";
+import { LiveAnalysisRefresher } from "@/components/live-analysis-refresher";
 import { UploadPhotoPanel } from "@/components/upload-photo-panel";
 import { Badge } from "@/components/ui/badge";
 import { buttonStyles } from "@/components/ui/button";
@@ -532,6 +533,7 @@ export default async function PlantPage({ params }: Props) {
           </Card>
         </div>
       </section>
+      <LiveAnalysisRefresher growIds={[context.growId]} />
     </main>
   );
 }

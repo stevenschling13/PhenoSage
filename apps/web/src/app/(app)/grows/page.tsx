@@ -18,6 +18,7 @@ import {
 import { EmptyState } from "@/components/ui/empty-state";
 import { PageHeader } from "@/components/ui/page-header";
 import { getWorkspaceOverview } from "@/lib/server/workspace-overview";
+import { LiveAnalysisRefresher } from "@/components/live-analysis-refresher";
 
 export const metadata: Metadata = { title: "Grows" };
 
@@ -237,6 +238,7 @@ export default async function GrowsPage() {
           </CardContent>
         </Card>
       </section>
+      <LiveAnalysisRefresher growIds={overview.grows.map((g) => g.id)} />
     </main>
   );
 }

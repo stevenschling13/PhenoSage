@@ -48,6 +48,7 @@ export async function POST(request: NextRequest) {
     takenAt?: string;
     source?: "camera" | "upload";
     notes?: string;
+    chatThreadId?: string;
   };
 
   if (!body.plantId || !body.fileName || !body.contentType) {
@@ -55,6 +56,24 @@ export async function POST(request: NextRequest) {
       NextResponse.json(
         { error: "plantId, fileName, and contentType are required", requestId },
         { status: 400 },
+      ),
+      requestId,
+    );
+  }
+
+  // Explicitly recognise (and reject) video MIME types with a structured
+  // reason code so the chat UI can render a "video coming soon" affordance
+  // instead of a generic "Unsupported content type" toast. Video support
+  // requires frame-extraction infrastructure not yet in place.
+  if (body.contentType.startsWith("video/")) {
+    return attachRequestId(
+      NextResponse.json(
+        {
+          error: "Video uploads are not yet supported.",
+          reason: "video_unsupported",
+          requestId,
+        },
+        { status: 415 },
       ),
       requestId,
     );
@@ -91,7 +110,11 @@ export async function POST(request: NextRequest) {
     }
 
     return attachRequestId(
-      NextResponse.json({ ...prepared, requestId }),
+      NextResponse.json({
+        ...prepared,
+        chatThreadId: body.chatThreadId ?? null,
+        requestId,
+      }),
       requestId,
     );
   } catch (error) {
