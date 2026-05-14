@@ -13,6 +13,7 @@ from app.config import settings
 from app.errors import (
     AnalysisError,
     ConfigurationError,
+    InvalidStoragePath,
     ModelBadResponse,
     ModelRateLimited,
     ModelUnavailable,
@@ -46,7 +47,7 @@ def _sanitize_storage_path(storage_path: str) -> str:
         or "#" in path
         or not _STORAGE_PATH_PATTERN.fullmatch(path)
     ):
-        raise AnalysisError("Invalid storage path.", code="invalid_storage_path")
+        raise InvalidStoragePath()
     return quote(path, safe="/-._~")
 
 

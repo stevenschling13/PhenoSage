@@ -61,6 +61,20 @@ class ModelBadResponse(AnalysisError):
     default_message = "The analysis model returned an unexpected response."
 
 
+class InvalidStoragePath(AnalysisError):
+    """The supplied storage path failed defence-in-depth sanitisation.
+
+    The Pydantic validator on AnalyzeRequest is the primary guard; this is
+    raised by the storage fetcher's own check so an internal caller that
+    bypasses the API model still cannot smuggle a crafted URL through.
+    """
+
+    code = "INVALID_STORAGE_PATH"
+    status_code = 400
+    retryable = False
+    default_message = "Invalid storage path."
+
+
 class ConfigurationError(AnalysisError):
     """Required configuration (env, credentials) is missing or invalid.
 
@@ -77,6 +91,7 @@ class ConfigurationError(AnalysisError):
 __all__ = [
     "AnalysisError",
     "ConfigurationError",
+    "InvalidStoragePath",
     "ModelBadResponse",
     "ModelRateLimited",
     "ModelUnavailable",
