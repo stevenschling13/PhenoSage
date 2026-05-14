@@ -61,7 +61,11 @@ describe("POST /api/plants/[plantId]/analyze", () => {
     getServerSession.mockResolvedValue(null);
     const res = await POST(jsonRequest({}), makeParams("p1"));
     expect(res.status).toBe(401);
-    expect((await res.json()).error).toBe("Unauthorized");
+    const body = await res.json();
+    expect(body.error).toMatchObject({
+      code: "UNAUTHORIZED",
+      message: "Unauthorized",
+    });
     expect(runAndPersistPlantAnalysis).not.toHaveBeenCalled();
   });
 
@@ -70,7 +74,10 @@ describe("POST /api/plants/[plantId]/analyze", () => {
     rateLimit.mockReturnValue({ ok: false });
     const res = await POST(jsonRequest({}), makeParams("p1"));
     expect(res.status).toBe(429);
-    expect((await res.json()).error).toMatch(/Too many/);
+    const body = await res.json();
+    expect(body.error.code).toBe("RATE_LIMITED");
+    expect(body.error.message).toMatch(/Too many/);
+    expect(res.headers.get("Retry-After")).toBe("30");
     expect(runAndPersistPlantAnalysis).not.toHaveBeenCalled();
   });
 
@@ -79,7 +86,9 @@ describe("POST /api/plants/[plantId]/analyze", () => {
     runAndPersistPlantAnalysis.mockResolvedValue(null);
     const res = await POST(jsonRequest({}), makeParams("missing"));
     expect(res.status).toBe(404);
-    expect((await res.json()).error).toBe("Plant not found or access denied");
+    const body = await res.json();
+    expect(body.error.code).toBe("NOT_FOUND");
+    expect(body.error.message).toBe("Plant not found or access denied");
   });
 
   it("returns 404 when the plant has no images to analyze", async () => {
@@ -87,7 +96,8 @@ describe("POST /api/plants/[plantId]/analyze", () => {
     runAndPersistPlantAnalysis.mockResolvedValue({ analysis: null });
     const res = await POST(jsonRequest({}), makeParams("p1"));
     expect(res.status).toBe(404);
-    expect((await res.json()).error).toMatch(/No plant images/);
+    const body = await res.json();
+    expect(body.error.message).toMatch(/No plant images/);
   });
 
   it("returns the analysis when it succeeds", async () => {
@@ -129,12 +139,21 @@ describe("POST /api/plants/[plantId]/analyze", () => {
     expect(callArg).not.toHaveProperty("imageId");
   });
 
-  it("returns 500 with the error message when the analysis throws", async () => {
+  it("returns 500 with a safe generic message when the analysis throws", async () => {
     getServerSession.mockResolvedValue(SESSION_OK);
-    runAndPersistPlantAnalysis.mockRejectedValue(new Error("openai down"));
+    // The underlying error mentions an upstream — must NOT leak to the
+    // client envelope. The browser should only see the generic message.
+    runAndPersistPlantAnalysis.mockRejectedValue(
+      new Error("openai down: fetch failed at https://api.openai.com"),
+    );
     const res = await POST(jsonRequest({}), makeParams("p1"));
     expect(res.status).toBe(500);
-    expect((await res.json()).error).toBe("openai down");
+    const body = await res.json();
+    expect(body.error.code).toBe("INTERNAL_ERROR");
+    expect(body.error.message).toBe("Plant analysis failed. Please try again.");
+    // Critical: the raw upstream message is NOT echoed back.
+    expect(JSON.stringify(body)).not.toMatch(/openai down/);
+    expect(JSON.stringify(body)).not.toMatch(/fetch failed/);
   });
 
   it("propagates an incoming x-request-id on the response", async () => {

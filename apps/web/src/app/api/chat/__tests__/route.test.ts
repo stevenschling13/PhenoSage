@@ -511,6 +511,33 @@ describe("POST /api/chat", () => {
     expect(body.error).not.toMatch(new RegExp(internalErrorText));
   });
 
+  it("does NOT leak any aiEnvInventory or env-var name list when ai_unconfigured", async () => {
+    // Phase-1 security fix: even when the deployment is missing the AI
+    // credential, we must not enumerate which env-var names exist on the
+    // box (that's a deployment fingerprint). The inventory still goes to
+    // the SERVER LOG via logServerEvent — the client envelope must not
+    // carry it.
+    getServerSession.mockResolvedValue({ user: { id: "u1" } });
+    createThread.mockResolvedValue("thread_a");
+    getAIClient.mockImplementation(() => {
+      throw new Error("GEMINI_API_KEY env var missing");
+    });
+    process.env["DECOY_AI_API_KEY"] = "x";
+    try {
+      const res = await POST(jsonRequest({ message: "hi" }));
+      expect(res.status).toBe(500);
+      const raw = await res.text();
+      const body = JSON.parse(raw) as Record<string, unknown>;
+      expect(body).not.toHaveProperty("aiEnvInventory");
+      // Belt-and-braces: the env-var name we planted must not appear in
+      // the envelope anywhere (e.g. embedded into the message string).
+      expect(raw).not.toMatch(/DECOY_AI_API_KEY/);
+      expect(body.reason).toBe("ai_unconfigured");
+    } finally {
+      delete process.env["DECOY_AI_API_KEY"];
+    }
+  });
+
   it("sets no-buffer streaming headers so intermediaries cannot pool the response", async () => {
     // Without these headers Vercel's edge / nginx-style proxies will
     // buffer the entire model response and flush it as a single chunk,

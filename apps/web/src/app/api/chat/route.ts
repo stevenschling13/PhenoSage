@@ -783,11 +783,10 @@ export async function POST(request: NextRequest) {
     }
     // For ai_unconfigured specifically, gather a presence-only inventory of
     // env-var NAMES (never values) that look like they might hold an AI
-    // credential. This is safe to surface — names are already in the public
-    // .env.example — and it lets the operator instantly see what name they
-    // actually used on Vercel without having to ssh into a function or read
-    // server logs. Names like "FOO_API_KEY" obey the same redaction posture
-    // as anything else in the repo.
+    // credential. SERVER-LOG ONLY — names like "FOO_API_KEY" obey the same
+    // redaction posture as anything else in the repo, but we no longer
+    // surface this list in the response body. Browser-visible envelopes must
+    // not enumerate which env-var names exist on the deployment.
     let aiEnvInventory: string[] | undefined;
     if (reason === "ai_unconfigured") {
       const NEEDLE =
@@ -824,17 +823,14 @@ export async function POST(request: NextRequest) {
     const buildShaShort = buildSha.slice(0, 7);
     let userFacing: string;
     if (reason === "ai_unconfigured") {
-      const found =
-        aiEnvInventory && aiEnvInventory.length > 0
-          ? aiEnvInventory.join(", ")
-          : "none";
+      // Do NOT leak which env-var names are present — that's a fingerprint
+      // of the deployment configuration. Operators can correlate via the
+      // requestId in the server log (which still carries `aiEnvInventory`)
+      // or hit the dedicated `/api/chat/diag` route which gates on auth.
       userFacing =
         `Chat request failed (ai_unconfigured, request ${requestId}, build ${buildShaShort}). ` +
-        `No GEMINI_API_KEY / GOOGLE_GENERATIVE_AI_API_KEY / GOOGLE_API_KEY ` +
-        `is set in this deployment's runtime env. Key-shaped vars present: ${found}. ` +
-        `Add the key under one of those three names in Vercel → Settings → ` +
-        `Environment Variables → Production, then redeploy. ` +
-        `Visit /api/chat/diag for a live env-presence check.`;
+        `The AI provider is not configured for this deployment. ` +
+        `Please contact the site operator.`;
     } else if (reason) {
       userFacing = `Chat request failed (${reason}, request ${requestId}, build ${buildShaShort}). Please contact the site operator.`;
     } else {
@@ -847,7 +843,6 @@ export async function POST(request: NextRequest) {
           requestId,
           reason,
           buildSha,
-          ...(aiEnvInventory ? { aiEnvInventory } : {}),
         },
         { status: 500 },
       ),

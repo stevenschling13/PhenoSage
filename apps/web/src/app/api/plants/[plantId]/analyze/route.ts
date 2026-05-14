@@ -1,5 +1,6 @@
-import { NextRequest, NextResponse } from "next/server";
+import { NextRequest } from "next/server";
 import { getServerSession, getServerUser } from "@/lib/server/auth";
+import { apiError } from "@/lib/server/api-errors";
 import { runAndPersistPlantAnalysis } from "@/lib/server/plants";
 import { rateLimit, rateLimitKeyFromRequest } from "@/lib/server/rate-limit";
 import {
@@ -7,6 +8,7 @@ import {
   getOrCreateRequestId,
   logServerEvent,
 } from "@/lib/server/request-id";
+import { NextResponse } from "next/server";
 
 interface RouteParams {
   params: Promise<{ plantId: string }>;
@@ -16,10 +18,7 @@ export async function POST(request: NextRequest, { params }: RouteParams) {
   const requestId = getOrCreateRequestId(request);
   const session = await getServerSession();
   if (!session) {
-    return attachRequestId(
-      NextResponse.json({ error: "Unauthorized", requestId }, { status: 401 }),
-      requestId,
-    );
+    return apiError(401, "UNAUTHORIZED", "Unauthorized", requestId);
   }
 
   const user = await getServerUser();
@@ -29,15 +28,12 @@ export async function POST(request: NextRequest, { params }: RouteParams) {
     windowMs: 60_000,
   });
   if (!rate.ok) {
-    return attachRequestId(
-      NextResponse.json(
-        {
-          error: "Too many analysis requests. Try again shortly.",
-          requestId,
-        },
-        { status: 429 },
-      ),
+    return apiError(
+      429,
+      "RATE_LIMITED",
+      "Too many analysis requests. Try again shortly.",
       requestId,
+      { retryAfterSeconds: 30 },
     );
   }
 
@@ -52,21 +48,19 @@ export async function POST(request: NextRequest, { params }: RouteParams) {
     });
 
     if (!result) {
-      return attachRequestId(
-        NextResponse.json(
-          { error: "Plant not found or access denied", requestId },
-          { status: 404 },
-        ),
+      return apiError(
+        404,
+        "NOT_FOUND",
+        "Plant not found or access denied",
         requestId,
       );
     }
 
     if (!result.analysis) {
-      return attachRequestId(
-        NextResponse.json(
-          { error: "No plant images are available to analyze", requestId },
-          { status: 404 },
-        ),
+      return apiError(
+        404,
+        "NOT_FOUND",
+        "No plant images are available to analyze",
         requestId,
       );
     }
@@ -76,21 +70,19 @@ export async function POST(request: NextRequest, { params }: RouteParams) {
       requestId,
     );
   } catch (error) {
+    // Log the underlying cause for operators but never echo the raw exception
+    // text to the browser — it can include "fetch failed", upstream URLs, env
+    // variable names, or stack-trace fragments.
     logServerEvent("error", "plant analysis failed", {
       requestId,
       plantId,
       imageId: body.imageId,
       error: error instanceof Error ? error.message : "unknown_error",
     });
-    return attachRequestId(
-      NextResponse.json(
-        {
-          error:
-            error instanceof Error ? error.message : "Plant analysis failed",
-          requestId,
-        },
-        { status: 500 },
-      ),
+    return apiError(
+      500,
+      "INTERNAL_ERROR",
+      "Plant analysis failed. Please try again.",
       requestId,
     );
   }

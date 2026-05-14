@@ -30,6 +30,10 @@ describe("apiError", () => {
       "UNSUPPORTED_MEDIA_TYPE",
       "UNPROCESSABLE_ENTITY",
       "RATE_LIMITED",
+      "UPSTREAM_TIMEOUT",
+      "UPSTREAM_RATE_LIMITED",
+      "UPSTREAM_UNAVAILABLE",
+      "CONFIGURATION_ERROR",
       "INTERNAL_ERROR",
     ] as const;
     for (const code of codes) {
@@ -38,5 +42,25 @@ describe("apiError", () => {
       expect(parsed.success).toBe(true);
       if (parsed.success) expect(parsed.data.error.code).toBe(code);
     }
+  });
+
+  it("attaches Retry-After when retryAfterSeconds is provided", () => {
+    const r = apiError(429, "RATE_LIMITED", "Slow down", "req_x", {
+      retryAfterSeconds: 7,
+    });
+    expect(r.status).toBe(429);
+    expect(r.headers.get("Retry-After")).toBe("7");
+  });
+
+  it("rounds up fractional Retry-After values and rejects negatives", () => {
+    const positive = apiError(503, "UPSTREAM_UNAVAILABLE", "down", "req_y", {
+      retryAfterSeconds: 1.2,
+    });
+    expect(positive.headers.get("Retry-After")).toBe("2");
+
+    const negative = apiError(503, "UPSTREAM_UNAVAILABLE", "down", "req_z", {
+      retryAfterSeconds: -1,
+    });
+    expect(negative.headers.get("Retry-After")).toBeNull();
   });
 });
