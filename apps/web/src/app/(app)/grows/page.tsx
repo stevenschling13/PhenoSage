@@ -22,9 +22,34 @@ import { LiveAnalysisRefresher } from "@/components/live-analysis-refresher";
 
 export const metadata: Metadata = { title: "Grows" };
 
-export default async function GrowsPage() {
+interface GrowsPageProps {
+  searchParams?: Promise<{
+    growId?: string | string[] | undefined;
+    just_added?: string | string[] | undefined;
+  }>;
+}
+
+function firstParam(value: string | string[] | undefined): string {
+  if (Array.isArray(value)) return value[0] ?? "";
+  return value ?? "";
+}
+
+export default async function GrowsPage({ searchParams }: GrowsPageProps) {
   const overview = await getWorkspaceOverview();
   const hasGrows = overview.grows.length > 0;
+
+  const resolvedParams = searchParams ? await searchParams : undefined;
+  const justAddedRaw = firstParam(resolvedParams?.just_added);
+  const justAddedCount =
+    /^\d+$/.test(justAddedRaw) &&
+    Number(justAddedRaw) >= 1 &&
+    Number(justAddedRaw) <= 100
+      ? Number(justAddedRaw)
+      : 0;
+  const justAddedGrowId = firstParam(resolvedParams?.growId);
+  const justAddedGrowName = justAddedCount
+    ? (overview.grows.find((g) => g.id === justAddedGrowId)?.name ?? null)
+    : null;
 
   return (
     <main className="app-page">
@@ -50,6 +75,23 @@ export default async function GrowsPage() {
         eyebrow={<Badge tone="accent">Workspace map</Badge>}
         title="Grow registry"
       />
+
+      {justAddedCount > 0 ? (
+        <div
+          aria-live="polite"
+          className="rounded-[1.15rem] border border-success/40 bg-success/10 px-4 py-4 text-sm leading-6 text-foreground"
+          role="status"
+        >
+          <p className="font-medium">
+            Added {justAddedCount} plant{justAddedCount === 1 ? "" : "s"}
+            {justAddedGrowName ? ` to "${justAddedGrowName}"` : ""}.
+          </p>
+          <p className="mt-1 text-muted-foreground">
+            Occupancy below is up to date. Open any plant card to start a photo
+            timeline.
+          </p>
+        </div>
+      ) : null}
 
       <section className="grid gap-6 xl:grid-cols-[minmax(0,1.4fr)_minmax(340px,0.9fr)]">
         <Card>

@@ -2,17 +2,33 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const mocks = vi.hoisted(() => {
   const maybeSingle = vi.fn();
-  const insertSingle = vi.fn();
+  // Bulk insert chain: .from('plants').insert(rows).select('id')  →  thenable.
+  // Make `select` a thenable that resolves to whatever the test queued.
+  const insertSelectResult = vi.fn();
 
   const growBuilder = {
     select: vi.fn(() => growBuilder),
     eq: vi.fn(() => growBuilder),
     maybeSingle,
   };
+
+  const plantInsertBuilder = {
+    select: (..._args: unknown[]) => ({
+      then: (
+        onFulfilled: (_v: unknown) => unknown,
+        onRejected?: (_e: unknown) => unknown,
+      ) => Promise.resolve(insertSelectResult()).then(onFulfilled, onRejected),
+    }),
+  };
+
+  let lastInsertRows: unknown[] = [];
   const plantBuilder = {
-    insert: vi.fn(() => plantBuilder),
-    select: vi.fn(() => plantBuilder),
-    single: insertSingle,
+    insert: vi.fn((rows: unknown) => {
+      lastInsertRows = Array.isArray(rows) ? rows : [rows];
+      return plantInsertBuilder;
+    }),
+    // expose last insert payload to tests
+    _lastRows: () => lastInsertRows,
   };
 
   const from = vi.fn((table: string) => {
@@ -27,7 +43,7 @@ const mocks = vi.hoisted(() => {
   const logServerEvent = vi.fn();
   return {
     maybeSingle,
-    insertSingle,
+    insertSelectResult,
     growBuilder,
     plantBuilder,
     from,
@@ -70,7 +86,7 @@ function buildFormData(overrides: Record<string, string> = {}): FormData {
 describe("createPlantAction", () => {
   beforeEach(() => {
     mocks.maybeSingle.mockReset();
-    mocks.insertSingle.mockReset();
+    mocks.insertSelectResult.mockReset();
     mocks.from.mockClear();
     mocks.createSupabaseServerClient
       .mockReset()
@@ -80,19 +96,127 @@ describe("createPlantAction", () => {
     mocks.logServerEvent.mockReset();
   });
 
-  it("returns success with redirectTo on a clean insert", async () => {
+  it("returns success with redirectTo on a clean single insert", async () => {
     mocks.maybeSingle.mockResolvedValue({
       data: { id: "grow-1" },
       error: null,
     });
-    mocks.insertSingle.mockResolvedValue({
-      data: { id: "plant-9" },
+    mocks.insertSelectResult.mockReturnValue({
+      data: [{ id: "plant-9" }],
       error: null,
     });
     const result = await createPlantAction(buildFormData());
     expect(result.status).toBe("success");
     expect(result.redirectTo).toBe("/plants/plant-9");
     expect(mocks.revalidatePath).toHaveBeenCalledWith("/plants");
+  });
+
+  it("bulk-creates N plants with zero-padded numeric suffixes and redirects to the registry", async () => {
+    mocks.maybeSingle.mockResolvedValue({
+      data: { id: "grow-1" },
+      error: null,
+    });
+    mocks.insertSelectResult.mockReturnValue({
+      data: [
+        { id: "p-01" },
+        { id: "p-02" },
+        { id: "p-03" },
+        { id: "p-04" },
+        { id: "p-05" },
+      ],
+      error: null,
+    });
+    const result = await createPlantAction(
+      buildFormData({ count: "5", name: "Plant" }),
+    );
+    expect(result.status).toBe("success");
+    expect(result.redirectTo).toBe("/grows?just_added=5&growId=grow-1");
+    expect(result.message).toMatch(/5 plants created/i);
+
+    // Verify the insert payload had the auto-numbered names.
+    const rows = (
+      mocks.plantBuilder as unknown as {
+        _lastRows: () => Array<{ name: string }>;
+      }
+    )._lastRows();
+    expect(rows.map((r) => r.name)).toEqual([
+      "Plant 1",
+      "Plant 2",
+      "Plant 3",
+      "Plant 4",
+      "Plant 5",
+    ]);
+  });
+
+  it("zero-pads to two digits when bulk count >= 10", async () => {
+    mocks.maybeSingle.mockResolvedValue({
+      data: { id: "grow-1" },
+      error: null,
+    });
+    mocks.insertSelectResult.mockReturnValue({
+      data: Array.from({ length: 10 }, (_, i) => ({ id: `p-${i + 1}` })),
+      error: null,
+    });
+    await createPlantAction(buildFormData({ count: "10", name: "NL" }));
+    const rows = (
+      mocks.plantBuilder as unknown as {
+        _lastRows: () => Array<{ name: string }>;
+      }
+    )._lastRows();
+    expect(rows.map((r) => r.name)).toEqual([
+      "NL 01",
+      "NL 02",
+      "NL 03",
+      "NL 04",
+      "NL 05",
+      "NL 06",
+      "NL 07",
+      "NL 08",
+      "NL 09",
+      "NL 10",
+    ]);
+  });
+
+  it("rejects bulk count above the cap", async () => {
+    const result = await createPlantAction(
+      buildFormData({ count: "100", name: "Plant" }),
+    );
+    expect(result.status).toBe("error");
+    expect(result.fieldErrors?.count).toBeTruthy();
+    expect(mocks.maybeSingle).not.toHaveBeenCalled();
+  });
+
+  it("rejects non-numeric count input", async () => {
+    const result = await createPlantAction(
+      buildFormData({ count: "abc", name: "Plant" }),
+    );
+    expect(result.status).toBe("error");
+    expect(result.fieldErrors?.count).toBeTruthy();
+  });
+
+  it("flags an overly long name prefix that would break the 120-char cap when suffixed", async () => {
+    const longName = "x".repeat(118);
+    const result = await createPlantAction(
+      buildFormData({ count: "5", name: longName }),
+    );
+    expect(result.status).toBe("error");
+    expect(result.fieldErrors?.name).toBeTruthy();
+  });
+
+  it("returns a bulk-tailored duplicate-name message on 23505 when count > 1", async () => {
+    mocks.maybeSingle.mockResolvedValue({
+      data: { id: "grow-1" },
+      error: null,
+    });
+    mocks.insertSelectResult.mockReturnValue({
+      data: null,
+      error: { message: "dup", code: "23505" },
+    });
+    const result = await createPlantAction(
+      buildFormData({ count: "3", name: "Plant" }),
+    );
+    expect(result.status).toBe("error");
+    expect(result.message).toMatch(/generated plant names already exists/i);
   });
 
   it("returns a structured error when the grow lookup fails", async () => {
@@ -118,7 +242,7 @@ describe("createPlantAction", () => {
       data: { id: "grow-1" },
       error: null,
     });
-    mocks.insertSingle.mockResolvedValue({
+    mocks.insertSelectResult.mockReturnValue({
       data: null,
       error: { message: "dup", code: "23505" },
     });

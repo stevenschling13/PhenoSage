@@ -11,8 +11,10 @@ import {
   createPlantActionInitialState,
   type CreatePlantActionResult,
 } from "../actions";
+import { MAX_BULK_PLANT_COUNT } from "../constants";
 
 const FIELD_META = {
+  count: { label: "How many plants", targetId: "plant-count" },
   growId: { label: "Grow", targetId: "plant-grow" },
   name: { label: "Plant name", targetId: "plant-name" },
 } as const;
@@ -59,6 +61,24 @@ export function PlantForm({
   const [strain, setStrain] = useState("");
   const [batchLabel, setBatchLabel] = useState("");
   const [notes, setNotes] = useState("");
+  const [count, setCount] = useState(1);
+  const isBulk = count > 1;
+  const pad = count >= 10 ? 2 : 1;
+  const trimmedName = name.trim();
+  const previewBase = trimmedName || "Plant";
+  const bulkPreview = isBulk
+    ? [
+        `${previewBase} ${String(1).padStart(pad, "0")}`,
+        `${previewBase} ${String(2).padStart(pad, "0")}`,
+        count > 3
+          ? `…through ${previewBase} ${String(count).padStart(pad, "0")}`
+          : count === 3
+            ? `${previewBase} ${String(3).padStart(pad, "0")}`
+            : null,
+      ]
+        .filter(Boolean)
+        .join(", ")
+    : "";
 
   async function handleAction(formData: FormData) {
     startTransition(async () => {
@@ -118,29 +138,77 @@ export function PlantForm({
         <FieldError fieldId="plant-grow" message={state.fieldErrors?.growId} />
       </div>
 
-      <div>
-        <label
-          className="block text-sm font-medium text-foreground"
-          htmlFor="plant-name"
-        >
-          Plant name
-        </label>
-        <input
-          aria-describedby={describedBy(
-            "plant-name",
-            Boolean(state.fieldErrors?.name),
-          )}
-          aria-invalid={Boolean(state.fieldErrors?.name) || undefined}
-          className={inputClassName}
-          id="plant-name"
-          maxLength={120}
-          name="name"
-          onChange={(event) => setName(event.target.value)}
-          placeholder="Plant 01"
-          required
-          value={name}
-        />
-        <FieldError fieldId="plant-name" message={state.fieldErrors?.name} />
+      <div className="grid gap-5 md:grid-cols-[minmax(0,2fr)_minmax(0,1fr)]">
+        <div>
+          <label
+            className="block text-sm font-medium text-foreground"
+            htmlFor="plant-name"
+          >
+            {isBulk ? "Name prefix" : "Plant name"}
+          </label>
+          <input
+            aria-describedby={describedBy(
+              "plant-name",
+              Boolean(state.fieldErrors?.name),
+            )}
+            aria-invalid={Boolean(state.fieldErrors?.name) || undefined}
+            className={inputClassName}
+            id="plant-name"
+            maxLength={120}
+            name="name"
+            onChange={(event) => setName(event.target.value)}
+            placeholder={isBulk ? "Plant" : "Plant 01"}
+            required
+            value={name}
+          />
+          <FieldError fieldId="plant-name" message={state.fieldErrors?.name} />
+          {isBulk ? (
+            <p className="mt-2 text-xs leading-5 text-muted-foreground">
+              Each plant gets a zero-padded number appended — e.g. {bulkPreview}
+              .
+            </p>
+          ) : null}
+        </div>
+
+        <div>
+          <label
+            className="block text-sm font-medium text-foreground"
+            htmlFor="plant-count"
+          >
+            How many plants?
+          </label>
+          <input
+            aria-describedby={describedBy(
+              "plant-count",
+              Boolean(state.fieldErrors?.count),
+            )}
+            aria-invalid={Boolean(state.fieldErrors?.count) || undefined}
+            className={inputClassName}
+            id="plant-count"
+            inputMode="numeric"
+            max={MAX_BULK_PLANT_COUNT}
+            min={1}
+            name="count"
+            onChange={(event) => {
+              const next = Number(event.target.value);
+              if (Number.isInteger(next) && next >= 1) {
+                setCount(Math.min(next, MAX_BULK_PLANT_COUNT));
+              } else if (event.target.value === "") {
+                setCount(1);
+              }
+            }}
+            type="number"
+            value={count}
+          />
+          <FieldError
+            fieldId="plant-count"
+            message={state.fieldErrors?.count}
+          />
+          <p className="mt-2 text-xs leading-5 text-muted-foreground">
+            Up to {MAX_BULK_PLANT_COUNT} at once. Strain, batch, and notes apply
+            to every plant.
+          </p>
+        </div>
       </div>
 
       <div className="grid gap-5 md:grid-cols-2">
@@ -197,8 +265,17 @@ export function PlantForm({
       </div>
 
       <div className="flex flex-wrap items-center justify-between gap-3 border-t border-border/70 pt-5">
-        <p className="text-sm leading-6 text-muted-foreground">
-          The new plant opens directly into its upload and timeline workspace.
+        <p
+          aria-live="polite"
+          className="text-sm leading-6 text-muted-foreground"
+        >
+          {isPending
+            ? isBulk
+              ? `Creating ${count} plants...`
+              : "Creating plant..."
+            : isBulk
+              ? `${count} plants will be created and you'll land back on the grow registry.`
+              : "The new plant opens directly into its upload and timeline workspace."}
         </p>
         <div className="flex flex-wrap gap-3">
           <Link
@@ -213,7 +290,13 @@ export function PlantForm({
             size="md"
             type="submit"
           >
-            {isPending ? "Creating plant..." : "Create plant"}
+            {isPending
+              ? isBulk
+                ? `Creating ${count} plants...`
+                : "Creating plant..."
+              : isBulk
+                ? `Create ${count} plants`
+                : "Create plant"}
           </Button>
         </div>
       </div>
