@@ -34,7 +34,7 @@ type ListResult = {
 //   .from(t).select(...).order(...).order(...).limit(...).eq(...).in(...)
 // The final awaited value is `result`. Chain methods are all idempotent
 // (return the same chainable proxy) so callers can mix and match.
-type SelectChainKey = "select" | "order" | "limit" | "eq" | "in";
+type SelectChainKey = "select" | "order" | "limit" | "eq" | "in" | "or";
 type SelectChain = Record<SelectChainKey, ReturnType<typeof vi.fn>> &
   PromiseLike<ListResult>;
 
@@ -43,11 +43,12 @@ function makeSelectChainMock(result: ListResult) {
     eq: [],
     in: [],
     limit: [],
+    or: [],
     order: [],
     select: [],
   };
   const chain = {} as SelectChain;
-  const KEYS: SelectChainKey[] = ["select", "order", "limit", "eq", "in"];
+  const KEYS: SelectChainKey[] = ["select", "order", "limit", "eq", "in", "or"];
   for (const key of KEYS) {
     chain[key] = vi.fn((...args: unknown[]) => {
       calls[key].push(args);
@@ -2084,5 +2085,197 @@ describe("chat-tools — trigger_plant_analysis", () => {
 
     expect(result).toEqual({ error: "not authenticated", ok: false });
     expect(runAndPersistPlantAnalysis).not.toHaveBeenCalled();
+  });
+});
+
+describe("chat-tools — find_grow", () => {
+  beforeEach(() => {
+    createSupabaseServerClient.mockReset();
+    logServerEvent.mockReset();
+  });
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  it("is exposed in the tool list and requires only query", () => {
+    const def = CHAT_TOOL_DEFINITIONS.find(
+      (t) => t.function.name === "find_grow",
+    );
+    expect(def).toBeDefined();
+    expect(def?.function.parameters).toMatchObject({ required: ["query"] });
+  });
+
+  it("ILIKE-searches name + description and excludes archived by default", async () => {
+    const { client, calls, from } = makeSelectChainMock({
+      data: [{ id: "g-1", name: "North Tent A" }],
+      error: null,
+    });
+    createSupabaseServerClient.mockResolvedValue(client);
+
+    const result = await executeChatTool(
+      "find_grow",
+      { query: "north" },
+      CTX_AUTHED,
+    );
+
+    expect(result.ok).toBe(true);
+    expect(from).toHaveBeenCalledWith("grows");
+    expect(calls.or[0]?.[0]).toBe(
+      "name.ilike.%north%,description.ilike.%north%",
+    );
+    expect(calls.eq).toContainEqual(["is_archived", false]);
+    expect(calls.limit[0]?.[0]).toBe(5);
+  });
+
+  it("includes archived when includeArchived=true", async () => {
+    const { client, calls } = makeSelectChainMock({ data: [], error: null });
+    createSupabaseServerClient.mockResolvedValue(client);
+
+    await executeChatTool(
+      "find_grow",
+      { query: "spring", includeArchived: true },
+      CTX_AUTHED,
+    );
+
+    expect(calls.eq).toEqual([]);
+  });
+
+  it("caps limit at 15 even when a higher value is requested", async () => {
+    const { client, calls } = makeSelectChainMock({ data: [], error: null });
+    createSupabaseServerClient.mockResolvedValue(client);
+
+    await executeChatTool("find_grow", { query: "x", limit: 9999 }, CTX_AUTHED);
+
+    expect(calls.limit[0]?.[0]).toBe(15);
+  });
+
+  it("escapes %, _ and \\ in the user query so wildcards stay literal", async () => {
+    const { client, calls } = makeSelectChainMock({ data: [], error: null });
+    createSupabaseServerClient.mockResolvedValue(client);
+
+    await executeChatTool("find_grow", { query: "50% _ \\room" }, CTX_AUTHED);
+
+    expect(calls.or[0]?.[0]).toBe(
+      "name.ilike.%50\\% \\_ \\\\room%,description.ilike.%50\\% \\_ \\\\room%",
+    );
+  });
+
+  it("returns the supabase error message when the query fails", async () => {
+    const { client } = makeSelectChainMock({
+      data: null,
+      error: { message: "syntax error" },
+    });
+    createSupabaseServerClient.mockResolvedValue(client);
+
+    const result = await executeChatTool(
+      "find_grow",
+      { query: "x" },
+      CTX_AUTHED,
+    );
+
+    expect(result).toEqual({ ok: false, error: "syntax error" });
+  });
+
+  it("rejects an empty query without touching the database", async () => {
+    const { client, from } = makeSelectChainMock({ data: [], error: null });
+    createSupabaseServerClient.mockResolvedValue(client);
+
+    const result = await executeChatTool(
+      "find_grow",
+      { query: "" },
+      CTX_AUTHED,
+    );
+
+    expect(result.ok).toBe(false);
+    expect(from).not.toHaveBeenCalled();
+  });
+});
+
+describe("chat-tools — find_plant", () => {
+  beforeEach(() => {
+    createSupabaseServerClient.mockReset();
+    logServerEvent.mockReset();
+  });
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  it("is exposed in the tool list and requires only query", () => {
+    const def = CHAT_TOOL_DEFINITIONS.find(
+      (t) => t.function.name === "find_plant",
+    );
+    expect(def).toBeDefined();
+    expect(def?.function.parameters).toMatchObject({ required: ["query"] });
+  });
+
+  it("ILIKE-searches name + strain + batch_label and excludes archived by default", async () => {
+    const { client, calls, from } = makeSelectChainMock({
+      data: [{ id: "p-1", name: "Mother" }],
+      error: null,
+    });
+    createSupabaseServerClient.mockResolvedValue(client);
+
+    const result = await executeChatTool(
+      "find_plant",
+      { query: "mother" },
+      CTX_AUTHED,
+    );
+
+    expect(result.ok).toBe(true);
+    expect(from).toHaveBeenCalledWith("plants");
+    expect(calls.or[0]?.[0]).toBe(
+      "name.ilike.%mother%,strain.ilike.%mother%,batch_label.ilike.%mother%",
+    );
+    expect(calls.eq).toContainEqual(["is_archived", false]);
+  });
+
+  it("scopes to a grow when growId is supplied", async () => {
+    const { client, calls } = makeSelectChainMock({ data: [], error: null });
+    createSupabaseServerClient.mockResolvedValue(client);
+
+    await executeChatTool(
+      "find_plant",
+      { query: "NL", growId: "g-1" },
+      CTX_AUTHED,
+    );
+
+    expect(calls.eq).toContainEqual(["grow_id", "g-1"]);
+    expect(calls.eq).toContainEqual(["is_archived", false]);
+  });
+
+  it("caps limit at 15 even when a higher value is requested", async () => {
+    const { client, calls } = makeSelectChainMock({ data: [], error: null });
+    createSupabaseServerClient.mockResolvedValue(client);
+
+    await executeChatTool("find_plant", { query: "x", limit: 100 }, CTX_AUTHED);
+
+    expect(calls.limit[0]?.[0]).toBe(15);
+  });
+
+  it("includes archived when includeArchived=true", async () => {
+    const { client, calls } = makeSelectChainMock({ data: [], error: null });
+    createSupabaseServerClient.mockResolvedValue(client);
+
+    await executeChatTool(
+      "find_plant",
+      { query: "old", includeArchived: true },
+      CTX_AUTHED,
+    );
+
+    expect(calls.eq).toEqual([]);
+  });
+
+  it("rejects an empty query without touching the database", async () => {
+    const { client, from } = makeSelectChainMock({ data: [], error: null });
+    createSupabaseServerClient.mockResolvedValue(client);
+
+    const result = await executeChatTool(
+      "find_plant",
+      { query: "" },
+      CTX_AUTHED,
+    );
+
+    expect(result.ok).toBe(false);
+    expect(from).not.toHaveBeenCalled();
   });
 });
