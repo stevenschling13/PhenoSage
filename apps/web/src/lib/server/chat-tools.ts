@@ -231,6 +231,70 @@ export const CHAT_TOOL_DEFINITIONS = [
       },
     },
   },
+  {
+    type: "function" as const,
+    function: {
+      name: "mark_finding_resolved",
+      description:
+        "Mark an AI-generated plant finding as resolved (or re-open it). Use when the user confirms they've addressed an issue ('I flushed the deficiency yesterday and it looks better' → mark the matching nutrient_deficiency finding resolved) or wants to re-open one they thought was fixed. Resolution sets `resolved_at` to now (or a supplied timestamp); re-opening clears it. You can only modify this field — severity, category, and description are immutable.",
+      parameters: {
+        type: "object",
+        properties: {
+          findingId: {
+            type: "string",
+            description:
+              "Finding ID to update. Required. If you don't know it, call get_recent_findings first.",
+          },
+          resolved: {
+            type: "boolean",
+            description:
+              "true to mark resolved (sets resolved_at), false to re-open (clears resolved_at). Required.",
+          },
+          resolvedAt: {
+            type: "string",
+            description:
+              "ISO 8601 timestamp the issue was actually resolved. Omit to use now. Ignored when resolved=false. Cannot be in the future.",
+          },
+        },
+        required: ["findingId", "resolved"],
+        additionalProperties: false,
+      },
+    },
+  },
+  {
+    type: "function" as const,
+    function: {
+      name: "update_grow_stage",
+      description:
+        "Transition the entire grow to a new growth stage. Use when the user says they switched the room/tent — 'I flipped the tent to flower yesterday', 'moved everyone to veg'. Stage is a property of the GROW, not individual plants (schema constraint today), so this affects every plant in that grow. Only grow OWNERS can change stage today (collaborators get a permission error). Returns the updated stage.",
+      parameters: {
+        type: "object",
+        properties: {
+          growId: {
+            type: "string",
+            description: "Grow ID to update. Required.",
+          },
+          stage: {
+            type: "string",
+            enum: [
+              "germination",
+              "seedling",
+              "vegetative",
+              "pre_flower",
+              "flower",
+              "late_flower",
+              "harvest",
+              "dry_cure",
+            ],
+            description:
+              "New stage. Use 'pre_flower' for the stretch / first-pistils transition, 'late_flower' for the final 2-3 weeks before harvest, 'dry_cure' for post-harvest dry+cure.",
+          },
+        },
+        required: ["growId", "stage"],
+        additionalProperties: false,
+      },
+    },
+  },
 ];
 
 type ToolResult = { ok: true; data: unknown } | { ok: false; error: string };
@@ -315,12 +379,36 @@ const LogPlantObservationArgs = z
     message: "supply at least one of heightCm or notes",
   });
 
+const GROW_STAGES = [
+  "germination",
+  "seedling",
+  "vegetative",
+  "pre_flower",
+  "flower",
+  "late_flower",
+  "harvest",
+  "dry_cure",
+] as const;
+
+const MarkFindingResolvedArgs = z.object({
+  findingId: z.string().min(1),
+  resolved: z.boolean(),
+  resolvedAt: isoDatetimeNotFuture.optional(),
+});
+
+const UpdateGrowStageArgs = z.object({
+  growId: z.string().min(1),
+  stage: z.enum(GROW_STAGES),
+});
+
 // Tools whose names start the model down a write path. The executor logs
 // arg keys (never values) for these so we have an audit trail without
 // retaining free-text user content in the request log.
 const WRITE_TOOLS = new Set<string>([
   "log_grow_event",
   "log_plant_observation",
+  "mark_finding_resolved",
+  "update_grow_stage",
 ]);
 
 type ChatToolContext = {
@@ -566,6 +654,75 @@ export async function executeChatTool(
               error: denied
                 ? "you do not have access to this plant"
                 : `could not log observation: ${error.message}`,
+            };
+          }
+          return { ok: true, data };
+        }
+
+        case "mark_finding_resolved": {
+          if (!ctx.userId) {
+            return { ok: false, error: "not authenticated" };
+          }
+          const args = MarkFindingResolvedArgs.parse(rawArgs);
+          const resolvedAt = args.resolved
+            ? (args.resolvedAt ?? new Date().toISOString())
+            : null;
+          const { data, error } = await supabase
+            .from("plant_findings")
+            .update({ resolved_at: resolvedAt })
+            .eq("id", args.findingId)
+            .select("id,plant_id,grow_id,category,severity,title,resolved_at")
+            .maybeSingle();
+          if (error) {
+            const denied =
+              error.code === "42501" ||
+              /permission denied|row-level security/i.test(error.message);
+            return {
+              ok: false,
+              error: denied
+                ? "you do not have permission to update this finding (owner or collaborator only)"
+                : `could not update finding: ${error.message}`,
+            };
+          }
+          if (!data) {
+            // The UPDATE silently affected zero rows — either the finding
+            // does not exist or RLS hid it from this user. Return a uniform
+            // not-found message; the model should NOT leak the existence
+            // of inaccessible rows.
+            return {
+              ok: false,
+              error: "finding not found or not accessible",
+            };
+          }
+          return { ok: true, data };
+        }
+
+        case "update_grow_stage": {
+          if (!ctx.userId) {
+            return { ok: false, error: "not authenticated" };
+          }
+          const args = UpdateGrowStageArgs.parse(rawArgs);
+          const { data, error } = await supabase
+            .from("grows")
+            .update({ stage: args.stage })
+            .eq("id", args.growId)
+            .select("id,name,stage")
+            .maybeSingle();
+          if (error) {
+            const denied =
+              error.code === "42501" ||
+              /permission denied|row-level security/i.test(error.message);
+            return {
+              ok: false,
+              error: denied
+                ? "you do not have permission to change this grow's stage (owners only)"
+                : `could not update grow stage: ${error.message}`,
+            };
+          }
+          if (!data) {
+            return {
+              ok: false,
+              error: "grow not found or not accessible",
             };
           }
           return { ok: true, data };
