@@ -310,14 +310,21 @@ export async function POST(request: NextRequest) {
 
         try {
           for (let iter = 0; iter < MAX_TOOL_ITERATIONS; iter++) {
-            const stream = openai.chat.completions.stream({
-              model: MODEL,
-              messages: working,
-              tools: CHAT_TOOL_DEFINITIONS,
-              tool_choice: "auto",
-              temperature: 0.3,
-              stream: true,
-            });
+            const stream = openai.chat.completions.stream(
+              {
+                model: MODEL,
+                messages: working,
+                tools: CHAT_TOOL_DEFINITIONS,
+                tool_choice: "auto",
+                temperature: 0.3,
+                stream: true,
+              },
+              // Forward the inbound request's AbortSignal so a client
+              // disconnect mid-reply also cancels the upstream Gemini
+              // call. Without this, navigating away wastes tokens for
+              // up to MAX_TOOL_ITERATIONS rounds of completion.
+              { signal: request.signal },
+            );
 
             for await (const chunk of stream) {
               const delta = chunk.choices[0]?.delta?.content;
@@ -470,7 +477,12 @@ export async function POST(request: NextRequest) {
 
     const responseHeaders: Record<string, string> = {
       "Content-Type": "text/plain; charset=utf-8",
-      "Transfer-Encoding": "chunked",
+      // Defeat any intermediary buffering so tokens reach the browser the
+      // moment the model emits them. Without these, Vercel's edge layer
+      // and any proxy in between can pool the response into one big
+      // chunk, defeating the streaming UX.
+      "Cache-Control": "no-store, no-transform",
+      "X-Accel-Buffering": "no",
     };
     if (threadId) {
       responseHeaders["X-Chat-Thread-Id"] = threadId;

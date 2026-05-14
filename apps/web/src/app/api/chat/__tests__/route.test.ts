@@ -477,4 +477,38 @@ describe("POST /api/chat", () => {
     expect(body.error).toMatch(/Chat request failed/);
     expect(body.error).not.toMatch(new RegExp(internalErrorText));
   });
+
+  it("sets no-buffer streaming headers so intermediaries cannot pool the response", async () => {
+    // Without these headers Vercel's edge / nginx-style proxies will
+    // buffer the entire model response and flush it as a single chunk,
+    // defeating the token-by-token streaming UX. Lock them in.
+    getServerSession.mockResolvedValue({ user: { id: "u1" } });
+    streamMock.mockImplementation(() => textOnlyStream(["ok"]));
+    const res = await POST(jsonRequest({ message: "hi" }));
+    expect(res.status).toBe(200);
+    expect(res.headers.get("content-type") || "").toMatch(
+      /text\/plain; charset=utf-8/i,
+    );
+    expect(res.headers.get("cache-control") || "").toMatch(/no-store/i);
+    expect(res.headers.get("cache-control") || "").toMatch(/no-transform/i);
+    expect(res.headers.get("x-accel-buffering") || "").toBe("no");
+    // Drain so the persistAssistant tail-effect runs cleanly.
+    await res.text();
+  });
+
+  it("forwards the inbound AbortSignal to the upstream stream call", async () => {
+    // Closing the browser tab mid-reply must also cancel the upstream
+    // Gemini call, otherwise we keep paying for tokens nobody will see.
+    getServerSession.mockResolvedValue({ user: { id: "u1" } });
+    streamMock.mockImplementation(() => textOnlyStream(["ok"]));
+    const res = await POST(jsonRequest({ message: "hi" }));
+    expect(res.status).toBe(200);
+    await res.text();
+    expect(streamMock).toHaveBeenCalled();
+    const lastCall = streamMock.mock.calls[streamMock.mock.calls.length - 1];
+    // Second positional arg is the request options object (signal lives here).
+    const opts = lastCall?.[1] as { signal?: AbortSignal } | undefined;
+    expect(opts).toBeDefined();
+    expect(opts?.signal).toBeInstanceOf(AbortSignal);
+  });
 });
