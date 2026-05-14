@@ -4,6 +4,45 @@ Handoff log between sessions. Keep entries short. Newest at top.
 
 ---
 
+## 2026-05-13 — Workspace-action error boundary + chat training-refusal fix (Claude Opus 4.7)
+
+**Landed on `main` via PR #135 (commit `1b9b180`)**
+
+QA report flagged the `(app)/error.tsx` "We couldn't load this workspace
+view" page firing on **Create grow** and **Save display name**, plus the
+chat refusing topping/LST advice when no grow ID was selected. Root
+causes:
+
+- `createGrowAction` ended with `redirect("/grows")`. Because the form
+  awaits the server action manually inside `startTransition`, the
+  `NEXT_REDIRECT` throw escaped to React's error boundary instead of
+  triggering navigation. Switched to returning
+  `{ status: "success", redirectTo }` and `router.push` from the client.
+- Both `createGrowAction` and `updateDisplayNameAction` let supabase /
+  env errors throw (most likely `getDbClient()` on a missing
+  service-role credential in prod). Wrapped supabase work in `try/catch`
+  that re-throws Next framework signals (`isNextFrameworkError`) but
+  converts everything else into structured `{ status: "error", message }`.
+  Defensive client `catch` added too.
+- All caught errors now go through `logServerEvent("error", ...)` for
+  prod debugging.
+- Chat prompt: added an explicit "General knowledge vs grow-specific
+  advice" section so the model never refuses topping / FIMing / LST /
+  IPM / nutrient-schedule questions for lack of a grow ID. The system
+  prompt already listed those as expertise; the new section makes the
+  no-tool-needed rule unambiguous.
+
+Tests: +12 cases covering success, supabase-error, supabase-throw,
+NEXT_REDIRECT re-throw preservation, signed-out, validation-only, and
+missing-service-role-key paths. Suite at 409/409.
+
+Caveat: could not authenticated-browser-test the deployed flow. Fix is
+defensive in depth — even if the prod env var is still misconfigured,
+users now see a clear inline message instead of the digest page, and
+the cause hits the server log.
+
+---
+
 ## 2026-05-08 — UX walkthrough: signed-out CTAs + auth copy + alert focus (Claude Opus 4.7)
 
 **Landed on `main`**
