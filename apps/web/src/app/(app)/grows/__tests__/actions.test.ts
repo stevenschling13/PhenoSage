@@ -1,7 +1,11 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const mocks = vi.hoisted(() => {
-  const insert = vi.fn();
+  // The action chains .insert(...).select("id").single().
+  // Build a thenable-style chain by default that yields { data: { id }, error: null }.
+  const single = vi.fn();
+  const select = vi.fn(() => ({ single }));
+  const insert = vi.fn(() => ({ select }));
   const from = vi.fn(() => ({ insert }));
   const supabaseStub = { from };
   const createSupabaseServerClient = vi.fn(async () => supabaseStub);
@@ -9,6 +13,8 @@ const mocks = vi.hoisted(() => {
   const revalidatePath = vi.fn();
   const logServerEvent = vi.fn();
   return {
+    single,
+    select,
     insert,
     from,
     supabaseStub,
@@ -51,7 +57,9 @@ function buildFormData(overrides: Record<string, string> = {}): FormData {
 
 describe("createGrowAction", () => {
   beforeEach(() => {
-    mocks.insert.mockReset();
+    mocks.single.mockReset();
+    mocks.select.mockClear();
+    mocks.insert.mockClear();
     mocks.from.mockClear();
     mocks.createSupabaseServerClient
       .mockReset()
@@ -61,21 +69,51 @@ describe("createGrowAction", () => {
     mocks.logServerEvent.mockReset();
   });
 
-  it("returns success with redirectTo on a clean insert", async () => {
-    mocks.insert.mockResolvedValue({ error: null });
+  it("returns success and redirects into the add-plant flow with the new grow id", async () => {
+    mocks.single.mockResolvedValue({
+      data: { id: "grow-new-123" },
+      error: null,
+    });
     const result = await createGrowAction(buildFormData());
     expect(result.status).toBe("success");
-    expect(result.redirectTo).toBe("/grows");
+    expect(result.redirectTo).toBe(
+      "/plants/new?growId=grow-new-123&just_created=1",
+    );
     expect(mocks.revalidatePath).toHaveBeenCalledWith("/grows");
+    expect(mocks.revalidatePath).toHaveBeenCalledWith("/plants");
+    expect(mocks.revalidatePath).toHaveBeenCalledWith("/dashboard");
   });
 
-  it("returns a structured error (not throw) when supabase rejects the insert", async () => {
-    mocks.insert.mockResolvedValue({
-      error: { message: "duplicate key", code: "23505" },
+  it("url-encodes the grow id so unusual characters don't break the redirect", async () => {
+    mocks.single.mockResolvedValue({
+      data: { id: "abc/def?weird" },
+      error: null,
+    });
+    const result = await createGrowAction(buildFormData());
+    expect(result.redirectTo).toBe(
+      "/plants/new?growId=abc%2Fdef%3Fweird&just_created=1",
+    );
+  });
+
+  it("surfaces a friendly duplicate-name message on 23505 without leaking raw error text", async () => {
+    mocks.single.mockResolvedValue({
+      data: null,
+      error: { message: "duplicate key value", code: "23505" },
     });
     const result = await createGrowAction(buildFormData());
     expect(result.status).toBe("error");
-    expect(result.message).toContain("duplicate key");
+    expect(result.message).toMatch(/grow with that name already exists/i);
+    expect(result.message).not.toContain("duplicate key value");
+  });
+
+  it("returns a structured error (not throw) when supabase rejects the insert", async () => {
+    mocks.single.mockResolvedValue({
+      data: null,
+      error: { message: "permission denied", code: "42501" },
+    });
+    const result = await createGrowAction(buildFormData());
+    expect(result.status).toBe("error");
+    expect(result.message).toMatch(/couldn't save the grow/i);
   });
 
   it("returns a structured error (not throw) when supabase client itself throws", async () => {
@@ -111,5 +149,11 @@ describe("createGrowAction", () => {
     expect(result.fieldErrors?.stage).toBeTruthy();
     expect(result.fieldErrors?.startDate).toBeTruthy();
     expect(mocks.insert).not.toHaveBeenCalled();
+  });
+
+  it("falls back to /grows when the insert returns no row (defensive)", async () => {
+    mocks.single.mockResolvedValue({ data: null, error: null });
+    const result = await createGrowAction(buildFormData());
+    expect(result.status).toBe("error");
   });
 });

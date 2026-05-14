@@ -128,29 +128,39 @@ export async function createGrowAction(
     };
   }
 
+  let newGrowId: string | null = null;
   try {
     const supabase = await createSupabaseServerClient();
-    const { error } = await supabase.from("grows").insert({
-      description: description || null,
-      light_type: lightType as LightType,
-      medium: medium as GrowMedium,
-      name,
-      owner_id: user.id,
-      stage: stage as GrowStage,
-      start_date: startDate,
-      target_harvest_date: targetHarvestDate || null,
-    });
+    const { data, error } = await supabase
+      .from("grows")
+      .insert({
+        description: description || null,
+        light_type: lightType as LightType,
+        medium: medium as GrowMedium,
+        name,
+        owner_id: user.id,
+        stage: stage as GrowStage,
+        start_date: startDate,
+        target_harvest_date: targetHarvestDate || null,
+      })
+      .select("id")
+      .single();
 
-    if (error) {
+    if (error || !data) {
       logServerEvent("error", "create grow insert failed", {
-        error: error.message,
+        error: error?.message ?? "no row returned",
         userId: user.id,
       });
       return {
-        message: `Could not save the grow: ${error.message}`,
+        message:
+          error?.code === "23505"
+            ? "A grow with that name already exists. Try a different name."
+            : "We couldn't save the grow right now. Please try again in a moment.",
         status: "error",
       };
     }
+
+    newGrowId = data.id;
 
     revalidatePath("/dashboard");
     revalidatePath("/grows");
@@ -174,9 +184,16 @@ export async function createGrowAction(
   // NEXT_REDIRECT throw cannot be intercepted by the framework and surfaces
   // as an error boundary hit. Letting the client perform router.push avoids
   // that entire failure mode.
+  //
+  // Send the operator straight to the add-plant flow with the new grow
+  // pre-selected. The plant page renders a "grow ready" banner with an
+  // explicit "back to grow registry" exit so this isn't a forced path.
+  const redirectTo = newGrowId
+    ? `/plants/new?growId=${encodeURIComponent(newGrowId)}&just_created=1`
+    : "/grows";
   return {
     message: "Grow created.",
-    redirectTo: "/grows",
+    redirectTo,
     status: "success",
   };
 }

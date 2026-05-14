@@ -53,23 +53,17 @@ test.describe("Authenticated workspace smoke", () => {
         await page.getByLabel("Light type").selectOption("led");
         await page.getByRole("button", { name: "Create grow" }).click();
 
-        await page.waitForURL("**/grows");
-        await expect(page.getByText(growName)).toBeVisible();
+        // Post-create now lands directly on the add-plant flow with a
+        // success banner naming the new grow.
+        await page.waitForURL(/\/plants\/new\?growId=[^&]+&just_created=1/);
+        await expect(
+          page.getByText(new RegExp(`Grow .${growName}. is ready`, "i")),
+        ).toBeVisible();
       });
 
       let plantId = "";
 
-      await test.step("add a plant to the grow and verify it lists on /plants", async () => {
-        const addPlantLink = page
-          .getByRole("link", { name: "Add plant" })
-          .first();
-        await expect(addPlantLink).toHaveAttribute(
-          "href",
-          /\/plants\/new\?growId=/,
-        );
-        await addPlantLink.click();
-        await page.waitForURL("**/plants/new**");
-
+      await test.step("add a plant to the new grow and verify it lists on /plants", async () => {
         await page.getByLabel("Plant name").fill(plantName);
         await page.getByLabel("Strain").fill("Playwright Kush");
         await page.getByLabel("Batch label").fill("SMOKE-BATCH");

@@ -20,20 +20,23 @@ export const metadata: Metadata = { title: "Add Plant" };
 interface Props {
   searchParams?: Promise<{
     growId?: string | string[] | undefined;
+    just_created?: string | string[] | undefined;
   }>;
+}
+
+function firstParam(value: string | string[] | undefined): string {
+  if (Array.isArray(value)) return value[0] ?? "";
+  return value ?? "";
 }
 
 export default async function NewPlantPage({ searchParams }: Props) {
   const grows = await listAccessibleGrows();
   const resolvedSearchParams = searchParams ? await searchParams : undefined;
-  const requestedGrowId = resolvedSearchParams?.growId;
-  const requestedGrowIdValue = Array.isArray(requestedGrowId)
-    ? (requestedGrowId[0] ?? "")
-    : (requestedGrowId ?? "");
-  const defaultGrowId =
-    grows.find((grow) => grow.id === requestedGrowIdValue)?.id ??
-    grows[0]?.id ??
-    "";
+  const requestedGrowIdValue = firstParam(resolvedSearchParams?.growId);
+  const justCreated = firstParam(resolvedSearchParams?.just_created) === "1";
+  const matchedGrow = grows.find((grow) => grow.id === requestedGrowIdValue);
+  const defaultGrowId = matchedGrow?.id ?? grows[0]?.id ?? "";
+  const justCreatedGrowName = justCreated ? matchedGrow?.name : undefined;
 
   return (
     <main className="app-page">
@@ -47,6 +50,26 @@ export default async function NewPlantPage({ searchParams }: Props) {
         eyebrow={<Badge tone="accent">Create plant</Badge>}
         title="Add a plant"
       />
+
+      {justCreatedGrowName ? (
+        <div
+          aria-live="polite"
+          className="rounded-[1.15rem] border border-success/40 bg-success/10 px-4 py-4 text-sm leading-6 text-foreground"
+          role="status"
+        >
+          <p className="font-medium">
+            Grow &ldquo;{justCreatedGrowName}&rdquo; is ready.
+          </p>
+          <p className="mt-1 text-muted-foreground">
+            Add the first plant below to start tracking image history,
+            timelines, and assistant context — or{" "}
+            <Link className="underline" href="/grows">
+              skip back to the grow registry
+            </Link>
+            .
+          </p>
+        </div>
+      ) : null}
 
       {grows.length === 0 ? (
         <Card>
