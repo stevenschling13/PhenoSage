@@ -1,10 +1,10 @@
 "use client";
 
-import { useState, useTransition } from "react";
+import { useState } from "react";
 import Link from "next/link";
-import { useRouter } from "next/navigation";
 import { Button, buttonStyles } from "@/components/ui/button";
 import { FormErrorSummary } from "@/components/form-error-summary";
+import { useActionWithRecovery } from "@/lib/client/action-runner";
 import {
   createGrowAction,
   createGrowActionInitialState,
@@ -118,11 +118,24 @@ function FieldError({
 }
 
 export function GrowForm({ initialStartDate }: { initialStartDate: string }) {
-  const router = useRouter();
-  const [state, setState] = useState<CreateGrowActionResult>(
+  // useActionWithRecovery handles three failure modes for us:
+  //   1. Transient throws (network blip, ChunkLoadError) are retried
+  //      once with backoff before surfacing an error to the user.
+  //   2. router.push failures don't strand the user — `state.recoveryUrl`
+  //      always points at a known-good page, and the form renders a
+  //      manual "Continue" CTA when navigation didn't take over.
+  //   3. Validation / RLS errors flow through unchanged so field-level
+  //      messages still render.
+  // /grows is the universal fallback because it's the page the action
+  // intends to land on anyway; any successful create is visible there.
+  const {
+    state,
+    isPending,
+    run: runCreateGrow,
+  } = useActionWithRecovery<CreateGrowActionResult>(
     createGrowActionInitialState,
+    { fallbackUrl: "/grows" },
   );
-  const [isPending, startTransition] = useTransition();
   const [name, setName] = useState("");
   const [description, setDescription] = useState("");
   const [stage, setStage] = useState<Preset["stage"]>("seedling");
@@ -142,24 +155,16 @@ export function GrowForm({ initialStartDate }: { initialStartDate: string }) {
   }
 
   async function handleAction(formData: FormData) {
-    startTransition(async () => {
-      try {
-        const result = await createGrowAction(formData);
-        setState(result);
-        if (result.status === "success" && result.redirectTo) {
-          router.push(result.redirectTo);
-        }
-      } catch (err) {
-        // Last-resort safety net: never let an unexpected throw escape the
-        // transition and crash into the (app)/error.tsx boundary.
-        console.error("createGrowAction failed unexpectedly", err);
-        setState({
-          message:
-            "Something went wrong saving the grow. Please try again in a moment.",
-          status: "error",
-        });
+    try {
+      await runCreateGrow(() => createGrowAction(formData));
+    } catch (err) {
+      // The runner has already updated component state with an
+      // error-shaped result + recoveryUrl. Re-throws here are expected
+      // when retries are exhausted — log for diagnostics, don't crash.
+      if (typeof console !== "undefined") {
+        console.error("createGrowAction failed after retries", err);
       }
-    });
+    }
   }
 
   return (
@@ -169,6 +174,50 @@ export function GrowForm({ initialStartDate }: { initialStartDate: string }) {
         fieldErrors={state.fieldErrors}
         fieldMeta={FIELD_META}
       />
+
+      {state.status === "success" && state.recoveryUrl ? (
+        // Defence-in-depth recovery banner. router.push is fired by the
+        // runner on success; if for any reason it didn't navigate (a
+        // chunk error, a blocked transition, the user disabled JS
+        // routing), this CTA is the manual continue. Once navigation
+        // takes effect this component unmounts so the user never
+        // notices it under happy-path conditions.
+        <div
+          aria-live="polite"
+          className="rounded-[1.15rem] border border-success/40 bg-success/10 px-4 py-4 text-sm leading-6 text-foreground"
+          role="status"
+        >
+          <p className="font-medium">Grow created.</p>
+          <p className="mt-1 text-muted-foreground">
+            If your screen didn&apos;t move on its own, tap below to continue.
+          </p>
+          <div className="mt-3 flex flex-wrap gap-2">
+            <Link
+              className={buttonStyles({ size: "sm" })}
+              href={state.recoveryUrl}
+            >
+              Continue to grow registry
+            </Link>
+          </div>
+        </div>
+      ) : null}
+
+      {state.status === "error" && state.recoveryUrl ? (
+        // After a permanent error AND retries exhausted, give the user a
+        // fallback page so they're never stranded on a dead form. The
+        // fieldErrors above tell them what to fix; the link below tells
+        // them where to go if they want to bail.
+        <div
+          aria-live="polite"
+          className="rounded-[1.15rem] border border-border/70 bg-background-subtle/60 px-4 py-3 text-sm leading-6 text-muted-foreground"
+        >
+          Need to step away?{" "}
+          <Link className="text-accent underline" href={state.recoveryUrl}>
+            Open the grow registry
+          </Link>{" "}
+          — your form input stays here when you come back.
+        </div>
+      ) : null}
 
       <div
         aria-label="Quick-start presets"

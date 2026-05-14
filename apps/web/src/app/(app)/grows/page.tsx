@@ -26,6 +26,7 @@ interface GrowsPageProps {
   searchParams?: Promise<{
     growId?: string | string[] | undefined;
     just_added?: string | string[] | undefined;
+    just_created?: string | string[] | undefined;
   }>;
 }
 
@@ -49,6 +50,20 @@ export default async function GrowsPage({ searchParams }: GrowsPageProps) {
   const justAddedGrowId = firstParam(resolvedParams?.growId);
   const justAddedGrowName = justAddedCount
     ? (overview.grows.find((g) => g.id === justAddedGrowId)?.name ?? null)
+    : null;
+
+  // `just_created=1` signals the user just completed the new-grow form.
+  // We surface a banner naming the grow so the action's success is
+  // obviously visible — and we tolerate read-after-write lag by
+  // falling back to "Grow created" when the row isn't yet in the
+  // overview slice. Either way the registry below is the user's
+  // confirmation that the grow exists.
+  const justCreated = firstParam(resolvedParams?.just_created) === "1";
+  const justCreatedGrowId = justCreated
+    ? firstParam(resolvedParams?.growId)
+    : "";
+  const justCreatedGrow = justCreated
+    ? (overview.grows.find((g) => g.id === justCreatedGrowId) ?? null)
     : null;
 
   return (
@@ -90,6 +105,42 @@ export default async function GrowsPage({ searchParams }: GrowsPageProps) {
             Occupancy below is up to date. Open any plant card to start a photo
             timeline.
           </p>
+        </div>
+      ) : null}
+
+      {justCreated ? (
+        <div
+          aria-live="polite"
+          className="rounded-[1.15rem] border border-success/40 bg-success/10 px-4 py-4 text-sm leading-6 text-foreground"
+          role="status"
+        >
+          <p className="font-medium">
+            {justCreatedGrow
+              ? `Grow "${justCreatedGrow.name}" is ready.`
+              : "Grow created."}
+          </p>
+          <p className="mt-1 text-muted-foreground">
+            It&apos;s in the registry below. Add a first plant to unlock photo
+            uploads and assistant context, or keep exploring the registry.
+          </p>
+          <div className="mt-3 flex flex-wrap gap-2">
+            <Link
+              className={buttonStyles({ size: "sm" })}
+              href={
+                justCreatedGrow
+                  ? `/plants/new?growId=${justCreatedGrow.id}`
+                  : "/plants/new"
+              }
+            >
+              Add a plant
+            </Link>
+            <Link
+              className={buttonStyles({ size: "sm", variant: "surface" })}
+              href="/grows"
+            >
+              View grow registry
+            </Link>
+          </div>
         </div>
       ) : null}
 

@@ -76,9 +76,10 @@ describe("createGrowAction", () => {
     });
     const result = await createGrowAction(buildFormData());
     expect(result.status).toBe("success");
-    expect(result.redirectTo).toBe(
-      "/plants/new?growId=grow-new-123&just_created=1",
-    );
+    // Redirect now lands on the grow registry with the new grow
+    // highlighted, so the user sees the grow they just created instead
+    // of being force-funneled into a plant-intake form.
+    expect(result.redirectTo).toBe("/grows?growId=grow-new-123&just_created=1");
     expect(mocks.revalidatePath).toHaveBeenCalledWith("/grows");
     expect(mocks.revalidatePath).toHaveBeenCalledWith("/plants");
     expect(mocks.revalidatePath).toHaveBeenCalledWith("/dashboard");
@@ -91,7 +92,7 @@ describe("createGrowAction", () => {
     });
     const result = await createGrowAction(buildFormData());
     expect(result.redirectTo).toBe(
-      "/plants/new?growId=abc%2Fdef%3Fweird&just_created=1",
+      "/grows?growId=abc%2Fdef%3Fweird&just_created=1",
     );
   });
 
