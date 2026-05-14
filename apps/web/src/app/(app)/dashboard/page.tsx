@@ -10,6 +10,7 @@ import {
   ShieldIcon,
   SparkIcon,
 } from "@/components/icons";
+import { LiveAnalysisRefresher } from "@/components/live-analysis-refresher";
 import { Badge } from "@/components/ui/badge";
 import { buttonStyles } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
@@ -416,6 +417,7 @@ export default async function DashboardPage() {
           </CardContent>
         </Card>
       </section>
+      <LiveAnalysisRefresher growIds={overview.grows.map((g) => g.id)} />
     </main>
   );
 }

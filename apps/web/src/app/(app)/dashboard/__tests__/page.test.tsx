@@ -2,6 +2,10 @@
 import { describe, expect, it, vi } from "vitest";
 import { render, screen } from "@testing-library/react";
 
+vi.mock("@/components/live-analysis-refresher", () => ({
+  LiveAnalysisRefresher: () => null,
+}));
+
 vi.mock("@/lib/server/profile", () => ({
   getCurrentProfile: vi.fn(async () => ({
     displayName: "Ada Lovelace",

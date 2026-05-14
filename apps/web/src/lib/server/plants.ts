@@ -453,28 +453,33 @@ export async function runAndPersistPlantAnalysis(params: {
 
   const analysis = await analyzeImage(analyzeParams);
 
-  const { error: upsertError } = await db.from("plant_analyses").upsert(
-    {
-      plant_id: context.plantId,
-      grow_id: context.growId,
-      image_id: currentImage.id,
-      compared_to_image_id: analysis.comparedToImageId ?? null,
-      overall_health_score: analysis.overallHealthScore,
-      summary: analysis.summary,
-      comparison_summary: analysis.comparisonSummary ?? null,
-      analyzed_at: analysis.analyzedAt,
-      model_version: analysis.modelVersion,
-      analysis_mode: analysis.analysisMode ?? "fallback",
-      is_fallback: analysis.isFallback ?? false,
-      fallback_reason: analysis.fallbackReason ?? null,
-      request_id: analysis.requestId ?? params.requestId,
-    },
-    { onConflict: "image_id" },
-  );
+  const { data: upsertData, error: upsertError } = await db
+    .from("plant_analyses")
+    .upsert(
+      {
+        plant_id: context.plantId,
+        grow_id: context.growId,
+        image_id: currentImage.id,
+        compared_to_image_id: analysis.comparedToImageId ?? null,
+        overall_health_score: analysis.overallHealthScore,
+        summary: analysis.summary,
+        comparison_summary: analysis.comparisonSummary ?? null,
+        analyzed_at: analysis.analyzedAt,
+        model_version: analysis.modelVersion,
+        analysis_mode: analysis.analysisMode ?? "fallback",
+        is_fallback: analysis.isFallback ?? false,
+        fallback_reason: analysis.fallbackReason ?? null,
+        request_id: analysis.requestId ?? params.requestId,
+      },
+      { onConflict: "image_id" },
+    )
+    .select("id")
+    .single();
 
   if (upsertError) {
     throw new Error(`Failed to persist plant analysis: ${upsertError.message}`);
   }
+  const analysisId = (upsertData as { id: string } | null)?.id ?? null;
 
   const { error: deleteError } = await db
     .from("plant_findings")
@@ -514,5 +519,57 @@ export async function runAndPersistPlantAnalysis(params: {
     isFallback: analysis.isFallback,
   });
 
-  return { context, analysis };
+  return { context, analysis, analysisId, imageId: currentImage.id };
+}
+
+/**
+ * Returns the plant id of the "Quick captures" plant in the given grow,
+ * creating it on first use. Used by the chat upload flow when the user
+ * snaps a picture without picking a specific plant — we still need a
+ * plant_id (so the existing analysis pipeline + RLS policies work
+ * unchanged) so we route those uploads to a per-grow inbox plant.
+ *
+ * Authorization: the caller must already have authenticated the grow_id
+ * (we trust the caller; we don't re-check ownership here because the only
+ * call site is inside the chat route after the user has picked a grow that
+ * the loadGrowContextSummary RLS-gated query already returned).
+ */
+export async function getOrCreateQuickCapturePlant(params: {
+  growId: string;
+}): Promise<{ plantId: string } | null> {
+  const db = getDbClient();
+  const { data: existing, error: lookupError } = await db
+    .from("plants")
+    .select("id")
+    .eq("grow_id", params.growId)
+    .eq("name", "Quick captures")
+    .maybeSingle();
+  if (lookupError) {
+    logServerEvent("error", "quick capture plant lookup failed", {
+      growId: params.growId,
+      error: lookupError.message,
+    });
+    return null;
+  }
+  if (existing) {
+    return { plantId: (existing as { id: string }).id };
+  }
+  const { data: created, error: insertError } = await db
+    .from("plants")
+    .insert({
+      grow_id: params.growId,
+      name: "Quick captures",
+      notes:
+        "Auto-created inbox for images uploaded in chat without a specific plant.",
+    })
+    .select("id")
+    .single();
+  if (insertError || !created) {
+    logServerEvent("error", "quick capture plant create failed", {
+      growId: params.growId,
+      error: insertError?.message ?? "no row",
+    });
+    return null;
+  }
+  return { plantId: (created as { id: string }).id };
 }

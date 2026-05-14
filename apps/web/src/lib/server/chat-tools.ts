@@ -118,6 +118,26 @@ export const CHAT_TOOL_DEFINITIONS = [
       },
     },
   },
+  {
+    type: "function" as const,
+    function: {
+      name: "get_analysis_history",
+      description:
+        "Return the recent image-analysis history for a plant (newest first) so you can describe trends over time. Each row includes overall_health_score, summary, comparison_summary, model_version, and created_at — use these to discuss progression, regression, or stability.",
+      parameters: {
+        type: "object",
+        properties: {
+          plantId: { type: "string" },
+          limit: {
+            type: "number",
+            description: "Max history rows. Default 8, max 20.",
+          },
+        },
+        required: ["plantId"],
+        additionalProperties: false,
+      },
+    },
+  },
 ];
 
 type ToolResult = { ok: true; data: unknown } | { ok: false; error: string };
@@ -150,6 +170,10 @@ const EventsArgs = z.object({
   sinceDays: z.number().optional(),
 });
 const LatestAnalysisArgs = z.object({ plantId: z.string().min(1) });
+const AnalysisHistoryArgs = z.object({
+  plantId: z.string().min(1),
+  limit: z.number().optional(),
+});
 
 type ChatToolContext = {
   userId: string | null;
@@ -315,6 +339,21 @@ export async function executeChatTool(
             .maybeSingle();
           if (error) return { ok: false, error: error.message };
           return { ok: true, data: data ?? null };
+        }
+
+        case "get_analysis_history": {
+          const args = AnalysisHistoryArgs.parse(rawArgs);
+          const limit = numClamp(args.limit, 8, 20);
+          const { data, error } = await supabase
+            .from("plant_analyses")
+            .select(
+              "id,plant_id,image_id,overall_health_score,summary,comparison_summary,analysis_mode,is_fallback,model_version,analyzed_at,created_at",
+            )
+            .eq("plant_id", args.plantId)
+            .order("analyzed_at", { ascending: false })
+            .limit(limit);
+          if (error) return { ok: false, error: error.message };
+          return { ok: true, data: data ?? [] };
         }
 
         default:

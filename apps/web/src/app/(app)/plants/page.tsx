@@ -11,6 +11,7 @@ import {
   CardTitle,
 } from "@/components/ui/card";
 import { EmptyState } from "@/components/ui/empty-state";
+import { LiveAnalysisRefresher } from "@/components/live-analysis-refresher";
 import { PageHeader } from "@/components/ui/page-header";
 import {
   listAccessibleGrows,
@@ -160,6 +161,7 @@ export default async function PlantsPage() {
           </CardContent>
         </Card>
       </section>
+      <LiveAnalysisRefresher growIds={grows.map((g) => g.id)} />
     </main>
   );
 }

@@ -93,9 +93,12 @@ function makeAnalysisPersistenceDb(params?: {
     ],
     params?.imageError,
   );
-  const upsert = vi.fn().mockResolvedValue({
+  const single = vi.fn().mockResolvedValue({
+    data: params?.upsertError ? null : { id: "analysis-1" },
     error: params?.upsertError ? { message: params.upsertError } : null,
   });
+  const upsertSelect = vi.fn(() => ({ single }));
+  const upsert = vi.fn(() => ({ select: upsertSelect }));
   const deleteEq = vi.fn().mockResolvedValue({
     error: params?.deleteError ? { message: params.deleteError } : null,
   });
@@ -788,7 +791,12 @@ describe("plants server helpers", () => {
       ],
       error: null,
     });
-    const upsert = vi.fn().mockResolvedValue({ error: null });
+    const upsertSingle = vi
+      .fn()
+      .mockResolvedValue({ data: { id: "analysis-1" }, error: null });
+    const upsert = vi.fn(() => ({
+      select: vi.fn(() => ({ single: upsertSingle })),
+    }));
     const deleteEq = vi.fn().mockResolvedValue({ error: null });
     const deleteFn = vi.fn(() => ({ eq: deleteEq }));
     const insert = vi.fn().mockResolvedValue({ error: null });

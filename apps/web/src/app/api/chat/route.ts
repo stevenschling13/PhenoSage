@@ -21,12 +21,17 @@ import {
   executeChatTool,
 } from "@/lib/server/chat-tools";
 import {
+  appendChatAttachment,
   appendMessage,
   assertThreadOwner,
   createThread,
   touchThread,
 } from "@/lib/server/chat-persistence";
+import { runAndPersistPlantAnalysis } from "@/lib/server/plants";
+import { getAuthorizedPlantContext } from "@/lib/server/plant-access";
+import { getStorageClient } from "@/lib/server/storage";
 import type {
+  ChatCompletionContentPart,
   ChatCompletionMessageParam,
   ChatCompletionMessageToolCall,
 } from "openai/resources/chat/completions";
@@ -120,6 +125,7 @@ export async function POST(request: NextRequest) {
       growId?: string;
       plantId?: string;
       history?: unknown;
+      attachments?: unknown;
     };
     try {
       body = (await request.json()) as typeof body;
@@ -135,10 +141,67 @@ export async function POST(request: NextRequest) {
 
     const message =
       typeof body?.message === "string" ? body.message.trim() : "";
-    if (!message) {
+
+    // Parse and validate attachments BEFORE the empty-message check, so a
+    // user can send an image with no text ("what's wrong with this plant?"
+    // is a perfectly valid wordless intent).
+    type IncomingAttachment = {
+      kind: "image";
+      plantId: string;
+      imageId: string;
+      storagePath: string;
+    };
+    const MAX_ATTACHMENTS = 1; // MVP: serial analysis comparisons require this.
+    const rawAttachments = Array.isArray(body.attachments)
+      ? body.attachments
+      : [];
+    if (rawAttachments.length > MAX_ATTACHMENTS) {
       return attachRequestId(
         NextResponse.json(
-          { error: "message is required", requestId },
+          {
+            error: `Up to ${MAX_ATTACHMENTS} attachment per message is supported right now.`,
+            requestId,
+          },
+          { status: 400 },
+        ),
+        requestId,
+      );
+    }
+    const attachments: IncomingAttachment[] = [];
+    for (const a of rawAttachments) {
+      if (
+        !a ||
+        typeof a !== "object" ||
+        (a as { kind?: unknown }).kind !== "image" ||
+        typeof (a as { plantId?: unknown }).plantId !== "string" ||
+        typeof (a as { imageId?: unknown }).imageId !== "string" ||
+        typeof (a as { storagePath?: unknown }).storagePath !== "string"
+      ) {
+        return attachRequestId(
+          NextResponse.json(
+            {
+              error:
+                "Each attachment must be { kind: 'image', plantId, imageId, storagePath }.",
+              requestId,
+            },
+            { status: 400 },
+          ),
+          requestId,
+        );
+      }
+      const att = a as IncomingAttachment;
+      attachments.push({
+        kind: "image",
+        plantId: att.plantId,
+        imageId: att.imageId,
+        storagePath: att.storagePath,
+      });
+    }
+
+    if (!message && attachments.length === 0) {
+      return attachRequestId(
+        NextResponse.json(
+          { error: "message or attachment is required", requestId },
           { status: 400 },
         ),
         requestId,
@@ -213,6 +276,16 @@ export async function POST(request: NextRequest) {
     // authenticated user id; anonymous flows shouldn't happen here (we 401'd
     // upstream) but we guard anyway. threadId is declared at the function
     // scope above so the top-level catch can include it in error logs.
+    let userMessageId: string | null = null;
+    // Effective text we tell the model the user said. When the user sent
+    // only an image with no text, we synthesize a minimal default so the
+    // model has *some* instruction; when they sent text, we use it as-is.
+    const effectiveUserText =
+      message ||
+      (attachments.length > 0
+        ? "Please analyze this plant image and explain anything notable, including changes versus prior images if you can see them."
+        : "");
+
     if (userId) {
       const incomingThreadId =
         typeof body.threadId === "string" && body.threadId.length > 0
@@ -234,18 +307,150 @@ export async function POST(request: NextRequest) {
         threadId = await createThread({
           userId,
           growId,
-          firstUserMessage: message,
+          firstUserMessage: effectiveUserText,
         });
       }
 
       // Persist the user message before we call out to the model so the
-      // transcript is durable even if the stream errors.
+      // transcript is durable even if the stream errors. We capture the
+      // returned id so attachment rows can foreign-key to this exact
+      // chat_messages row.
       if (threadId) {
-        await appendMessage({
+        userMessageId = await appendMessage({
           threadId,
           role: "user",
-          content: message,
+          content: effectiveUserText,
         });
+      }
+    }
+
+    // ─── Inline image analysis ──────────────────────────────────────────────
+    // For each attachment, run the existing sync plant-analysis pipeline so
+    // (a) the timeline gets a new analysis row and (b) the model has the
+    // findings JSON in its context. We bound this with an 8s timeout per
+    // image — beyond that the user is left waiting too long for chat
+    // streaming to feel responsive, so we fall back to a "still working on
+    // it" message and let the realtime channel push the result to whatever
+    // page they navigate to next.
+    type ResolvedAttachment = {
+      kind: "image";
+      plantId: string;
+      imageId: string;
+      storagePath: string;
+      analysisJson: unknown | null;
+      analysisId: string | null;
+      timedOut: boolean;
+      errorMessage?: string;
+      // Base64 data URL of the image bytes, ready to drop into a
+      // multimodal user message as `image_url`.
+      dataUrl: string | null;
+    };
+    const ANALYSIS_TIMEOUT_MS = 8_000;
+    const resolvedAttachments: ResolvedAttachment[] = [];
+    if (attachments.length > 0) {
+      const storage = getStorageClient();
+      for (const att of attachments) {
+        // Authorize the plant — RLS-gated via the user's session — before
+        // doing anything expensive. We deliberately do NOT trust the
+        // imageId/storagePath the client sent; we only re-verify the plant.
+        // The image row's existence is verified implicitly by
+        // runAndPersistPlantAnalysis selecting it.
+        const plantCtx = await getAuthorizedPlantContext(att.plantId);
+        if (!plantCtx) {
+          resolvedAttachments.push({
+            ...att,
+            analysisJson: null,
+            analysisId: null,
+            timedOut: false,
+            errorMessage: "plant not accessible",
+            dataUrl: null,
+          });
+          continue;
+        }
+
+        // Pull the raw image bytes from storage in parallel with the
+        // analysis call so we don't double the wall-time.
+        const downloadPromise = storage
+          .from("plant-images")
+          .download(att.storagePath)
+          .then(async ({ data, error }) => {
+            if (error || !data) return null;
+            try {
+              const buf = Buffer.from(await data.arrayBuffer());
+              // Default to image/jpeg if we don't know — Gemini accepts
+              // any of the standard image MIMEs for image_url parts.
+              const mime = (data as Blob).type || "image/jpeg";
+              return `data:${mime};base64,${buf.toString("base64")}`;
+            } catch {
+              return null;
+            }
+          })
+          .catch(() => null);
+
+        const analysisPromise = runAndPersistPlantAnalysis({
+          plantId: att.plantId,
+          imageId: att.imageId,
+          requestId,
+        }).then(
+          (r) => ({ ok: true as const, value: r }),
+          (err: unknown) => ({
+            ok: false as const,
+            error: err instanceof Error ? err.message : String(err),
+          }),
+        );
+
+        const timeoutPromise = new Promise<{ timedOut: true }>((resolve) =>
+          setTimeout(() => resolve({ timedOut: true }), ANALYSIS_TIMEOUT_MS),
+        );
+
+        const [analysisOutcome, dataUrl] = await Promise.all([
+          Promise.race([analysisPromise, timeoutPromise]),
+          downloadPromise,
+        ]);
+
+        if ("timedOut" in analysisOutcome) {
+          resolvedAttachments.push({
+            ...att,
+            analysisJson: null,
+            analysisId: null,
+            timedOut: true,
+            dataUrl,
+          });
+        } else if (!analysisOutcome.ok) {
+          resolvedAttachments.push({
+            ...att,
+            analysisJson: null,
+            analysisId: null,
+            timedOut: false,
+            errorMessage: analysisOutcome.error,
+            dataUrl,
+          });
+        } else {
+          const r = analysisOutcome.value;
+          resolvedAttachments.push({
+            ...att,
+            analysisJson: r?.analysis ?? null,
+            analysisId: r?.analysisId ?? null,
+            timedOut: false,
+            dataUrl,
+          });
+        }
+
+        // Persist the chat_message_attachments row regardless of analysis
+        // outcome — we want the image visible in the transcript even if
+        // analysis timed out (the realtime channel will fill in the
+        // analysis result on whatever page the user navigates to).
+        const last = resolvedAttachments[resolvedAttachments.length - 1]!;
+        if (userMessageId) {
+          await appendChatAttachment({
+            messageId: userMessageId,
+            kind: "image",
+            plantId: att.plantId,
+            imageId: att.imageId,
+            storagePath: att.storagePath,
+            analysisId: last.analysisId,
+          });
+        }
       }
     }
 
@@ -255,14 +460,71 @@ export async function POST(request: NextRequest) {
 
     const openai = getAIClient();
 
+    // Build the user turn. When images are attached we send a multipart
+    // content array (text + image_url for each image) so Gemini's
+    // OpenAI-compat endpoint sees the actual pixels — that's the whole
+    // point of attaching an image to a chat message.
+    const userParts: ChatCompletionContentPart[] = [];
+    if (effectiveUserText) {
+      userParts.push({ type: "text", text: effectiveUserText });
+    }
+    for (const att of resolvedAttachments) {
+      if (att.dataUrl) {
+        userParts.push({
+          type: "image_url",
+          image_url: { url: att.dataUrl },
+        });
+      }
+    }
+
+    // Build an analysis-results system note from any attachments that
+    // completed analysis in time. Including the structured findings JSON
+    // alongside the raw image gives the model both signal sources to
+    // ground its reply in.
+    let analysisSystemNote: string | null = null;
+    const analyzed = resolvedAttachments.filter((a) => a.analysisJson !== null);
+    const stillRunning = resolvedAttachments.filter((a) => a.timedOut);
+    const failed = resolvedAttachments.filter(
+      (a) => a.errorMessage && !a.timedOut,
+    );
+    if (analyzed.length > 0 || stillRunning.length > 0 || failed.length > 0) {
+      const lines: string[] = ["## Inline image analysis"];
+      for (const a of analyzed) {
+        lines.push(
+          `- Plant ${a.plantId} / image ${a.imageId}: ${JSON.stringify(a.analysisJson).slice(0, 4_000)}`,
+        );
+      }
+      for (const a of stillRunning) {
+        lines.push(
+          `- Plant ${a.plantId} / image ${a.imageId}: analysis still running (timed out > ${ANALYSIS_TIMEOUT_MS}ms). Tell the user the analysis is processing and will appear on the plant page shortly.`,
+        );
+      }
+      for (const a of failed) {
+        lines.push(
+          `- Plant ${a.plantId} / image ${a.imageId}: analysis failed (${a.errorMessage}). Continue from visual inspection only.`,
+        );
+      }
+      analysisSystemNote = lines.join("\n");
+    }
+
     const baseMessages: ChatCompletionMessageParam[] = [
       { role: "system", content: CHAT_SYSTEM_PROMPT },
       { role: "system", content: renderGrowContextBlock(growContext) },
+      ...(analysisSystemNote
+        ? ([
+            { role: "system", content: analysisSystemNote },
+          ] as ChatCompletionMessageParam[])
+        : []),
       ...history.map<ChatCompletionMessageParam>((m) => ({
         role: m.role,
         content: m.content,
       })),
-      { role: "user", content: message },
+      {
+        role: "user",
+        content: userParts.some((p) => p.type === "image_url")
+          ? userParts
+          : effectiveUserText,
+      },
     ];
 
     const encoder = new TextEncoder();
