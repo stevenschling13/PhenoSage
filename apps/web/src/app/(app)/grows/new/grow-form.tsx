@@ -2,6 +2,7 @@
 
 import { useState, useTransition } from "react";
 import Link from "next/link";
+import { useRouter } from "next/navigation";
 import { Button, buttonStyles } from "@/components/ui/button";
 import { FormErrorSummary } from "@/components/form-error-summary";
 import {
@@ -78,6 +79,7 @@ function FieldError({
 }
 
 export function GrowForm({ initialStartDate }: { initialStartDate: string }) {
+  const router = useRouter();
   const [state, setState] = useState<CreateGrowActionResult>(
     createGrowActionInitialState,
   );
@@ -92,8 +94,22 @@ export function GrowForm({ initialStartDate }: { initialStartDate: string }) {
 
   async function handleAction(formData: FormData) {
     startTransition(async () => {
-      const result = await createGrowAction(formData);
-      setState(result);
+      try {
+        const result = await createGrowAction(formData);
+        setState(result);
+        if (result.status === "success" && result.redirectTo) {
+          router.push(result.redirectTo);
+        }
+      } catch (err) {
+        // Last-resort safety net: never let an unexpected throw escape the
+        // transition and crash into the (app)/error.tsx boundary.
+        console.error("createGrowAction failed unexpectedly", err);
+        setState({
+          message:
+            "Something went wrong saving the grow. Please try again in a moment.",
+          status: "error",
+        });
+      }
     });
   }
 

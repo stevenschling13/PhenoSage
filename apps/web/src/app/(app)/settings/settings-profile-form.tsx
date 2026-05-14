@@ -37,10 +37,21 @@ export function SettingsProfileForm({
 
   async function handleAction(formData: FormData) {
     startTransition(async () => {
-      const result = await updateDisplayNameAction(formData);
-      setState(result);
-      if (result.status === "success") {
-        router.refresh();
+      try {
+        const result = await updateDisplayNameAction(formData);
+        setState(result);
+        if (result.status === "success") {
+          router.refresh();
+        }
+      } catch (err) {
+        // Safety net so an unexpected throw can never crash into the
+        // (app)/error.tsx boundary and look like a generic workspace error.
+        console.error("updateDisplayNameAction failed unexpectedly", err);
+        setState({
+          message:
+            "Something went wrong saving your display name. Please try again in a moment.",
+          status: "error",
+        });
       }
     });
   }

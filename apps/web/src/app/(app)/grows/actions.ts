@@ -1,9 +1,10 @@
 "use server";
 
 import { revalidatePath } from "next/cache";
-import { redirect } from "next/navigation";
 import type { GrowMedium, GrowStage, LightType } from "@phenosage/shared";
 import { createSupabaseServerClient, getServerUser } from "@/lib/server/auth";
+import { isNextFrameworkError } from "@/lib/server/auth-errors";
+import { logServerEvent } from "@/lib/server/request-id";
 
 const validStages = new Set<GrowStage>([
   "germination",
@@ -45,7 +46,8 @@ export type CreateGrowActionResult = {
     targetHarvestDate?: string;
   };
   message?: string;
-  status: "error" | "idle";
+  redirectTo?: string;
+  status: "error" | "idle" | "success";
 };
 
 export const createGrowActionInitialState: CreateGrowActionResult = {
@@ -126,27 +128,55 @@ export async function createGrowAction(
     };
   }
 
-  const supabase = await createSupabaseServerClient();
-  const { error } = await supabase.from("grows").insert({
-    description: description || null,
-    light_type: lightType as LightType,
-    medium: medium as GrowMedium,
-    name,
-    owner_id: user.id,
-    stage: stage as GrowStage,
-    start_date: startDate,
-    target_harvest_date: targetHarvestDate || null,
-  });
+  try {
+    const supabase = await createSupabaseServerClient();
+    const { error } = await supabase.from("grows").insert({
+      description: description || null,
+      light_type: lightType as LightType,
+      medium: medium as GrowMedium,
+      name,
+      owner_id: user.id,
+      stage: stage as GrowStage,
+      start_date: startDate,
+      target_harvest_date: targetHarvestDate || null,
+    });
 
-  if (error) {
+    if (error) {
+      logServerEvent("error", "create grow insert failed", {
+        error: error.message,
+        userId: user.id,
+      });
+      return {
+        message: `Could not save the grow: ${error.message}`,
+        status: "error",
+      };
+    }
+
+    revalidatePath("/dashboard");
+    revalidatePath("/grows");
+    revalidatePath("/plants");
+  } catch (err) {
+    // Re-throw Next framework control-flow signals untouched.
+    if (isNextFrameworkError(err)) throw err;
+    logServerEvent("error", "create grow action threw", {
+      error: err instanceof Error ? err.message : String(err),
+      userId: user.id,
+    });
     return {
-      message: error.message,
+      message:
+        "We couldn't save the grow right now. Please try again in a moment — if it keeps failing, your sign-in may have expired.",
       status: "error",
     };
   }
 
-  revalidatePath("/dashboard");
-  revalidatePath("/grows");
-  revalidatePath("/plants");
-  redirect("/grows");
+  // Return a redirectTo instead of calling redirect() here. When this server
+  // action is invoked from a client-side `await` inside startTransition, a
+  // NEXT_REDIRECT throw cannot be intercepted by the framework and surfaces
+  // as an error boundary hit. Letting the client perform router.push avoids
+  // that entire failure mode.
+  return {
+    message: "Grow created.",
+    redirectTo: "/grows",
+    status: "success",
+  };
 }
