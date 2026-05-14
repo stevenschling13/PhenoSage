@@ -8,6 +8,7 @@ const executeChatTool = vi.fn();
 
 vi.mock("@/lib/server/auth", () => ({
   getServerSession: (...args: unknown[]) => getServerSession(...args),
+  createSupabaseServerClient: vi.fn(),
 }));
 
 const getAIClient = vi.fn();
@@ -29,12 +30,35 @@ const assertThreadOwner = vi.fn();
 const createThread = vi.fn();
 const appendMessage = vi.fn();
 const touchThread = vi.fn();
+const appendChatAttachment = vi.fn();
 
 vi.mock("@/lib/server/chat-persistence", () => ({
   assertThreadOwner: (...args: unknown[]) => assertThreadOwner(...args),
   createThread: (...args: unknown[]) => createThread(...args),
   appendMessage: (...args: unknown[]) => appendMessage(...args),
   touchThread: (...args: unknown[]) => touchThread(...args),
+  appendChatAttachment: (...args: unknown[]) => appendChatAttachment(...args),
+}));
+
+const runAndPersistPlantAnalysis = vi.fn();
+vi.mock("@/lib/server/plants", () => ({
+  runAndPersistPlantAnalysis: (...args: unknown[]) =>
+    runAndPersistPlantAnalysis(...args),
+}));
+
+const getAuthorizedPlantContext = vi.fn();
+vi.mock("@/lib/server/plant-access", () => ({
+  getAuthorizedPlantContext: (...args: unknown[]) =>
+    getAuthorizedPlantContext(...args),
+}));
+
+const storageDownload = vi.fn();
+vi.mock("@/lib/server/storage", () => ({
+  getStorageClient: () => ({
+    from: () => ({
+      download: (...args: unknown[]) => storageDownload(...args),
+    }),
+  }),
 }));
 
 import { __resetRateLimitStore } from "@/lib/server/rate-limit";
@@ -120,9 +144,17 @@ describe("POST /api/chat", () => {
     createThread.mockReset();
     appendMessage.mockReset();
     touchThread.mockReset();
+    appendChatAttachment.mockReset();
+    runAndPersistPlantAnalysis.mockReset();
+    getAuthorizedPlantContext.mockReset();
+    storageDownload.mockReset();
     createThread.mockResolvedValue("thread_new");
-    appendMessage.mockResolvedValue(undefined);
+    // appendMessage returns the new message id so the attachments path can
+    // associate chat_message_attachments rows with the user turn. Existing
+    // tests that don't check the return value are unaffected.
+    appendMessage.mockResolvedValue("msg_new");
     touchThread.mockResolvedValue(undefined);
+    appendChatAttachment.mockResolvedValue(undefined);
     getAIClient.mockReturnValue({
       chat: {
         completions: {
@@ -510,5 +542,214 @@ describe("POST /api/chat", () => {
     const opts = lastCall?.[1] as { signal?: AbortSignal } | undefined;
     expect(opts).toBeDefined();
     expect(opts?.signal).toBeInstanceOf(AbortSignal);
+  });
+
+  // ─── Attachments path ────────────────────────────────────────────────────
+
+  function imageAttachment(overrides: Partial<Record<string, string>> = {}) {
+    return {
+      kind: "image" as const,
+      plantId: "plant-1",
+      imageId: "img-1",
+      storagePath: "u1/plant-1/img-1.jpg",
+      ...overrides,
+    };
+  }
+
+  function fakeBlob(bytes = "fake-jpg-bytes", mime = "image/jpeg") {
+    return {
+      type: mime,
+      arrayBuffer: async () => new TextEncoder().encode(bytes).buffer,
+    };
+  }
+
+  it("rejects more than one attachment per turn (MVP cap)", async () => {
+    getServerSession.mockResolvedValue({ user: { id: "u1" } });
+    const res = await POST(
+      jsonRequest({
+        message: "hi",
+        attachments: [imageAttachment(), imageAttachment({ imageId: "img-2" })],
+      }),
+    );
+    expect(res.status).toBe(400);
+    expect(streamMock).not.toHaveBeenCalled();
+    expect(appendChatAttachment).not.toHaveBeenCalled();
+  });
+
+  it("rejects attachments missing required fields", async () => {
+    getServerSession.mockResolvedValue({ user: { id: "u1" } });
+    const res = await POST(
+      jsonRequest({
+        message: "hi",
+        attachments: [{ kind: "image", plantId: "p1" }],
+      }),
+    );
+    expect(res.status).toBe(400);
+    expect(streamMock).not.toHaveBeenCalled();
+  });
+
+  it("allows an empty message when an attachment is present", async () => {
+    getServerSession.mockResolvedValue({ user: { id: "u1" } });
+    streamMock.mockImplementation(() => textOnlyStream(["leaves look fine"]));
+    getAuthorizedPlantContext.mockResolvedValue({
+      plantId: "plant-1",
+      growId: "g1",
+      name: "Blue Dream",
+    });
+    storageDownload.mockResolvedValue({ data: fakeBlob(), error: null });
+    runAndPersistPlantAnalysis.mockResolvedValue({
+      analysis: { summary: "healthy" },
+      analysisId: "an-1",
+      imageId: "img-1",
+      context: {},
+    });
+
+    const res = await POST(
+      jsonRequest({ message: "", attachments: [imageAttachment()] }),
+    );
+    expect(res.status).toBe(200);
+    await res.text();
+    expect(streamMock).toHaveBeenCalledTimes(1);
+  });
+
+  it("sends a multimodal user message (text + image_url) and a system note with the analysis JSON", async () => {
+    getServerSession.mockResolvedValue({ user: { id: "u1" } });
+    streamMock.mockImplementation(() => textOnlyStream(["ack"]));
+    getAuthorizedPlantContext.mockResolvedValue({
+      plantId: "plant-1",
+      growId: "g1",
+      name: "Blue Dream",
+    });
+    storageDownload.mockResolvedValue({ data: fakeBlob(), error: null });
+    runAndPersistPlantAnalysis.mockResolvedValue({
+      analysis: { summary: "minor N deficiency" },
+      analysisId: "an-1",
+      imageId: "img-1",
+      context: {},
+    });
+
+    const res = await POST(
+      jsonRequest({
+        message: "what's wrong?",
+        attachments: [imageAttachment()],
+      }),
+    );
+    expect(res.status).toBe(200);
+    await res.text();
+
+    expect(runAndPersistPlantAnalysis).toHaveBeenCalledWith(
+      expect.objectContaining({ plantId: "plant-1", imageId: "img-1" }),
+    );
+    expect(appendChatAttachment).toHaveBeenCalledWith(
+      expect.objectContaining({
+        messageId: "msg_new",
+        kind: "image",
+        plantId: "plant-1",
+        imageId: "img-1",
+        analysisId: "an-1",
+      }),
+    );
+
+    const args = streamMock.mock.calls[0]?.[0] as {
+      messages: Array<{
+        role: string;
+        content:
+          | string
+          | Array<{ type: string; text?: string; image_url?: { url: string } }>;
+      }>;
+    };
+    // The user message should be a multimodal parts array.
+    const userMsg = args.messages[args.messages.length - 1];
+    expect(Array.isArray(userMsg?.content)).toBe(true);
+    const parts = userMsg!.content as Array<{
+      type: string;
+      text?: string;
+      image_url?: { url: string };
+    }>;
+    expect(
+      parts.some((p) => p.type === "text" && p.text === "what's wrong?"),
+    ).toBe(true);
+    const imagePart = parts.find((p) => p.type === "image_url");
+    expect(imagePart?.image_url?.url).toMatch(/^data:image\/jpeg;base64,/);
+
+    // A system note containing the analysis JSON must be present so the
+    // model has structured findings to cross-check against the pixels.
+    const systemNotes = args.messages
+      .filter((m) => m.role === "system")
+      .map((m) => (typeof m.content === "string" ? m.content : ""));
+    expect(systemNotes.some((s) => s.includes("minor N deficiency"))).toBe(
+      true,
+    );
+  });
+
+  it("falls back gracefully when analysis times out (still persists attachment, tells the model)", async () => {
+    getServerSession.mockResolvedValue({ user: { id: "u1" } });
+    streamMock.mockImplementation(() =>
+      textOnlyStream(["I'll inspect visually."]),
+    );
+    getAuthorizedPlantContext.mockResolvedValue({
+      plantId: "plant-1",
+      growId: "g1",
+      name: "Blue Dream",
+    });
+    storageDownload.mockResolvedValue({ data: fakeBlob(), error: null });
+    // Never resolves → the 8s timeout wins. Fake timers keep the test fast.
+    runAndPersistPlantAnalysis.mockImplementation(() => new Promise(() => {}));
+
+    vi.useFakeTimers();
+    const promise = POST(
+      jsonRequest({
+        message: "look at this",
+        attachments: [imageAttachment()],
+      }),
+    );
+    await vi.advanceTimersByTimeAsync(9_000);
+    const res = await promise;
+    vi.useRealTimers();
+
+    expect(res.status).toBe(200);
+    await res.text();
+
+    // Attachment row must still be written (with analysisId=null) so the
+    // image is preserved in the transcript.
+    expect(appendChatAttachment).toHaveBeenCalledWith(
+      expect.objectContaining({
+        messageId: "msg_new",
+        plantId: "plant-1",
+        imageId: "img-1",
+        analysisId: null,
+      }),
+    );
+
+    const args = streamMock.mock.calls[0]?.[0] as {
+      messages: Array<{ role: string; content: unknown }>;
+    };
+    const systemNotes = args.messages
+      .filter((m) => m.role === "system")
+      .map((m) => (typeof m.content === "string" ? m.content : ""))
+      .join("\n");
+    expect(systemNotes).toMatch(/still running|timed? out|in progress/i);
+  });
+
+  it("marks the attachment as inaccessible when the plant fails authorization", async () => {
+    getServerSession.mockResolvedValue({ user: { id: "u1" } });
+    streamMock.mockImplementation(() => textOnlyStream(["ok"]));
+    // Plant lookup fails → attachment is recorded as not-accessible and we
+    // do NOT hit storage or analysis.
+    getAuthorizedPlantContext.mockResolvedValue(null);
+
+    const res = await POST(
+      jsonRequest({
+        message: "hi",
+        attachments: [imageAttachment({ plantId: "someone-elses-plant" })],
+      }),
+    );
+    expect(res.status).toBe(200);
+    await res.text();
+
+    expect(runAndPersistPlantAnalysis).not.toHaveBeenCalled();
+    expect(storageDownload).not.toHaveBeenCalled();
+    // No attachment row written for an unauthorized plant.
+    expect(appendChatAttachment).not.toHaveBeenCalled();
   });
 });
