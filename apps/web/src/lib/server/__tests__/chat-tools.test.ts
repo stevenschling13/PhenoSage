@@ -18,6 +18,41 @@ type SingleResult = {
   error: { message: string; code?: string } | null;
 };
 
+type ListResult = {
+  data: unknown[] | null;
+  error: { message: string; code?: string } | null;
+};
+
+// Builds a flexible select-chain mock for list-style queries:
+//   .from(t).select(...).order(...).order(...).limit(...).eq(...).in(...)
+// The final awaited value is `result`. Chain methods are all idempotent
+// (return the same chainable proxy) so callers can mix and match.
+type SelectChainKey = "select" | "order" | "limit" | "eq" | "in";
+type SelectChain = Record<SelectChainKey, ReturnType<typeof vi.fn>> &
+  PromiseLike<ListResult>;
+
+function makeSelectChainMock(result: ListResult) {
+  const calls: Record<SelectChainKey, unknown[][]> = {
+    eq: [],
+    in: [],
+    limit: [],
+    order: [],
+    select: [],
+  };
+  const chain = {} as SelectChain;
+  const KEYS: SelectChainKey[] = ["select", "order", "limit", "eq", "in"];
+  for (const key of KEYS) {
+    chain[key] = vi.fn((...args: unknown[]) => {
+      calls[key].push(args);
+      return chain;
+    });
+  }
+  // Make the chain awaitable: callers do `await q` after the last filter.
+  chain.then = Promise.resolve(result).then.bind(Promise.resolve(result));
+  const from = vi.fn(() => chain);
+  return { calls, chain, client: { from }, from };
+}
+
 function makeInsertMock(result: SingleResult) {
   const single = vi.fn().mockResolvedValue(result);
   const select = vi.fn(() => ({ single }));
@@ -619,5 +654,221 @@ describe("chat-tools — update_grow_stage", () => {
         "you do not have permission to change this grow's stage (owners only)",
       ok: false,
     });
+  });
+});
+
+describe("chat-tools — list_open_tasks", () => {
+  beforeEach(() => {
+    createSupabaseServerClient.mockReset();
+    logServerEvent.mockReset();
+  });
+
+  it("is exposed in the tool list with no required args (growId or plantId at runtime)", () => {
+    const def = CHAT_TOOL_DEFINITIONS.find(
+      (t) => t.function.name === "list_open_tasks",
+    );
+    expect(def).toBeDefined();
+    // OpenAI schema doesn't list either as required, because EITHER is allowed
+    // (zod refine validates at runtime).
+    expect(def?.function.parameters?.required).toBeUndefined();
+  });
+
+  it("filters by grow + open|in_progress when includeCompleted is false (default)", async () => {
+    const tasks = [
+      {
+        created_at: "2026-05-14T00:00:00.000Z",
+        finding_id: "f-1",
+        grow_id: "grow-1",
+        id: "t-1",
+        plant_id: "p-3",
+        priority: "urgent",
+        status: "open",
+        title: "Address: nitrogen deficiency",
+      },
+    ];
+    const { calls, client, from } = makeSelectChainMock({
+      data: tasks,
+      error: null,
+    });
+    createSupabaseServerClient.mockResolvedValue(client);
+
+    const result = await executeChatTool(
+      "list_open_tasks",
+      { growId: "grow-1" },
+      CTX_AUTHED,
+    );
+
+    expect(result).toEqual({ data: tasks, ok: true });
+    expect(from).toHaveBeenCalledWith("grow_tasks");
+    expect(calls.eq).toContainEqual(["grow_id", "grow-1"]);
+    expect(calls.in).toContainEqual(["status", ["open", "in_progress"]]);
+  });
+
+  it("filters by plant when plantId is supplied", async () => {
+    const { calls, client } = makeSelectChainMock({ data: [], error: null });
+    createSupabaseServerClient.mockResolvedValue(client);
+
+    await executeChatTool(
+      "list_open_tasks",
+      { plantId: "plant-3" },
+      CTX_AUTHED,
+    );
+
+    expect(calls.eq).toContainEqual(["plant_id", "plant-3"]);
+  });
+
+  it("includes completed tasks when includeCompleted=true", async () => {
+    const { calls, client } = makeSelectChainMock({ data: [], error: null });
+    createSupabaseServerClient.mockResolvedValue(client);
+
+    await executeChatTool(
+      "list_open_tasks",
+      { growId: "grow-1", includeCompleted: true },
+      CTX_AUTHED,
+    );
+
+    // No status filter when includeCompleted is true.
+    expect(calls.in).toEqual([]);
+  });
+
+  it("rejects when neither growId nor plantId is supplied", async () => {
+    const { calls, client } = makeSelectChainMock({ data: [], error: null });
+    createSupabaseServerClient.mockResolvedValue(client);
+
+    const result = await executeChatTool("list_open_tasks", {}, CTX_AUTHED);
+
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      expect(result.error).toMatch(/growId|plantId/);
+    }
+    expect(calls.eq).toEqual([]);
+  });
+});
+
+describe("chat-tools — update_task_status", () => {
+  beforeEach(() => {
+    createSupabaseServerClient.mockReset();
+    logServerEvent.mockReset();
+  });
+
+  it("is exposed in the tool list and requires taskId + status", () => {
+    const def = CHAT_TOOL_DEFINITIONS.find(
+      (t) => t.function.name === "update_task_status",
+    );
+    expect(def).toBeDefined();
+    expect(def?.function.parameters?.required).toEqual(["taskId", "status"]);
+  });
+
+  it("flips status and returns the updated row", async () => {
+    const { client, from, update, eq } = makeUpdateEqMaybeSingleMock({
+      data: {
+        completed_at: "2026-05-14T12:00:00.000Z",
+        grow_id: "grow-1",
+        id: "t-1",
+        priority: "urgent",
+        status: "done",
+        title: "Address: nitrogen deficiency",
+      },
+      error: null,
+    });
+    createSupabaseServerClient.mockResolvedValue(client);
+
+    const result = await executeChatTool(
+      "update_task_status",
+      { status: "done", taskId: "t-1" },
+      CTX_AUTHED,
+    );
+
+    expect(result).toEqual({
+      data: expect.objectContaining({ id: "t-1", status: "done" }),
+      ok: true,
+    });
+    expect(from).toHaveBeenCalledWith("grow_tasks");
+    expect(update).toHaveBeenCalledWith({ status: "done" });
+    expect(eq).toHaveBeenCalledWith("id", "t-1");
+
+    const audit = logServerEvent.mock.calls.at(-1)?.[2];
+    expect(audit).toMatchObject({
+      ok: true,
+      rowId: "t-1",
+      tool: "update_task_status",
+      write: true,
+    });
+  });
+
+  it("rejects an invalid status without touching the database", async () => {
+    const { client, update } = makeUpdateEqMaybeSingleMock({
+      data: null,
+      error: null,
+    });
+    createSupabaseServerClient.mockResolvedValue(client);
+
+    const result = await executeChatTool(
+      "update_task_status",
+      { status: "blocked", taskId: "t-1" },
+      CTX_AUTHED,
+    );
+
+    expect(result.ok).toBe(false);
+    expect(update).not.toHaveBeenCalled();
+  });
+
+  it("returns 'not found or not accessible' when zero rows match", async () => {
+    const { client } = makeUpdateEqMaybeSingleMock({
+      data: null,
+      error: null,
+    });
+    createSupabaseServerClient.mockResolvedValue(client);
+
+    const result = await executeChatTool(
+      "update_task_status",
+      { status: "done", taskId: "missing" },
+      CTX_AUTHED,
+    );
+
+    expect(result).toEqual({
+      error: "task not found or not accessible",
+      ok: false,
+    });
+  });
+
+  it("translates an RLS denial into a contributor-only permission error", async () => {
+    const { client } = makeUpdateEqMaybeSingleMock({
+      data: null,
+      error: {
+        code: "42501",
+        message: "row-level security blocks update",
+      },
+    });
+    createSupabaseServerClient.mockResolvedValue(client);
+
+    const result = await executeChatTool(
+      "update_task_status",
+      { status: "done", taskId: "t-1" },
+      CTX_AUTHED,
+    );
+
+    expect(result).toEqual({
+      error:
+        "you do not have permission to update this task (owner or collaborator only)",
+      ok: false,
+    });
+  });
+
+  it("rejects when the user is not authenticated", async () => {
+    const { client, update } = makeUpdateEqMaybeSingleMock({
+      data: null,
+      error: null,
+    });
+    createSupabaseServerClient.mockResolvedValue(client);
+
+    const result = await executeChatTool(
+      "update_task_status",
+      { status: "done", taskId: "t-1" },
+      { requestId: "req-x", userId: null },
+    );
+
+    expect(result).toEqual({ error: "not authenticated", ok: false });
+    expect(update).not.toHaveBeenCalled();
   });
 });

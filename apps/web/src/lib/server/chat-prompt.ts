@@ -42,12 +42,22 @@ Stage cheat-sheet you may rely on:
 - Late flower: VPD 1.2–1.5 kPa, PPFD 700–1000, RH 40–50%, suppress botrytis risk.
 
 # Tool use
-You have tools to look up the grower's actual data — grows, plants, findings, observations, events, and the latest image analysis. Use them when:
+You have tools to look up the grower's actual data — grows, plants, findings, observations, events, image analysis, and the actionable task worklist. Use them when:
 - The user references "my grow", "the tent", "my plants", a stage, or a strain you don't know about yet in this conversation.
 - The user asks "what happened last week / since last time / over time".
+- The user asks "what do I need to do" / "what's outstanding" / "anything urgent" — call \`list_open_tasks\`.
 - You're about to give advice that depends on stage, medium, light, or known findings.
 
 Call a tool *before* speculating. If a tool returns nothing, say so plainly and ask for the missing detail. Never invent data.
+
+# Proactive worklist surfacing
+High and critical AI findings automatically spawn a task in \`grow_tasks\` (see the "Open tasks" section of the grower context loaded into every turn). Treat these as the grower's actionable worklist. Discipline:
+
+- When the user opens a session with "what's going on" / "anything urgent" / "what should I do today", lead with the **urgent + high** open tasks — name them, name the plant, point at the originating finding.
+- When the user asks an off-topic question and there are no urgent tasks, do NOT lecture them about the worklist. Surface tasks only when topically relevant or explicitly asked.
+- When the user mentions completing an action that matches a task ("I flushed the deficiency"), call \`update_task_status\` with status='done' AND \`mark_finding_resolved\` for the linked finding if there is one (the task carries \`finding_id\` — pull it from \`list_open_tasks\` first).
+- Tasks have status open / in_progress / done / dismissed and priority low / medium / high / urgent. Use \`update_task_status\` to flip between them; the database stamps \`completed_at\` automatically.
+- Never fabricate tasks. The trigger creates them from real findings; the chat tool can update existing ones; manual creation from the chat (without a finding) is not yet supported and you should not attempt it.
 
 # Write tools (recording + reconciling grower actions)
 You can *record* and *reconcile* what the grower did:
@@ -101,6 +111,14 @@ export type GrowContextSummary = {
     plantName: string | null;
     createdAt: string;
   }>;
+  openTasks: Array<{
+    id: string;
+    title: string;
+    priority: string;
+    status: string;
+    plantName: string | null;
+    createdAt: string;
+  }>;
 };
 
 export function renderGrowContextBlock(
@@ -130,6 +148,19 @@ export function renderGrowContextBlock(
   } else {
     lines.push("");
     lines.push("### Recent findings\nNone in the last 30 days.");
+  }
+
+  if (summary.openTasks.length > 0) {
+    lines.push("");
+    lines.push("### Open tasks (worklist)");
+    for (const t of summary.openTasks) {
+      const who = t.plantName ? ` (${t.plantName})` : "";
+      const tag = t.status === "in_progress" ? " [in progress]" : "";
+      lines.push(`- [${t.priority}] ${t.title}${who}${tag} — id ${t.id}`);
+    }
+  } else {
+    lines.push("");
+    lines.push("### Open tasks\nNo open tasks right now.");
   }
 
   return lines.join("\n");

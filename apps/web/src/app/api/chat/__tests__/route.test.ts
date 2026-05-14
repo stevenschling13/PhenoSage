@@ -350,6 +350,7 @@ describe("POST /api/chat", () => {
       daysSinceStart: 42,
       plantCount: 4,
       recentFindings: [],
+      openTasks: [],
     });
 
     const res = await POST(jsonRequest({ message: "status?", growId: "g1" }));

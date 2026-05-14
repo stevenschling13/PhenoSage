@@ -295,6 +295,63 @@ export const CHAT_TOOL_DEFINITIONS = [
       },
     },
   },
+  {
+    type: "function" as const,
+    function: {
+      name: "list_open_tasks",
+      description:
+        "List actionable tasks for a grow or plant. Tasks are auto-created from high/critical AI findings, and may also be created manually. Use to surface what the grower should do next, or to ground a reply in their actual worklist. Returns open + in_progress tasks by default, newest urgent first.",
+      parameters: {
+        type: "object",
+        properties: {
+          growId: {
+            type: "string",
+            description:
+              "Grow ID to scope to. Either growId or plantId is required.",
+          },
+          plantId: {
+            type: "string",
+            description:
+              "Plant ID to scope to (filters tasks where plant_id matches). Either growId or plantId is required.",
+          },
+          includeCompleted: {
+            type: "boolean",
+            description:
+              "Set true to include done + dismissed tasks too. Default false (only open + in_progress).",
+          },
+          limit: {
+            type: "number",
+            description: "Max tasks. Default 10, max 25.",
+          },
+        },
+        additionalProperties: false,
+      },
+    },
+  },
+  {
+    type: "function" as const,
+    function: {
+      name: "update_task_status",
+      description:
+        "Transition a grow_task to a new status — typically 'done' when the grower says they completed the action, or 'dismissed' when the task no longer applies (e.g. a false-positive finding). Setting status to 'done' or 'dismissed' stamps completed_at; setting it back to 'open' or 'in_progress' clears completed_at. Returns the updated task. Owner + collaborator only.",
+      parameters: {
+        type: "object",
+        properties: {
+          taskId: {
+            type: "string",
+            description: "Task ID to update. Required.",
+          },
+          status: {
+            type: "string",
+            enum: ["open", "in_progress", "done", "dismissed"],
+            description: "New status. Required.",
+          },
+        },
+        required: ["taskId", "status"],
+        additionalProperties: false,
+      },
+    },
+  },
 ];
 
 type ToolResult = { ok: true; data: unknown } | { ok: false; error: string };
@@ -401,6 +458,24 @@ const UpdateGrowStageArgs = z.object({
   stage: z.enum(GROW_STAGES),
 });
 
+const TASK_STATUSES = ["open", "in_progress", "done", "dismissed"] as const;
+
+const ListOpenTasksArgs = z
+  .object({
+    growId: z.string().min(1).optional(),
+    plantId: z.string().min(1).optional(),
+    includeCompleted: z.boolean().optional(),
+    limit: z.number().optional(),
+  })
+  .refine((v) => v.growId !== undefined || v.plantId !== undefined, {
+    message: "supply growId or plantId",
+  });
+
+const UpdateTaskStatusArgs = z.object({
+  taskId: z.string().min(1),
+  status: z.enum(TASK_STATUSES),
+});
+
 // Tools whose names start the model down a write path. The executor logs
 // arg keys (never values) for these so we have an audit trail without
 // retaining free-text user content in the request log.
@@ -409,6 +484,7 @@ const WRITE_TOOLS = new Set<string>([
   "log_plant_observation",
   "mark_finding_resolved",
   "update_grow_stage",
+  "update_task_status",
 ]);
 
 type ChatToolContext = {
@@ -723,6 +799,66 @@ export async function executeChatTool(
             return {
               ok: false,
               error: "grow not found or not accessible",
+            };
+          }
+          return { ok: true, data };
+        }
+
+        case "list_open_tasks": {
+          const args = ListOpenTasksArgs.parse(rawArgs ?? {});
+          const limit = numClamp(args.limit, 10, 25);
+          // Priority enum is stored as a postgres enum, which sorts by
+          // declaration order: low < medium < high < urgent. So DESC order
+          // on the column gives us urgent → high → medium → low naturally,
+          // which is what a worklist UI wants.
+          let q = supabase
+            .from("grow_tasks")
+            .select(
+              "id,grow_id,plant_id,finding_id,title,description,priority,status,due_at,created_at,completed_at",
+            )
+            .order("priority", { ascending: false })
+            .order("created_at", { ascending: false })
+            .limit(limit);
+          if (args.growId) q = q.eq("grow_id", args.growId);
+          if (args.plantId) q = q.eq("plant_id", args.plantId);
+          if (!args.includeCompleted) {
+            q = q.in("status", ["open", "in_progress"]);
+          }
+          const { data, error } = await q;
+          if (error) return { ok: false, error: error.message };
+          return { ok: true, data: data ?? [] };
+        }
+
+        case "update_task_status": {
+          if (!ctx.userId) {
+            return { ok: false, error: "not authenticated" };
+          }
+          const args = UpdateTaskStatusArgs.parse(rawArgs);
+          // completed_at is stamped/cleared by the BEFORE UPDATE trigger
+          // (grow_tasks_touch_updated_at) — we don't set it here.
+          const { data, error } = await supabase
+            .from("grow_tasks")
+            .update({ status: args.status })
+            .eq("id", args.taskId)
+            .select(
+              "id,grow_id,plant_id,finding_id,title,priority,status,completed_at",
+            )
+            .maybeSingle();
+          if (error) {
+            const denied =
+              error.code === "42501" ||
+              /permission denied|row-level security/i.test(error.message);
+            return {
+              ok: false,
+              error: denied
+                ? "you do not have permission to update this task (owner or collaborator only)"
+                : `could not update task: ${error.message}`,
+            };
+          }
+          if (!data) {
+            return {
+              ok: false,
+              error: "task not found or not accessible",
             };
           }
           return { ok: true, data };
