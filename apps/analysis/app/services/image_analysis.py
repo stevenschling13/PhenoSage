@@ -3,7 +3,9 @@ from __future__ import annotations
 import base64
 import json
 import logging
+import re
 from datetime import UTC, datetime
+from urllib.parse import quote
 
 import httpx
 
@@ -29,6 +31,23 @@ from app.services.scoring import compute_health_score
 
 MODEL_VERSION = "gpt-4o-mini-vision"
 logger = logging.getLogger(__name__)
+_STORAGE_PATH_PATTERN = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._/-]*$")
+
+
+def _sanitize_storage_path(storage_path: str) -> str:
+    path = storage_path.strip()
+    if (
+        not path
+        or path.startswith("/")
+        or path.startswith(".")
+        or ".." in path
+        or "\\" in path
+        or "?" in path
+        or "#" in path
+        or not _STORAGE_PATH_PATTERN.fullmatch(path)
+    ):
+        raise AnalysisError("Invalid storage path.", code="invalid_storage_path")
+    return quote(path, safe="/-._~")
 
 
 async def _fetch_storage_image(storage_path: str) -> tuple[bytes, str]:
@@ -37,8 +56,12 @@ async def _fetch_storage_image(storage_path: str) -> tuple[bytes, str]:
         # failure — never retry.
         raise ConfigurationError("Supabase storage credentials are not configured")
 
+    safe_storage_path = _sanitize_storage_path(storage_path)
     base_url = settings.supabase_url.rstrip("/")
-    url = f"{base_url}/storage/v1/object/authenticated/plant-images/{storage_path}"
+    url = (
+        f"{base_url}/storage/v1/object/authenticated/plant-images/"
+        f"{safe_storage_path}"
+    )
     headers = {
         "Authorization": f"Bearer {settings.supabase_service_role_key}",
         "x-request-id": get_request_id(),
