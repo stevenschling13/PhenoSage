@@ -57,6 +57,45 @@ const lightTypes = [
   { label: "Other", value: "other" },
 ] as const;
 
+type Preset = {
+  description: string;
+  label: string;
+  lightType: (typeof lightTypes)[number]["value"];
+  medium: (typeof growMedia)[number]["value"];
+  stage: (typeof growStages)[number]["value"];
+};
+
+const presets: Preset[] = [
+  {
+    description: "Most common indoor setup. Soil in fabric pots under LED.",
+    label: "Indoor LED · soil",
+    lightType: "led",
+    medium: "soil",
+    stage: "seedling",
+  },
+  {
+    description: "Faster feeding loop in coco coir under LED.",
+    label: "Indoor LED · coco",
+    lightType: "led",
+    medium: "coco",
+    stage: "seedling",
+  },
+  {
+    description: "Recirculating or DWC hydro with LED canopy lighting.",
+    label: "Indoor LED · hydro",
+    lightType: "led",
+    medium: "hydro",
+    stage: "seedling",
+  },
+  {
+    description: "Outdoor or greenhouse soil under natural sun.",
+    label: "Outdoor · sun",
+    lightType: "sun",
+    medium: "soil",
+    stage: "vegetative",
+  },
+];
+
 const inputClassName =
   "mt-2 block w-full rounded-[1.15rem] border border-border/80 bg-surface px-4 py-3 text-sm text-foreground shadow-soft transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/35";
 
@@ -86,11 +125,21 @@ export function GrowForm({ initialStartDate }: { initialStartDate: string }) {
   const [isPending, startTransition] = useTransition();
   const [name, setName] = useState("");
   const [description, setDescription] = useState("");
-  const [stage, setStage] = useState("seedling");
-  const [medium, setMedium] = useState("soil");
-  const [lightType, setLightType] = useState("led");
+  const [stage, setStage] = useState<Preset["stage"]>("seedling");
+  const [medium, setMedium] = useState<Preset["medium"]>("soil");
+  const [lightType, setLightType] = useState<Preset["lightType"]>("led");
   const [startDate, setStartDate] = useState(initialStartDate);
   const [targetHarvestDate, setTargetHarvestDate] = useState("");
+  const [activePresetLabel, setActivePresetLabel] = useState<string | null>(
+    null,
+  );
+
+  function applyPreset(preset: Preset) {
+    setStage(preset.stage);
+    setMedium(preset.medium);
+    setLightType(preset.lightType);
+    setActivePresetLabel(preset.label);
+  }
 
   async function handleAction(formData: FormData) {
     startTransition(async () => {
@@ -120,6 +169,42 @@ export function GrowForm({ initialStartDate }: { initialStartDate: string }) {
         fieldErrors={state.fieldErrors}
         fieldMeta={FIELD_META}
       />
+
+      <div
+        aria-label="Quick-start presets"
+        className="rounded-[1.15rem] border border-border/70 bg-background-subtle/40 px-4 py-4"
+        role="group"
+      >
+        <p className="text-sm font-medium text-foreground">
+          Quick-start a typical setup
+        </p>
+        <p className="mt-1 text-xs leading-5 text-muted-foreground">
+          Tap a preset to fill stage, medium, and light — you can still tweak
+          any field before saving.
+        </p>
+        <div className="mt-3 flex flex-wrap gap-2">
+          {presets.map((preset) => {
+            const isActive = activePresetLabel === preset.label;
+            return (
+              <button
+                aria-pressed={isActive}
+                className={
+                  "rounded-full border px-3.5 py-1.5 text-xs font-medium transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/35 " +
+                  (isActive
+                    ? "border-accent bg-accent/10 text-accent-strong"
+                    : "border-border/80 bg-surface text-foreground hover:border-accent/60")
+                }
+                key={preset.label}
+                onClick={() => applyPreset(preset)}
+                title={preset.description}
+                type="button"
+              >
+                {preset.label}
+              </button>
+            );
+          })}
+        </div>
+      </div>
 
       <div>
         <label
@@ -158,7 +243,7 @@ export function GrowForm({ initialStartDate }: { initialStartDate: string }) {
           id="grow-description"
           name="description"
           onChange={(event) => setDescription(event.target.value)}
-          placeholder="Optional room notes, cultivar program details, or operator context."
+          placeholder="Where this grow lives, the cultivar, or anything you'd want to remember later."
           value={description}
         />
         <p className="mt-2 text-sm text-muted-foreground">
@@ -183,7 +268,10 @@ export function GrowForm({ initialStartDate }: { initialStartDate: string }) {
             className={inputClassName}
             id="grow-stage"
             name="stage"
-            onChange={(event) => setStage(event.target.value)}
+            onChange={(event) => {
+              setStage(event.target.value as Preset["stage"]);
+              setActivePresetLabel(null);
+            }}
             value={stage}
           >
             {growStages.map((option) => (
@@ -211,7 +299,10 @@ export function GrowForm({ initialStartDate }: { initialStartDate: string }) {
             className={inputClassName}
             id="grow-medium"
             name="medium"
-            onChange={(event) => setMedium(event.target.value)}
+            onChange={(event) => {
+              setMedium(event.target.value as Preset["medium"]);
+              setActivePresetLabel(null);
+            }}
             value={medium}
           >
             {growMedia.map((option) => (
@@ -242,7 +333,10 @@ export function GrowForm({ initialStartDate }: { initialStartDate: string }) {
             className={inputClassName}
             id="grow-light-type"
             name="lightType"
-            onChange={(event) => setLightType(event.target.value)}
+            onChange={(event) => {
+              setLightType(event.target.value as Preset["lightType"]);
+              setActivePresetLabel(null);
+            }}
             value={lightType}
           >
             {lightTypes.map((option) => (
@@ -317,9 +411,13 @@ export function GrowForm({ initialStartDate }: { initialStartDate: string }) {
       </div>
 
       <div className="flex flex-wrap items-center justify-between gap-3 border-t border-border/70 pt-5">
-        <p className="text-sm leading-6 text-muted-foreground">
-          This creates the grow record immediately and makes it available to the
-          dashboard and plant flows.
+        <p
+          aria-live="polite"
+          className="text-sm leading-6 text-muted-foreground"
+        >
+          {isPending
+            ? "Saving the grow..."
+            : "Next: add your first plant so image history and assistant context have a home."}
         </p>
         <div className="flex flex-wrap gap-3">
           <Link
