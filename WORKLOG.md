@@ -4,6 +4,48 @@ Handoff log between sessions. Keep entries short. Newest at top.
 
 ---
 
+# WORKLOG
+
+Handoff log between sessions. Keep entries short. Newest at top.
+
+---
+
+## 2026-05-14 — Optimization bundle: chat-context parallel, createPlant fix, hot indexes (Claude Opus 4.7)
+
+**Landed on `main` via PR #136 (commit `4e12dbd`)**
+
+Second pass after #135. 3 parallel audit agents (perf+DB, security, UX) →
+triaged → shipped only the verified high-confidence wins.
+
+- **`createPlantAction` had the same redirect-from-await bug** as
+  createGrowAction. Same fix: try/catch with `isNextFrameworkError`
+  re-throw, return `{ status: "success", redirectTo }`, `router.push`
+  from `plant-form.tsx`. Sanitized raw supabase error strings (was
+  leaking `error.message` directly), added `logServerEvent` on failure,
+  friendly `23505` duplicate-name message.
+- **chat-context**: the 3 independent per-grow queries (plantCount,
+  recent findings, open tasks) were serial. Now `Promise.all`-ed.
+- **New migration `009_chat_and_findings_indexes.sql`** — adds two
+  missing covering indexes:
+  - `chat_threads(user_id, updated_at desc)` for `listThreadsForUser`
+  - `plant_findings(grow_id, created_at desc)` for chat-context's
+    last-30-days findings query
+  - **Action item:** run `supabase db push` against prod to apply.
+- **grow-form**: target-harvest-date input now has `min={startDate}` so
+  the date picker can't pick a target before the start.
+- **Tests:** 8 new cases for `createPlantAction`. Web at `417/417`
+  (was 409). lint, type-check, build, check:env all green. Prod
+  `/api/health` reporting `4e12dbd6...`.
+
+Explicitly **skipped** (verified as non-issues or out of scope):
+storage path collision (already UUID-namespaced), CSRF on server
+actions (SameSite cookies cover same-origin), `WITH CHECK` policy
+split (Postgres uses USING for INSERT when WITH CHECK absent),
+relocating `security definer` (standard Supabase pattern), chat-context
+caching (staleness risk).
+
+---
+
 ## 2026-05-13 — Workspace-action error boundary + chat training-refusal fix (Claude Opus 4.7)
 
 **Landed on `main` via PR #135 (commit `1b9b180`)**
