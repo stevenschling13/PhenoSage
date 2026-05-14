@@ -1,6 +1,7 @@
 import "server-only";
 import { z } from "zod";
 import { createSupabaseServerClient } from "./auth";
+import { getPlantTimeline, runAndPersistPlantAnalysis } from "./plants";
 import { logServerEvent } from "./request-id";
 
 // Tool definitions exposed to OpenAI. The handlers are intentionally
@@ -660,6 +661,54 @@ export const CHAT_TOOL_DEFINITIONS = [
       },
     },
   },
+  {
+    type: "function" as const,
+    function: {
+      name: "get_plant_timeline",
+      description:
+        "Return the unified time-ordered timeline of a plant — images, observations, AI findings, and analysis summaries merged in one feed. Use when the user asks a question that needs cross-source history ('how has Plant 3 progressed this week?', 'when did we last water this one?', 'show me everything that's happened to plant 4'). Newest items first. Returns up to `limit` items.",
+      parameters: {
+        type: "object",
+        properties: {
+          plantId: {
+            type: "string",
+            description: "Plant ID to read. Required.",
+          },
+          limit: {
+            type: "number",
+            description:
+              "Max items to return. Default 20, max 50. The model should request the smallest useful window to stay within token budget.",
+          },
+        },
+        required: ["plantId"],
+        additionalProperties: false,
+      },
+    },
+  },
+  {
+    type: "function" as const,
+    function: {
+      name: "trigger_plant_analysis",
+      description:
+        "Run the AI vision analysis pipeline on a plant photo and persist the result. Use when the user just uploaded a photo and wants immediate diagnostic feedback, or asks 'analyze this again with the new context'. By default analyzes the most recent image; pass imageId to analyze a specific historical image. The call is synchronous and may take 5-30 seconds — narrate that to the user before invoking. Returns the new analysis row (overall_health_score, summary, comparison_summary, findings count). RLS-scoped: the user must own or collaborate on the plant's grow.",
+      parameters: {
+        type: "object",
+        properties: {
+          plantId: {
+            type: "string",
+            description: "Plant ID to analyze. Required.",
+          },
+          imageId: {
+            type: "string",
+            description:
+              "Specific image to analyze. Omit to use the most recent image. Useful for re-analyzing a historical capture in light of new context.",
+          },
+        },
+        required: ["plantId"],
+        additionalProperties: false,
+      },
+    },
+  },
 ];
 
 type ToolResult = { ok: true; data: unknown } | { ok: false; error: string };
@@ -927,6 +976,16 @@ const FINDING_SEVERITIES = [
   "critical",
 ] as const;
 
+const GetPlantTimelineArgs = z.object({
+  plantId: z.string().min(1),
+  limit: z.number().optional(),
+});
+
+const TriggerPlantAnalysisArgs = z.object({
+  plantId: z.string().min(1),
+  imageId: z.string().min(1).optional(),
+});
+
 const RecordImageFindingArgs = z.object({
   plantId: z.string().min(1),
   growId: z.string().min(1),
@@ -972,6 +1031,7 @@ const WRITE_TOOLS = new Set<string>([
   "update_grow",
   "update_plant",
   "record_image_finding",
+  "trigger_plant_analysis",
 ]);
 
 type ChatToolContext = {
@@ -1602,6 +1662,93 @@ export async function executeChatTool(
             };
           }
           return { ok: true, data };
+        }
+
+        case "get_plant_timeline": {
+          const args = GetPlantTimelineArgs.parse(rawArgs);
+          const limit = numClamp(args.limit, 20, 50);
+          const timeline = await getPlantTimeline(args.plantId);
+          if (!timeline) {
+            return {
+              ok: false,
+              error:
+                "plant not found or not accessible — confirm plantId and that the user owns the grow",
+            };
+          }
+          // Cap items by the requested limit so a 200-item history doesn't
+          // blow the response budget. Items are already newest-first.
+          const items = timeline.items.slice(0, limit);
+          return {
+            ok: true,
+            data: {
+              plantId: timeline.plantId,
+              totalCount: timeline.items.length,
+              returnedCount: items.length,
+              items,
+            },
+          };
+        }
+
+        case "trigger_plant_analysis": {
+          if (!ctx.userId) {
+            return { ok: false, error: "not authenticated" };
+          }
+          const args = TriggerPlantAnalysisArgs.parse(rawArgs);
+          try {
+            const analyzeParams: Parameters<
+              typeof runAndPersistPlantAnalysis
+            >[0] = {
+              plantId: args.plantId,
+              requestId: ctx.requestId,
+            };
+            if (args.imageId) analyzeParams.imageId = args.imageId;
+            const result = await runAndPersistPlantAnalysis(analyzeParams);
+            if (!result) {
+              return {
+                ok: false,
+                error:
+                  "plant not found or not accessible — confirm plantId and that the user owns the grow",
+              };
+            }
+            if (!result.analysis) {
+              return {
+                ok: false,
+                error:
+                  "no images on this plant yet — upload a photo first, then re-run analysis",
+              };
+            }
+            // Return a trimmed summary so the model can quote it without
+            // re-fetching: score, summary text, comparison context, and
+            // counts of any findings emitted by this run. analysisId is
+            // exposed at the top of runAndPersistPlantAnalysis's return
+            // value, not inside the AnalysisResponse.
+            return {
+              ok: true,
+              data: {
+                analysisId: result.analysisId,
+                imageId: result.analysis.imageId,
+                comparedToImageId: result.analysis.comparedToImageId ?? null,
+                overallHealthScore: result.analysis.overallHealthScore,
+                summary: result.analysis.summary,
+                comparisonSummary: result.analysis.comparisonSummary ?? null,
+                analysisMode: result.analysis.analysisMode ?? null,
+                isFallback: result.analysis.isFallback ?? false,
+                findingsCount: result.analysis.findings?.length ?? 0,
+                analyzedAt: result.analysis.analyzedAt,
+              },
+            };
+          } catch (err) {
+            logServerEvent("error", "chat trigger_plant_analysis failed", {
+              requestId: ctx.requestId,
+              userId: ctx.userId,
+              plantId: args.plantId,
+              error: err instanceof Error ? err.message : String(err),
+            });
+            return {
+              ok: false,
+              error: "analysis pipeline failed; try again in a moment",
+            };
+          }
         }
 
         default:

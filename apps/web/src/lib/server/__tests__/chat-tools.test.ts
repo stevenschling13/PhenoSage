@@ -2,6 +2,8 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const createSupabaseServerClient = vi.fn();
 const logServerEvent = vi.fn();
+const getPlantTimeline = vi.fn();
+const runAndPersistPlantAnalysis = vi.fn();
 
 vi.mock("../auth", () => ({
   createSupabaseServerClient: (...args: unknown[]) =>
@@ -9,6 +11,11 @@ vi.mock("../auth", () => ({
 }));
 vi.mock("../request-id", () => ({
   logServerEvent: (...args: unknown[]) => logServerEvent(...args),
+}));
+vi.mock("../plants", () => ({
+  getPlantTimeline: (...args: unknown[]) => getPlantTimeline(...args),
+  runAndPersistPlantAnalysis: (...args: unknown[]) =>
+    runAndPersistPlantAnalysis(...args),
 }));
 
 import { CHAT_TOOL_DEFINITIONS, executeChatTool } from "../chat-tools";
@@ -1836,5 +1843,246 @@ describe("chat-tools — record_image_finding", () => {
 
     expect(result).toEqual({ error: "not authenticated", ok: false });
     expect(insert).not.toHaveBeenCalled();
+  });
+});
+
+describe("chat-tools — get_plant_timeline", () => {
+  beforeEach(() => {
+    getPlantTimeline.mockReset();
+    logServerEvent.mockReset();
+  });
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  it("is exposed in the tool list and requires plantId only", () => {
+    const def = CHAT_TOOL_DEFINITIONS.find(
+      (t) => t.function.name === "get_plant_timeline",
+    );
+    expect(def).toBeDefined();
+    expect(def?.function.parameters).toMatchObject({ required: ["plantId"] });
+  });
+
+  it("returns the timeline items capped at the requested limit", async () => {
+    const items = Array.from({ length: 30 }, (_, i) => ({
+      type: "image",
+      id: `img-${i}`,
+      createdAt: "2026-05-01T00:00:00Z",
+    }));
+    getPlantTimeline.mockResolvedValue({ plantId: "p-1", items });
+
+    const result = await executeChatTool(
+      "get_plant_timeline",
+      { plantId: "p-1", limit: 5 },
+      CTX_AUTHED,
+    );
+
+    expect(result).toEqual({
+      ok: true,
+      data: expect.objectContaining({
+        plantId: "p-1",
+        totalCount: 30,
+        returnedCount: 5,
+      }),
+    });
+    if (result.ok) {
+      expect((result.data as { items: unknown[] }).items).toHaveLength(5);
+    }
+  });
+
+  it("defaults to a limit of 20 when omitted", async () => {
+    getPlantTimeline.mockResolvedValue({
+      plantId: "p-1",
+      items: Array.from({ length: 25 }, (_, i) => ({
+        type: "observation",
+        id: `obs-${i}`,
+        observedAt: "2026-05-01T00:00:00Z",
+      })),
+    });
+
+    const result = await executeChatTool(
+      "get_plant_timeline",
+      { plantId: "p-1" },
+      CTX_AUTHED,
+    );
+
+    expect(result.ok).toBe(true);
+    if (result.ok) {
+      const data = result.data as { returnedCount: number };
+      expect(data.returnedCount).toBe(20);
+    }
+  });
+
+  it("caps the limit at 50 even when a higher value is requested", async () => {
+    getPlantTimeline.mockResolvedValue({
+      plantId: "p-1",
+      items: Array.from({ length: 200 }, (_, i) => ({ id: `x-${i}` })),
+    });
+
+    const result = await executeChatTool(
+      "get_plant_timeline",
+      { plantId: "p-1", limit: 9999 },
+      CTX_AUTHED,
+    );
+
+    expect(result.ok).toBe(true);
+    if (result.ok) {
+      const data = result.data as { returnedCount: number };
+      expect(data.returnedCount).toBe(50);
+    }
+  });
+
+  it("returns 'not found or not accessible' when getPlantTimeline returns null", async () => {
+    getPlantTimeline.mockResolvedValue(null);
+
+    const result = await executeChatTool(
+      "get_plant_timeline",
+      { plantId: "missing" },
+      CTX_AUTHED,
+    );
+
+    expect(result.ok).toBe(false);
+    if (!result.ok)
+      expect(result.error).toMatch(/not found or not accessible/i);
+  });
+});
+
+describe("chat-tools — trigger_plant_analysis", () => {
+  beforeEach(() => {
+    runAndPersistPlantAnalysis.mockReset();
+    logServerEvent.mockReset();
+  });
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  it("is exposed in the tool list and requires plantId only", () => {
+    const def = CHAT_TOOL_DEFINITIONS.find(
+      (t) => t.function.name === "trigger_plant_analysis",
+    );
+    expect(def).toBeDefined();
+    expect(def?.function.parameters).toMatchObject({ required: ["plantId"] });
+  });
+
+  it("forwards plantId + requestId and returns a trimmed analysis summary", async () => {
+    runAndPersistPlantAnalysis.mockResolvedValue({
+      context: { plantId: "p-1" },
+      analysisId: "a-1",
+      imageId: "img-9",
+      analysis: {
+        imageId: "img-9",
+        comparedToImageId: "img-7",
+        overallHealthScore: 0.82,
+        summary: "Healthy vegetative growth",
+        comparisonSummary: "More vigor than 5 days ago",
+        analysisMode: "vision",
+        isFallback: false,
+        findings: [{ category: "general", severity: "info" }],
+        analyzedAt: "2026-05-14T12:00:00Z",
+      },
+    });
+
+    const result = await executeChatTool(
+      "trigger_plant_analysis",
+      { plantId: "p-1" },
+      CTX_AUTHED,
+    );
+
+    expect(result).toEqual({
+      ok: true,
+      data: expect.objectContaining({
+        analysisId: "a-1",
+        imageId: "img-9",
+        comparedToImageId: "img-7",
+        overallHealthScore: 0.82,
+        summary: "Healthy vegetative growth",
+        findingsCount: 1,
+      }),
+    });
+    expect(runAndPersistPlantAnalysis).toHaveBeenCalledWith({
+      plantId: "p-1",
+      requestId: "req-123",
+    });
+  });
+
+  it("forwards a specific imageId when supplied", async () => {
+    runAndPersistPlantAnalysis.mockResolvedValue({
+      context: { plantId: "p-1" },
+      analysisId: "a-2",
+      imageId: "img-historic",
+      analysis: {
+        imageId: "img-historic",
+        overallHealthScore: 0.5,
+        summary: "x",
+        analyzedAt: "2026-05-01T00:00:00Z",
+      },
+    });
+
+    await executeChatTool(
+      "trigger_plant_analysis",
+      { plantId: "p-1", imageId: "img-historic" },
+      CTX_AUTHED,
+    );
+
+    expect(runAndPersistPlantAnalysis).toHaveBeenCalledWith({
+      plantId: "p-1",
+      imageId: "img-historic",
+      requestId: "req-123",
+    });
+  });
+
+  it("returns 'not found' when the helper returns null (RLS / unknown plant)", async () => {
+    runAndPersistPlantAnalysis.mockResolvedValue(null);
+
+    const result = await executeChatTool(
+      "trigger_plant_analysis",
+      { plantId: "missing" },
+      CTX_AUTHED,
+    );
+
+    expect(result.ok).toBe(false);
+    if (!result.ok)
+      expect(result.error).toMatch(/not found or not accessible/i);
+  });
+
+  it("returns a guidance message when the plant has no images yet", async () => {
+    runAndPersistPlantAnalysis.mockResolvedValue({
+      context: { plantId: "p-1" },
+      analysis: null,
+    });
+
+    const result = await executeChatTool(
+      "trigger_plant_analysis",
+      { plantId: "p-1" },
+      CTX_AUTHED,
+    );
+
+    expect(result.ok).toBe(false);
+    if (!result.ok) expect(result.error).toMatch(/upload a photo first/i);
+  });
+
+  it("converts an analysis-pipeline throw into a graceful error", async () => {
+    runAndPersistPlantAnalysis.mockRejectedValue(new Error("vision API down"));
+
+    const result = await executeChatTool(
+      "trigger_plant_analysis",
+      { plantId: "p-1" },
+      CTX_AUTHED,
+    );
+
+    expect(result.ok).toBe(false);
+    if (!result.ok) expect(result.error).toMatch(/analysis pipeline failed/i);
+    expect(logServerEvent).toHaveBeenCalled();
+  });
+
+  it("rejects when the user is not authenticated", async () => {
+    const result = await executeChatTool(
+      "trigger_plant_analysis",
+      { plantId: "p-1" },
+      { requestId: "req-x", userId: null },
+    );
+
+    expect(result).toEqual({ error: "not authenticated", ok: false });
+    expect(runAndPersistPlantAnalysis).not.toHaveBeenCalled();
   });
 });
