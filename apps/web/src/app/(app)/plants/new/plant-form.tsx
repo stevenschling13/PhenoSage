@@ -2,6 +2,7 @@
 
 import { useState, useTransition } from "react";
 import Link from "next/link";
+import { useRouter } from "next/navigation";
 import { Button, buttonStyles } from "@/components/ui/button";
 import { FormErrorSummary } from "@/components/form-error-summary";
 type GrowRecord = { id: string; name: string; stage: string | null };
@@ -48,6 +49,7 @@ export function PlantForm({
   defaultGrowId: string;
   grows: GrowRecord[];
 }) {
+  const router = useRouter();
   const [state, setState] = useState<CreatePlantActionResult>(
     createPlantActionInitialState,
   );
@@ -60,8 +62,22 @@ export function PlantForm({
 
   async function handleAction(formData: FormData) {
     startTransition(async () => {
-      const result = await createPlantAction(formData);
-      setState(result);
+      try {
+        const result = await createPlantAction(formData);
+        setState(result);
+        if (result.status === "success" && result.redirectTo) {
+          router.push(result.redirectTo);
+        }
+      } catch (err) {
+        // Safety net so an unexpected throw can never crash into the
+        // (app)/error.tsx boundary.
+        console.error("createPlantAction failed unexpectedly", err);
+        setState({
+          message:
+            "Something went wrong saving the plant. Please try again in a moment.",
+          status: "error",
+        });
+      }
     });
   }
 

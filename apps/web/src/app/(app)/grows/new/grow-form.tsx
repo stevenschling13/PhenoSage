@@ -303,6 +303,7 @@ export function GrowForm({ initialStartDate }: { initialStartDate: string }) {
             }
             className={inputClassName}
             id="target-harvest-date"
+            min={startDate || undefined}
             name="targetHarvestDate"
             onChange={(event) => setTargetHarvestDate(event.target.value)}
             type="date"
