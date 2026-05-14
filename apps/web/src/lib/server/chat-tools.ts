@@ -352,6 +352,156 @@ export const CHAT_TOOL_DEFINITIONS = [
       },
     },
   },
+  {
+    type: "function" as const,
+    function: {
+      name: "create_grow",
+      description:
+        "Create a new grow record on the user's behalf. Use when the user wants to set up a brand-new tent / room / cultivation program — 'start a new grow called North Tent in soil under LED', 'I'm beginning week 1 of a hydro flower run, set it up'. Always confirm at least name + stage + medium + light before calling. The grow is owned by the current user. Returns the new grow id and name so follow-up tools (create_plants, etc.) can reference it.",
+      parameters: {
+        type: "object",
+        properties: {
+          name: {
+            type: "string",
+            description:
+              "Operator-facing grow name (1-120 chars). Required. Examples: 'North Tent A', 'Greenhouse Spring 2026', 'Veg Room B'.",
+          },
+          stage: {
+            type: "string",
+            enum: [
+              "germination",
+              "seedling",
+              "vegetative",
+              "pre_flower",
+              "flower",
+              "late_flower",
+              "harvest",
+              "dry_cure",
+            ],
+            description:
+              "Current stage. Pick the most specific match for what the grower is doing today (default to 'seedling' for a fresh start when unclear).",
+          },
+          medium: {
+            type: "string",
+            enum: ["soil", "coco", "hydro", "aero", "living_soil", "other"],
+            description: "Cultivation medium.",
+          },
+          lightType: {
+            type: "string",
+            enum: ["hps", "cmh", "led", "t5", "sun", "mixed", "other"],
+            description: "Primary light source.",
+          },
+          startDate: {
+            type: "string",
+            description:
+              "ISO 8601 date (YYYY-MM-DD) the grow began. Omit to default to today. Cannot be more than 1 day in the future.",
+          },
+          targetHarvestDate: {
+            type: "string",
+            description:
+              "Optional ISO 8601 date (YYYY-MM-DD) the grower is aiming to harvest. Must be on or after startDate.",
+          },
+          description: {
+            type: "string",
+            description:
+              "Optional free-text notes about the room / cultivar / facility (up to 2000 chars).",
+          },
+        },
+        required: ["name", "stage", "medium", "lightType"],
+        additionalProperties: false,
+      },
+    },
+  },
+  {
+    type: "function" as const,
+    function: {
+      name: "create_plants",
+      description:
+        "Create one or more plant records inside an existing grow. Use immediately after create_grow when the user describes how many plants they're running, or any time they say 'add N plants to <grow>'. When count > 1, names are auto-suffixed with zero-padded numbers (e.g. 'Plant 01', 'Plant 02'; 'NL 10' two-digit padding when count >= 10). Returns the list of created plant ids and names so the model can reference specific plants in follow-up.",
+      parameters: {
+        type: "object",
+        properties: {
+          growId: {
+            type: "string",
+            description:
+              "Target grow ID. Required. If unknown, call list_grows first.",
+          },
+          name: {
+            type: "string",
+            description:
+              "Plant name (count=1) or name prefix (count>1). 1-115 chars; the bulk path appends ' NN' so keep room for the suffix.",
+          },
+          count: {
+            type: "number",
+            description:
+              "How many plants to create. Default 1. Maximum 25 per call.",
+          },
+          strain: {
+            type: "string",
+            description:
+              "Optional cultivar / strain name applied to every plant created in this call.",
+          },
+          batchLabel: {
+            type: "string",
+            description:
+              "Optional tray or batch reference applied to every plant.",
+          },
+          notes: {
+            type: "string",
+            description:
+              "Optional free-text notes applied to every plant (up to 2000 chars).",
+          },
+        },
+        required: ["growId", "name"],
+        additionalProperties: false,
+      },
+    },
+  },
+  {
+    type: "function" as const,
+    function: {
+      name: "create_grow_task",
+      description:
+        "Create a manual task in a grow's worklist. Use when the user asks for a reminder, follow-up action, or to capture something they need to do later — 'remind me to flush in 3 days', 'add a task to check trichomes Friday'. Tasks auto-created from AI findings already exist; this tool is for grower-initiated reminders only. Returns the new task id.",
+      parameters: {
+        type: "object",
+        properties: {
+          growId: {
+            type: "string",
+            description:
+              "Grow ID the task belongs to. Required. If unknown, call list_grows first.",
+          },
+          plantId: {
+            type: "string",
+            description:
+              "Optional plant ID when the task targets a single plant.",
+          },
+          title: {
+            type: "string",
+            description:
+              "Short, action-oriented title (1-200 chars). Examples: 'Flush plants 3 and 4', 'Check trichomes Friday'.",
+          },
+          description: {
+            type: "string",
+            description: "Optional longer detail (up to 2000 chars).",
+          },
+          priority: {
+            type: "string",
+            enum: ["low", "medium", "high", "urgent"],
+            description:
+              "Task priority. Default 'medium'. Use 'urgent' only when the grower flags an immediate issue.",
+          },
+          dueAt: {
+            type: "string",
+            description:
+              "Optional ISO 8601 datetime when the task is due. Must be in the future.",
+          },
+        },
+        required: ["growId", "title"],
+        additionalProperties: false,
+      },
+    },
+  },
 ];
 
 type ToolResult = { ok: true; data: unknown } | { ok: false; error: string };
@@ -476,6 +626,99 @@ const UpdateTaskStatusArgs = z.object({
   status: z.enum(TASK_STATUSES),
 });
 
+const GROW_MEDIA = [
+  "soil",
+  "coco",
+  "hydro",
+  "aero",
+  "living_soil",
+  "other",
+] as const;
+const LIGHT_TYPES = [
+  "hps",
+  "cmh",
+  "led",
+  "t5",
+  "sun",
+  "mixed",
+  "other",
+] as const;
+
+const isoDateNotFarFuture = z
+  .string()
+  .regex(/^\d{4}-\d{2}-\d{2}$/, "must be a YYYY-MM-DD date")
+  .refine((s) => !Number.isNaN(Date.parse(s)), {
+    message: "must be a valid date",
+  })
+  .refine((s) => Date.parse(s) <= Date.now() + 24 * 60 * 60 * 1000, {
+    message: "must not be more than 1 day in the future",
+  });
+
+const CreateGrowArgs = z
+  .object({
+    name: z.string().min(1).max(120),
+    stage: z.enum(GROW_STAGES),
+    medium: z.enum(GROW_MEDIA),
+    lightType: z.enum(LIGHT_TYPES),
+    startDate: isoDateNotFarFuture.optional(),
+    targetHarvestDate: z
+      .string()
+      .regex(/^\d{4}-\d{2}-\d{2}$/, "must be a YYYY-MM-DD date")
+      .refine((s) => !Number.isNaN(Date.parse(s)), {
+        message: "must be a valid date",
+      })
+      .optional(),
+    description: z.string().max(MAX_NOTES_LENGTH).optional(),
+  })
+  .refine(
+    (v) =>
+      !v.targetHarvestDate ||
+      !v.startDate ||
+      v.targetHarvestDate >= v.startDate,
+    {
+      message: "targetHarvestDate must be on or after startDate",
+      path: ["targetHarvestDate"],
+    },
+  );
+
+const CreatePlantsArgs = z.object({
+  growId: z.string().min(1),
+  name: z.string().min(1).max(115),
+  count: z.number().int().min(1).max(25).optional(),
+  strain: z.string().max(120).optional(),
+  batchLabel: z.string().max(120).optional(),
+  notes: z.string().max(MAX_NOTES_LENGTH).optional(),
+});
+
+const TASK_PRIORITIES = ["low", "medium", "high", "urgent"] as const;
+
+const CreateGrowTaskArgs = z.object({
+  growId: z.string().min(1),
+  plantId: z.string().min(1).optional(),
+  title: z.string().min(1).max(200),
+  description: z.string().max(MAX_NOTES_LENGTH).optional(),
+  priority: z.enum(TASK_PRIORITIES).optional(),
+  dueAt: z
+    .string()
+    .min(1)
+    .refine((s) => !Number.isNaN(Date.parse(s)), {
+      message: "must be a valid ISO 8601 datetime",
+    })
+    .refine((s) => Date.parse(s) > Date.now() - 60_000, {
+      message: "dueAt must be in the future",
+    })
+    .optional(),
+});
+
+function buildBulkPlantNames(prefix: string, count: number): string[] {
+  if (count <= 1) return [prefix];
+  const pad = count >= 10 ? 2 : 1;
+  return Array.from(
+    { length: count },
+    (_, i) => `${prefix} ${String(i + 1).padStart(pad, "0")}`,
+  );
+}
+
 // Tools whose names start the model down a write path. The executor logs
 // arg keys (never values) for these so we have an audit trail without
 // retaining free-text user content in the request log.
@@ -485,6 +728,9 @@ const WRITE_TOOLS = new Set<string>([
   "mark_finding_resolved",
   "update_grow_stage",
   "update_task_status",
+  "create_grow",
+  "create_plants",
+  "create_grow_task",
 ]);
 
 type ChatToolContext = {
@@ -859,6 +1105,119 @@ export async function executeChatTool(
             return {
               ok: false,
               error: "task not found or not accessible",
+            };
+          }
+          return { ok: true, data };
+        }
+
+        case "create_grow": {
+          if (!ctx.userId) {
+            return { ok: false, error: "not authenticated" };
+          }
+          const args = CreateGrowArgs.parse(rawArgs);
+          const row = {
+            owner_id: ctx.userId,
+            name: args.name.trim(),
+            description: args.description?.trim() || null,
+            stage: args.stage,
+            medium: args.medium,
+            light_type: args.lightType,
+            start_date: args.startDate ?? new Date().toISOString().slice(0, 10),
+            target_harvest_date: args.targetHarvestDate ?? null,
+          };
+          const { data, error } = await supabase
+            .from("grows")
+            .insert(row)
+            .select(
+              "id,name,stage,medium,light_type,start_date,target_harvest_date",
+            )
+            .single();
+          if (error || !data) {
+            const denied =
+              error?.code === "42501" ||
+              /permission denied|row-level security/i.test(
+                error?.message ?? "",
+              );
+            return {
+              ok: false,
+              error: denied
+                ? "you do not have permission to create a grow on this account"
+                : error?.code === "23505"
+                  ? "a grow with that name already exists. Suggest a different name."
+                  : `could not create grow: ${error?.message ?? "no row returned"}`,
+            };
+          }
+          return { ok: true, data };
+        }
+
+        case "create_plants": {
+          if (!ctx.userId) {
+            return { ok: false, error: "not authenticated" };
+          }
+          const args = CreatePlantsArgs.parse(rawArgs);
+          const count = args.count ?? 1;
+          const names = buildBulkPlantNames(args.name.trim(), count);
+          const rows = names.map((plantName) => ({
+            grow_id: args.growId,
+            name: plantName,
+            strain: args.strain?.trim() || null,
+            batch_label: args.batchLabel?.trim() || null,
+            notes: args.notes?.trim() || null,
+          }));
+          const { data, error } = await supabase
+            .from("plants")
+            .insert(rows)
+            .select("id,grow_id,name,strain,batch_label");
+          if (error || !data || data.length === 0) {
+            const denied =
+              error?.code === "42501" ||
+              /permission denied|row-level security/i.test(
+                error?.message ?? "",
+              );
+            return {
+              ok: false,
+              error: denied
+                ? "you do not have access to this grow"
+                : error?.code === "23505"
+                  ? count > 1
+                    ? "one of the generated plant names already exists in this grow. Try a different name prefix."
+                    : "a plant with that name already exists in this grow."
+                  : `could not create plants: ${error?.message ?? "no rows returned"}`,
+            };
+          }
+          return { ok: true, data: { count: data.length, plants: data } };
+        }
+
+        case "create_grow_task": {
+          if (!ctx.userId) {
+            return { ok: false, error: "not authenticated" };
+          }
+          const args = CreateGrowTaskArgs.parse(rawArgs);
+          const row = {
+            grow_id: args.growId,
+            plant_id: args.plantId ?? null,
+            title: args.title.trim(),
+            description: args.description?.trim() || null,
+            priority: args.priority ?? "medium",
+            status: "open" as const,
+            due_at: args.dueAt ?? null,
+          };
+          const { data, error } = await supabase
+            .from("grow_tasks")
+            .insert(row)
+            .select("id,grow_id,plant_id,title,priority,status,due_at")
+            .single();
+          if (error || !data) {
+            const denied =
+              error?.code === "42501" ||
+              /permission denied|row-level security/i.test(
+                error?.message ?? "",
+              );
+            return {
+              ok: false,
+              error: denied
+                ? "you do not have permission to add tasks to this grow (owner or collaborator only)"
+                : `could not create task: ${error?.message ?? "no row returned"}`,
             };
           }
           return { ok: true, data };
