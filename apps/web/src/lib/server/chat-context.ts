@@ -20,6 +20,15 @@ type FindingRow = {
   plants: { name: string } | { name: string }[] | null;
 };
 
+type TaskRow = {
+  id: string;
+  title: string;
+  priority: string;
+  status: string;
+  created_at: string;
+  plants: { name: string } | { name: string }[] | null;
+};
+
 function daysSince(startDate: string | null): number | null {
   if (!startDate) return null;
   const start = new Date(startDate).getTime();
@@ -101,6 +110,40 @@ export async function loadGrowContextSummary(
     };
   });
 
+  // Open + in_progress tasks for this grow, urgent first. Capped at 10
+  // because this loads into every chat turn — anything beyond that goes
+  // through the `list_open_tasks` tool on demand.
+  const { data: tasks, error: tasksErr } = await supabase
+    .from("grow_tasks")
+    .select("id,title,priority,status,created_at,plants(name)")
+    .eq("grow_id", g.id)
+    .in("status", ["open", "in_progress"])
+    .order("priority", { ascending: false })
+    .order("created_at", { ascending: false })
+    .limit(10);
+
+  if (tasksErr) {
+    logServerEvent("error", "chat context tasks lookup failed", {
+      error: tasksErr.message,
+      growId,
+    });
+  }
+
+  const openTasks = ((tasks ?? []) as TaskRow[]).map((t) => {
+    const plantsField = t.plants;
+    const plantName = Array.isArray(plantsField)
+      ? (plantsField[0]?.name ?? null)
+      : (plantsField?.name ?? null);
+    return {
+      id: t.id,
+      title: t.title,
+      priority: t.priority,
+      status: t.status,
+      plantName,
+      createdAt: t.created_at,
+    };
+  });
+
   return {
     growId: g.id,
     name: g.name,
@@ -111,5 +154,6 @@ export async function loadGrowContextSummary(
     daysSinceStart: daysSince(g.start_date),
     plantCount: plantCount ?? 0,
     recentFindings,
+    openTasks,
   };
 }
