@@ -1340,3 +1340,321 @@ describe("chat-tools — create_grow_task", () => {
     expect(insert).not.toHaveBeenCalled();
   });
 });
+
+describe("chat-tools — update_grow", () => {
+  beforeEach(() => {
+    createSupabaseServerClient.mockReset();
+    logServerEvent.mockReset();
+  });
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  it("is exposed in the tool list and requires only growId", () => {
+    const def = CHAT_TOOL_DEFINITIONS.find(
+      (t) => t.function.name === "update_grow",
+    );
+    expect(def).toBeDefined();
+    expect(def?.function.parameters).toMatchObject({ required: ["growId"] });
+  });
+
+  it("rejects when no mutable field is supplied", async () => {
+    const { client, update } = makeUpdateEqMaybeSingleMock({
+      data: null,
+      error: null,
+    });
+    createSupabaseServerClient.mockResolvedValue(client);
+
+    const result = await executeChatTool(
+      "update_grow",
+      { growId: "g-1" },
+      CTX_AUTHED,
+    );
+
+    expect(result.ok).toBe(false);
+    expect(update).not.toHaveBeenCalled();
+  });
+
+  it("patches only the supplied fields and trims name/description", async () => {
+    const { client, update, eq } = makeUpdateEqMaybeSingleMock({
+      data: {
+        id: "g-1",
+        name: "Renamed",
+        description: "fresh",
+        stage: "vegetative",
+        medium: "coco",
+        light_type: "led",
+        is_archived: false,
+      },
+      error: null,
+    });
+    createSupabaseServerClient.mockResolvedValue(client);
+
+    const result = await executeChatTool(
+      "update_grow",
+      {
+        growId: "g-1",
+        name: "  Renamed  ",
+        description: "  fresh  ",
+        medium: "coco",
+      },
+      CTX_AUTHED,
+    );
+
+    expect(result.ok).toBe(true);
+    expect(update).toHaveBeenCalledWith({
+      name: "Renamed",
+      description: "fresh",
+      medium: "coco",
+    });
+    expect(eq).toHaveBeenCalledWith("id", "g-1");
+  });
+
+  it("clears description and targetHarvestDate when empty string is supplied", async () => {
+    const { client, update } = makeUpdateEqMaybeSingleMock({
+      data: { id: "g-1" },
+      error: null,
+    });
+    createSupabaseServerClient.mockResolvedValue(client);
+
+    await executeChatTool(
+      "update_grow",
+      { growId: "g-1", description: "", targetHarvestDate: "" },
+      CTX_AUTHED,
+    );
+
+    expect(update).toHaveBeenCalledWith({
+      description: null,
+      target_harvest_date: null,
+    });
+  });
+
+  it("toggles is_archived when archived flag is supplied", async () => {
+    const { client, update } = makeUpdateEqMaybeSingleMock({
+      data: { id: "g-1", is_archived: true },
+      error: null,
+    });
+    createSupabaseServerClient.mockResolvedValue(client);
+
+    await executeChatTool(
+      "update_grow",
+      { growId: "g-1", archived: true },
+      CTX_AUTHED,
+    );
+
+    expect(update).toHaveBeenCalledWith({ is_archived: true });
+  });
+
+  it("returns 'not found or not accessible' when zero rows match", async () => {
+    const { client } = makeUpdateEqMaybeSingleMock({
+      data: null,
+      error: null,
+    });
+    createSupabaseServerClient.mockResolvedValue(client);
+
+    const result = await executeChatTool(
+      "update_grow",
+      { growId: "missing", name: "X" },
+      CTX_AUTHED,
+    );
+
+    expect(result.ok).toBe(false);
+    if (!result.ok)
+      expect(result.error).toMatch(/not found or not accessible/i);
+  });
+
+  it("translates an RLS denial into an owner-only permission error", async () => {
+    const { client } = makeUpdateEqMaybeSingleMock({
+      data: null,
+      error: { code: "42501", message: "row-level security" },
+    });
+    createSupabaseServerClient.mockResolvedValue(client);
+
+    const result = await executeChatTool(
+      "update_grow",
+      { growId: "g-1", name: "X" },
+      CTX_AUTHED,
+    );
+
+    expect(result.ok).toBe(false);
+    if (!result.ok) expect(result.error).toMatch(/owner only/i);
+  });
+
+  it("surfaces a friendly duplicate-name message on 23505", async () => {
+    const { client } = makeUpdateEqMaybeSingleMock({
+      data: null,
+      error: { code: "23505", message: "duplicate key" },
+    });
+    createSupabaseServerClient.mockResolvedValue(client);
+
+    const result = await executeChatTool(
+      "update_grow",
+      { growId: "g-1", name: "Existing" },
+      CTX_AUTHED,
+    );
+
+    expect(result.ok).toBe(false);
+    if (!result.ok) expect(result.error).toMatch(/already exists/i);
+  });
+
+  it("rejects when the user is not authenticated", async () => {
+    const { client, update } = makeUpdateEqMaybeSingleMock({
+      data: null,
+      error: null,
+    });
+    createSupabaseServerClient.mockResolvedValue(client);
+
+    const result = await executeChatTool(
+      "update_grow",
+      { growId: "g-1", name: "X" },
+      { requestId: "req-x", userId: null },
+    );
+
+    expect(result).toEqual({ error: "not authenticated", ok: false });
+    expect(update).not.toHaveBeenCalled();
+  });
+});
+
+describe("chat-tools — update_plant", () => {
+  beforeEach(() => {
+    createSupabaseServerClient.mockReset();
+    logServerEvent.mockReset();
+  });
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  it("is exposed in the tool list and requires only plantId", () => {
+    const def = CHAT_TOOL_DEFINITIONS.find(
+      (t) => t.function.name === "update_plant",
+    );
+    expect(def).toBeDefined();
+    expect(def?.function.parameters).toMatchObject({ required: ["plantId"] });
+  });
+
+  it("rejects when no mutable field is supplied", async () => {
+    const { client, update } = makeUpdateEqMaybeSingleMock({
+      data: null,
+      error: null,
+    });
+    createSupabaseServerClient.mockResolvedValue(client);
+
+    const result = await executeChatTool(
+      "update_plant",
+      { plantId: "p-1" },
+      CTX_AUTHED,
+    );
+
+    expect(result.ok).toBe(false);
+    expect(update).not.toHaveBeenCalled();
+  });
+
+  it("patches only the supplied fields and trims values", async () => {
+    const { client, update, eq } = makeUpdateEqMaybeSingleMock({
+      data: { id: "p-1", name: "Mother", strain: "NL", batch_label: null },
+      error: null,
+    });
+    createSupabaseServerClient.mockResolvedValue(client);
+
+    await executeChatTool(
+      "update_plant",
+      {
+        plantId: "p-1",
+        name: "  Mother  ",
+        strain: "  NL  ",
+      },
+      CTX_AUTHED,
+    );
+
+    expect(update).toHaveBeenCalledWith({ name: "Mother", strain: "NL" });
+    expect(eq).toHaveBeenCalledWith("id", "p-1");
+  });
+
+  it("clears optional text fields when empty string is supplied", async () => {
+    const { client, update } = makeUpdateEqMaybeSingleMock({
+      data: { id: "p-1" },
+      error: null,
+    });
+    createSupabaseServerClient.mockResolvedValue(client);
+
+    await executeChatTool(
+      "update_plant",
+      { plantId: "p-1", strain: "", batchLabel: "", notes: "" },
+      CTX_AUTHED,
+    );
+
+    expect(update).toHaveBeenCalledWith({
+      strain: null,
+      batch_label: null,
+      notes: null,
+    });
+  });
+
+  it("toggles is_archived when archived flag is supplied", async () => {
+    const { client, update } = makeUpdateEqMaybeSingleMock({
+      data: { id: "p-1", is_archived: true },
+      error: null,
+    });
+    createSupabaseServerClient.mockResolvedValue(client);
+
+    await executeChatTool(
+      "update_plant",
+      { plantId: "p-1", archived: true },
+      CTX_AUTHED,
+    );
+
+    expect(update).toHaveBeenCalledWith({ is_archived: true });
+  });
+
+  it("returns 'not found or not accessible' when zero rows match", async () => {
+    const { client } = makeUpdateEqMaybeSingleMock({
+      data: null,
+      error: null,
+    });
+    createSupabaseServerClient.mockResolvedValue(client);
+
+    const result = await executeChatTool(
+      "update_plant",
+      { plantId: "missing", name: "X" },
+      CTX_AUTHED,
+    );
+
+    expect(result.ok).toBe(false);
+    if (!result.ok)
+      expect(result.error).toMatch(/not found or not accessible/i);
+  });
+
+  it("translates an RLS denial into an owner-only permission error", async () => {
+    const { client } = makeUpdateEqMaybeSingleMock({
+      data: null,
+      error: { code: "42501", message: "row-level security" },
+    });
+    createSupabaseServerClient.mockResolvedValue(client);
+
+    const result = await executeChatTool(
+      "update_plant",
+      { plantId: "p-1", name: "X" },
+      CTX_AUTHED,
+    );
+
+    expect(result.ok).toBe(false);
+    if (!result.ok) expect(result.error).toMatch(/owner only/i);
+  });
+
+  it("rejects when the user is not authenticated", async () => {
+    const { client, update } = makeUpdateEqMaybeSingleMock({
+      data: null,
+      error: null,
+    });
+    createSupabaseServerClient.mockResolvedValue(client);
+
+    const result = await executeChatTool(
+      "update_plant",
+      { plantId: "p-1", name: "X" },
+      { requestId: "req-x", userId: null },
+    );
+
+    expect(result).toEqual({ error: "not authenticated", ok: false });
+    expect(update).not.toHaveBeenCalled();
+  });
+});

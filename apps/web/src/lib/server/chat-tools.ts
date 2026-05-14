@@ -502,6 +502,99 @@ export const CHAT_TOOL_DEFINITIONS = [
       },
     },
   },
+  {
+    type: "function" as const,
+    function: {
+      name: "update_grow",
+      description:
+        "Update a grow's mutable metadata — rename it, edit the description, fix the medium / light_type, set or clear the target harvest date, or archive / un-archive it. Use when the user wants to correct a mistake ('rename the Test grow to North Tent'), evolve the program ('we switched to coco'), or wrap up the cycle ('archive the spring 2026 run'). Stage transitions go through update_grow_stage, not this tool. Pass only the fields the user actually wants to change — omitted fields are left untouched. At least one mutable field is required. Owner only.",
+      parameters: {
+        type: "object",
+        properties: {
+          growId: {
+            type: "string",
+            description: "Grow ID to update. Required.",
+          },
+          name: {
+            type: "string",
+            description:
+              "New grow name (1-120 chars). Omit to leave unchanged.",
+          },
+          description: {
+            type: "string",
+            description:
+              "Replacement free-text description (up to 2000 chars). Pass an empty string to clear an existing description; omit to leave unchanged.",
+          },
+          medium: {
+            type: "string",
+            enum: ["soil", "coco", "hydro", "aero", "living_soil", "other"],
+            description: "New cultivation medium. Omit to leave unchanged.",
+          },
+          lightType: {
+            type: "string",
+            enum: ["hps", "cmh", "led", "t5", "sun", "mixed", "other"],
+            description: "New primary light source. Omit to leave unchanged.",
+          },
+          targetHarvestDate: {
+            type: "string",
+            description:
+              "ISO 8601 date (YYYY-MM-DD) the grower is now aiming to harvest. Pass an empty string to clear an existing target; omit to leave unchanged.",
+          },
+          archived: {
+            type: "boolean",
+            description:
+              "true to archive the grow (soft-delete; plants + history stay readable), false to un-archive it. Omit to leave unchanged.",
+          },
+        },
+        required: ["growId"],
+        additionalProperties: false,
+      },
+    },
+  },
+  {
+    type: "function" as const,
+    function: {
+      name: "update_plant",
+      description:
+        "Update a plant's mutable metadata — rename it, set/replace the strain, batch label, or notes, or archive / un-archive it. Use when the user wants to correct a name from a bulk create ('rename Plant 03 to Mother'), tag a phenotype ('strain is Northern Lights #5'), or retire a plant ('archive Plant 02, it died'). Pass only the fields the user actually wants to change — omitted fields are left untouched. At least one mutable field is required. Owner only.",
+      parameters: {
+        type: "object",
+        properties: {
+          plantId: {
+            type: "string",
+            description: "Plant ID to update. Required.",
+          },
+          name: {
+            type: "string",
+            description:
+              "New plant name (1-120 chars). Omit to leave unchanged.",
+          },
+          strain: {
+            type: "string",
+            description:
+              "Replacement cultivar / strain name. Pass an empty string to clear; omit to leave unchanged.",
+          },
+          batchLabel: {
+            type: "string",
+            description:
+              "Replacement batch / tray reference. Pass an empty string to clear; omit to leave unchanged.",
+          },
+          notes: {
+            type: "string",
+            description:
+              "Replacement free-text notes (up to 2000 chars). Pass an empty string to clear; omit to leave unchanged.",
+          },
+          archived: {
+            type: "boolean",
+            description:
+              "true to archive the plant (soft-delete; image history + findings stay readable), false to un-archive it. Omit to leave unchanged.",
+          },
+        },
+        required: ["plantId"],
+        additionalProperties: false,
+      },
+    },
+  },
 ];
 
 type ToolResult = { ok: true; data: unknown } | { ok: false; error: string };
@@ -719,6 +812,57 @@ function buildBulkPlantNames(prefix: string, count: number): string[] {
   );
 }
 
+// Target-harvest-date accepts either a YYYY-MM-DD string (set) or an empty
+// string (clear). undefined means "leave the existing value untouched".
+const isoDateOrEmpty = z
+  .string()
+  .refine((s) => s === "" || /^\d{4}-\d{2}-\d{2}$/.test(s), {
+    message: "must be YYYY-MM-DD or empty to clear",
+  })
+  .refine((s) => s === "" || !Number.isNaN(Date.parse(s)), {
+    message: "must be a valid date",
+  });
+
+const UpdateGrowArgs = z
+  .object({
+    growId: z.string().min(1),
+    name: z.string().min(1).max(120).optional(),
+    description: z.string().max(MAX_NOTES_LENGTH).optional(),
+    medium: z.enum(GROW_MEDIA).optional(),
+    lightType: z.enum(LIGHT_TYPES).optional(),
+    targetHarvestDate: isoDateOrEmpty.optional(),
+    archived: z.boolean().optional(),
+  })
+  .refine(
+    (v) =>
+      v.name !== undefined ||
+      v.description !== undefined ||
+      v.medium !== undefined ||
+      v.lightType !== undefined ||
+      v.targetHarvestDate !== undefined ||
+      v.archived !== undefined,
+    { message: "supply at least one field to update" },
+  );
+
+const UpdatePlantArgs = z
+  .object({
+    plantId: z.string().min(1),
+    name: z.string().min(1).max(120).optional(),
+    strain: z.string().max(120).optional(),
+    batchLabel: z.string().max(120).optional(),
+    notes: z.string().max(MAX_NOTES_LENGTH).optional(),
+    archived: z.boolean().optional(),
+  })
+  .refine(
+    (v) =>
+      v.name !== undefined ||
+      v.strain !== undefined ||
+      v.batchLabel !== undefined ||
+      v.notes !== undefined ||
+      v.archived !== undefined,
+    { message: "supply at least one field to update" },
+  );
+
 // Tools whose names start the model down a write path. The executor logs
 // arg keys (never values) for these so we have an audit trail without
 // retaining free-text user content in the request log.
@@ -731,6 +875,8 @@ const WRITE_TOOLS = new Set<string>([
   "create_grow",
   "create_plants",
   "create_grow_task",
+  "update_grow",
+  "update_plant",
 ]);
 
 type ChatToolContext = {
@@ -1218,6 +1364,107 @@ export async function executeChatTool(
               error: denied
                 ? "you do not have permission to add tasks to this grow (owner or collaborator only)"
                 : `could not create task: ${error?.message ?? "no row returned"}`,
+            };
+          }
+          return { ok: true, data };
+        }
+
+        case "update_grow": {
+          if (!ctx.userId) {
+            return { ok: false, error: "not authenticated" };
+          }
+          const args = UpdateGrowArgs.parse(rawArgs);
+          const patch: Record<string, unknown> = {};
+          if (args.name !== undefined) patch.name = args.name.trim();
+          if (args.description !== undefined) {
+            patch.description =
+              args.description.trim() === "" ? null : args.description.trim();
+          }
+          if (args.medium !== undefined) patch.medium = args.medium;
+          if (args.lightType !== undefined) patch.light_type = args.lightType;
+          if (args.targetHarvestDate !== undefined) {
+            patch.target_harvest_date =
+              args.targetHarvestDate === "" ? null : args.targetHarvestDate;
+          }
+          if (args.archived !== undefined) patch.is_archived = args.archived;
+
+          const { data, error } = await supabase
+            .from("grows")
+            .update(patch)
+            .eq("id", args.growId)
+            .select(
+              "id,name,description,stage,medium,light_type,start_date,target_harvest_date,is_archived",
+            )
+            .maybeSingle();
+          if (error) {
+            const denied =
+              error.code === "42501" ||
+              /permission denied|row-level security/i.test(error.message);
+            return {
+              ok: false,
+              error: denied
+                ? "you do not have permission to update this grow (owner only)"
+                : error.code === "23505"
+                  ? "a grow with that name already exists. Suggest a different name."
+                  : `could not update grow: ${error.message}`,
+            };
+          }
+          if (!data) {
+            return {
+              ok: false,
+              error:
+                "grow not found or not accessible — confirm growId and that the user owns the grow",
+            };
+          }
+          return { ok: true, data };
+        }
+
+        case "update_plant": {
+          if (!ctx.userId) {
+            return { ok: false, error: "not authenticated" };
+          }
+          const args = UpdatePlantArgs.parse(rawArgs);
+          const patch: Record<string, unknown> = {};
+          if (args.name !== undefined) patch.name = args.name.trim();
+          if (args.strain !== undefined) {
+            patch.strain =
+              args.strain.trim() === "" ? null : args.strain.trim();
+          }
+          if (args.batchLabel !== undefined) {
+            patch.batch_label =
+              args.batchLabel.trim() === "" ? null : args.batchLabel.trim();
+          }
+          if (args.notes !== undefined) {
+            patch.notes = args.notes.trim() === "" ? null : args.notes.trim();
+          }
+          if (args.archived !== undefined) patch.is_archived = args.archived;
+
+          const { data, error } = await supabase
+            .from("plants")
+            .update(patch)
+            .eq("id", args.plantId)
+            .select(
+              "id,grow_id,name,strain,batch_label,notes,is_archived,updated_at",
+            )
+            .maybeSingle();
+          if (error) {
+            const denied =
+              error.code === "42501" ||
+              /permission denied|row-level security/i.test(error.message);
+            return {
+              ok: false,
+              error: denied
+                ? "you do not have permission to update this plant (owner only)"
+                : error.code === "23505"
+                  ? "a plant with that name already exists in the grow. Suggest a different name."
+                  : `could not update plant: ${error.message}`,
+            };
+          }
+          if (!data) {
+            return {
+              ok: false,
+              error:
+                "plant not found or not accessible — confirm plantId and that the user owns the grow",
             };
           }
           return { ok: true, data };
