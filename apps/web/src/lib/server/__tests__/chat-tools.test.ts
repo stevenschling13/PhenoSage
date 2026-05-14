@@ -1658,3 +1658,183 @@ describe("chat-tools — update_plant", () => {
     expect(update).not.toHaveBeenCalled();
   });
 });
+
+describe("chat-tools — record_image_finding", () => {
+  beforeEach(() => {
+    createSupabaseServerClient.mockReset();
+    logServerEvent.mockReset();
+  });
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  it("is exposed in the tool list and requires plant+grow+category+severity+title", () => {
+    const def = CHAT_TOOL_DEFINITIONS.find(
+      (t) => t.function.name === "record_image_finding",
+    );
+    expect(def).toBeDefined();
+    expect(def?.function.parameters).toMatchObject({
+      required: ["plantId", "growId", "category", "severity", "title"],
+    });
+  });
+
+  it("inserts a row tagged source='user_reported' and returns the new id", async () => {
+    const { client, from, insert } = makeInsertMock({
+      data: {
+        id: "f-1",
+        plant_id: "p-1",
+        grow_id: "g-1",
+        category: "disease",
+        severity: "high",
+        title: "Suspected septoria",
+        source: "user_reported",
+      },
+      error: null,
+    });
+    createSupabaseServerClient.mockResolvedValue(client);
+
+    const result = await executeChatTool(
+      "record_image_finding",
+      {
+        plantId: "p-1",
+        growId: "g-1",
+        category: "disease",
+        severity: "high",
+        title: "Suspected septoria",
+        description: "Brown spots on the middle fans",
+        recommendation: "Defoliate affected leaves and apply copper",
+      },
+      CTX_AUTHED,
+    );
+
+    expect(result).toEqual({
+      ok: true,
+      data: expect.objectContaining({ id: "f-1", source: "user_reported" }),
+    });
+    expect(from).toHaveBeenCalledWith("plant_findings");
+    expect(insert).toHaveBeenCalledWith(
+      expect.objectContaining({
+        plant_id: "p-1",
+        grow_id: "g-1",
+        category: "disease",
+        severity: "high",
+        title: "Suspected septoria",
+        description: "Brown spots on the middle fans",
+        recommendation: "Defoliate affected leaves and apply copper",
+        source: "user_reported",
+      }),
+    );
+  });
+
+  it("trims title and falls back to empty description / null recommendation when omitted", async () => {
+    const { client, insert } = makeInsertMock({
+      data: { id: "f-2", source: "user_reported" },
+      error: null,
+    });
+    createSupabaseServerClient.mockResolvedValue(client);
+
+    await executeChatTool(
+      "record_image_finding",
+      {
+        plantId: "p-1",
+        growId: "g-1",
+        category: "general",
+        severity: "info",
+        title: "  All good  ",
+      },
+      CTX_AUTHED,
+    );
+
+    expect(insert).toHaveBeenCalledWith(
+      expect.objectContaining({
+        title: "All good",
+        description: "",
+        recommendation: null,
+        image_id: null,
+      }),
+    );
+  });
+
+  it("rejects an invalid category without touching the database", async () => {
+    const { client, insert } = makeInsertMock({ data: null, error: null });
+    createSupabaseServerClient.mockResolvedValue(client);
+
+    const result = await executeChatTool(
+      "record_image_finding",
+      {
+        plantId: "p-1",
+        growId: "g-1",
+        category: "bogus",
+        severity: "high",
+        title: "X",
+      },
+      CTX_AUTHED,
+    );
+
+    expect(result.ok).toBe(false);
+    expect(insert).not.toHaveBeenCalled();
+  });
+
+  it("rejects an invalid severity without touching the database", async () => {
+    const { client, insert } = makeInsertMock({ data: null, error: null });
+    createSupabaseServerClient.mockResolvedValue(client);
+
+    const result = await executeChatTool(
+      "record_image_finding",
+      {
+        plantId: "p-1",
+        growId: "g-1",
+        category: "disease",
+        severity: "fatal",
+        title: "X",
+      },
+      CTX_AUTHED,
+    );
+
+    expect(result.ok).toBe(false);
+    expect(insert).not.toHaveBeenCalled();
+  });
+
+  it("translates an RLS denial into a contributor-only permission error", async () => {
+    const { client } = makeInsertMock({
+      data: null,
+      error: { code: "42501", message: "row-level security" },
+    });
+    createSupabaseServerClient.mockResolvedValue(client);
+
+    const result = await executeChatTool(
+      "record_image_finding",
+      {
+        plantId: "p-1",
+        growId: "g-1",
+        category: "disease",
+        severity: "high",
+        title: "X",
+      },
+      CTX_AUTHED,
+    );
+
+    expect(result.ok).toBe(false);
+    if (!result.ok) expect(result.error).toMatch(/owner or collaborator only/i);
+  });
+
+  it("rejects when the user is not authenticated", async () => {
+    const { client, insert } = makeInsertMock({ data: null, error: null });
+    createSupabaseServerClient.mockResolvedValue(client);
+
+    const result = await executeChatTool(
+      "record_image_finding",
+      {
+        plantId: "p-1",
+        growId: "g-1",
+        category: "disease",
+        severity: "high",
+        title: "X",
+      },
+      { requestId: "req-x", userId: null },
+    );
+
+    expect(result).toEqual({ error: "not authenticated", ok: false });
+    expect(insert).not.toHaveBeenCalled();
+  });
+});

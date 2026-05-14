@@ -595,6 +595,71 @@ export const CHAT_TOOL_DEFINITIONS = [
       },
     },
   },
+  {
+    type: "function" as const,
+    function: {
+      name: "record_image_finding",
+      description:
+        "File a structured plant_findings row when the user describes a plant-health issue they've observed — typically tied to a photo they just uploaded. Use this for definite diagnoses ('there's brown spots on Plant 4's middle fans, looks like septoria'), not for casual notes (use log_plant_observation for that). The row is tagged source='user_reported' to distinguish it from AI-generated findings, and the existing auto-task trigger will create an open grow_task automatically if severity is high or critical. Owner + collaborator only. Returns the new finding id.",
+      parameters: {
+        type: "object",
+        properties: {
+          plantId: {
+            type: "string",
+            description: "Plant ID the finding is about. Required.",
+          },
+          growId: {
+            type: "string",
+            description:
+              "Grow ID the plant belongs to. Required so the row can be RLS-checked.",
+          },
+          category: {
+            type: "string",
+            enum: [
+              "nutrient_deficiency",
+              "nutrient_toxicity",
+              "pest",
+              "disease",
+              "environmental",
+              "training",
+              "general",
+              "positive",
+            ],
+            description:
+              "Finding category. Pick the most specific match. 'general' is the catch-all when nothing fits; 'positive' is for confirming things are going right.",
+          },
+          severity: {
+            type: "string",
+            enum: ["info", "low", "medium", "high", "critical"],
+            description:
+              "How urgent this is. high + critical auto-create an open grow_task via the existing trigger — reserve those for issues that need action soon.",
+          },
+          title: {
+            type: "string",
+            description:
+              "Short, headline-style title (1-200 chars). Examples: 'Early N deficiency on lower fans', 'Suspected spider mites under leaves'.",
+          },
+          description: {
+            type: "string",
+            description:
+              "Longer detail (up to 2000 chars). What was observed, where on the plant, in what context.",
+          },
+          recommendation: {
+            type: "string",
+            description:
+              "Optional suggested action (up to 2000 chars). Becomes the body of the auto-created task when severity is high/critical.",
+          },
+          imageId: {
+            type: "string",
+            description:
+              "Optional plant_image ID this finding refers to. Omit if not tied to a specific image.",
+          },
+        },
+        required: ["plantId", "growId", "category", "severity", "title"],
+        additionalProperties: false,
+      },
+    },
+  },
 ];
 
 type ToolResult = { ok: true; data: unknown } | { ok: false; error: string };
@@ -844,6 +909,35 @@ const UpdateGrowArgs = z
     { message: "supply at least one field to update" },
   );
 
+const FINDING_CATEGORIES = [
+  "nutrient_deficiency",
+  "nutrient_toxicity",
+  "pest",
+  "disease",
+  "environmental",
+  "training",
+  "general",
+  "positive",
+] as const;
+const FINDING_SEVERITIES = [
+  "info",
+  "low",
+  "medium",
+  "high",
+  "critical",
+] as const;
+
+const RecordImageFindingArgs = z.object({
+  plantId: z.string().min(1),
+  growId: z.string().min(1),
+  category: z.enum(FINDING_CATEGORIES),
+  severity: z.enum(FINDING_SEVERITIES),
+  title: z.string().min(1).max(200),
+  description: z.string().max(MAX_NOTES_LENGTH).optional(),
+  recommendation: z.string().max(MAX_NOTES_LENGTH).optional(),
+  imageId: z.string().min(1).optional(),
+});
+
 const UpdatePlantArgs = z
   .object({
     plantId: z.string().min(1),
@@ -877,6 +971,7 @@ const WRITE_TOOLS = new Set<string>([
   "create_grow_task",
   "update_grow",
   "update_plant",
+  "record_image_finding",
 ]);
 
 type ChatToolContext = {
@@ -1465,6 +1560,45 @@ export async function executeChatTool(
               ok: false,
               error:
                 "plant not found or not accessible — confirm plantId and that the user owns the grow",
+            };
+          }
+          return { ok: true, data };
+        }
+
+        case "record_image_finding": {
+          if (!ctx.userId) {
+            return { ok: false, error: "not authenticated" };
+          }
+          const args = RecordImageFindingArgs.parse(rawArgs);
+          const row = {
+            plant_id: args.plantId,
+            grow_id: args.growId,
+            image_id: args.imageId ?? null,
+            category: args.category,
+            severity: args.severity,
+            title: args.title.trim(),
+            description: args.description?.trim() || "",
+            recommendation: args.recommendation?.trim() || null,
+            source: "user_reported" as const,
+          };
+          const { data, error } = await supabase
+            .from("plant_findings")
+            .insert(row)
+            .select(
+              "id,plant_id,grow_id,image_id,category,severity,title,description,recommendation,source,created_at",
+            )
+            .single();
+          if (error || !data) {
+            const denied =
+              error?.code === "42501" ||
+              /permission denied|row-level security/i.test(
+                error?.message ?? "",
+              );
+            return {
+              ok: false,
+              error: denied
+                ? "you do not have permission to record findings on this grow (owner or collaborator only)"
+                : `could not record finding: ${error?.message ?? "no row returned"}`,
             };
           }
           return { ok: true, data };
