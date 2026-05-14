@@ -343,6 +343,17 @@ export async function analyzeImage(params: {
     method: "POST",
     body,
     ...(params.requestId ? { requestId: params.requestId } : {}),
+    // POST /analyze is safe to retry: the persistence layer in
+    // `runAndPersistPlantAnalysis` upserts on `image_id` (uniqueness
+    // enforced by `plant_analyses.image_id UNIQUE` in migration 004) and
+    // findings are deleted-and-replaced by `image_id` inside the same
+    // function, so a retried call cannot create duplicate rows. The model
+    // call itself is the only side effect that re-runs on retry — that's
+    // acceptable cost for resilience against transient 5xx/timeouts.
+    resilience: {
+      maxAttempts: 2,
+      idempotencyKey: `${params.plantId}:${params.imageId}`,
+    },
   });
   return normalizeAnalysisResponse(raw);
 }

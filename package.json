@@ -22,6 +22,7 @@
     "security:routes": "node scripts/check-route-security.mjs",
     "security:audit": "node scripts/security-audit.mjs",
     "pr:guardian": "node scripts/pr-guardian.mjs",
+    "smoke:preview": "node scripts/smoke-preview.mjs",
     "validate": "pnpm run check:env && pnpm run check:routes && pnpm run check:imports && pnpm run check:code-scanning",
     "prepare": "husky"
   },
