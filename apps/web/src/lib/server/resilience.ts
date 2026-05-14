@@ -218,8 +218,9 @@ function defaultSleep(ms: number): Promise<void> {
  * `crypto.randomInt`.
  */
 function defaultRandom(): number {
-  // randomInt(max) returns [0, max). 2^31 fits comfortably in a JS number
-  // and gives ~9 decimal digits of precision, which is plenty for jitter.
+  // randomInt(min, max) returns an integer in [min, max). 2^31 fits
+  // comfortably in a JS number and gives ~9 decimal digits of precision,
+  // which is plenty for jitter.
   return randomInt(0, 0x7fffffff) / 0x7fffffff;
 }
 

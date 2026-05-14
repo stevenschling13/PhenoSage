@@ -162,10 +162,12 @@ export async function callAnalysisService<T = unknown>(
           operation: "analysis-service",
           requestId: effectiveRequestId,
           timeoutMs,
-          // Default to a single attempt; callers opt into retry by passing
-          // `resilience.idempotent` or `resilience.idempotencyKey`. POST
-          // /analyze must remain at maxAttempts=1 until the persistence layer
-          // is made idempotent (see Phase 5 in the reliability plan).
+          // Default to a single attempt; per-call retry policy is opt-in
+          // via `resilience.maxAttempts` paired with `idempotent` or
+          // `idempotencyKey`. `analyzeImage` (below) opts in because the
+          // persistence layer in `runAndPersistPlantAnalysis` is
+          // idempotent on `image_id` (UNIQUE constraint from migration
+          // 004 + delete-and-replace findings).
           maxAttempts: resilience?.maxAttempts ?? 1,
           ...(resilience?.idempotent !== undefined
             ? { idempotent: resilience.idempotent }

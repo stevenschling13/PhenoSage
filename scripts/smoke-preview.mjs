@@ -34,10 +34,10 @@ const FORBIDDEN_SUBSTRINGS = [
   "ANALYSIS_SERVICE_API_KEY",
   // Signed Supabase storage URL pattern.
   "/object/sign/",
-  // Stack-trace fragment ("at fn (file.js:123)").
-  // We match the leading "    at " indent + identifier to avoid false
-  // positives on prose like "look at the docs".
 ];
+// Stack-trace fragment ("    at functionName (file.js:123)") — the leading
+// indent + 'at' + identifier + opening paren is the standard Node/V8 frame
+// shape, and is unlikely to appear in legitimate prose responses.
 const STACK_TRACE_RE = /^\s+at\s+\S+\s*\(/m;
 
 const failures = [];

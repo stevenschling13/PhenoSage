@@ -102,10 +102,15 @@ export class CircuitBreaker {
     }
     if (this.state.state === "HALF_OPEN") {
       if (this.state.halfOpenInFlight) {
-        throw new CircuitOpenError(
-          this.key,
-          Math.ceil(this.opts.cooldownMs / 1000),
+        // A probe is in flight; tell the caller to come back after the
+        // current cooldown window completes (use the same remaining-time
+        // calculation as the OPEN branch above so the hint is accurate).
+        const elapsed = this.now() - (this.state.openedAt ?? this.now());
+        const remaining = Math.max(
+          0,
+          Math.ceil((this.opts.cooldownMs - elapsed) / 1000),
         );
+        throw new CircuitOpenError(this.key, remaining);
       }
       this.state.halfOpenInFlight = true;
     }
