@@ -69,17 +69,17 @@ describe("createGrowAction", () => {
     mocks.logServerEvent.mockReset();
   });
 
-  it("returns success and redirects into the add-plant flow with the new grow id", async () => {
+  it("returns success and redirects to the new grow's detail page", async () => {
     mocks.single.mockResolvedValue({
       data: { id: "grow-new-123" },
       error: null,
     });
     const result = await createGrowAction(buildFormData());
     expect(result.status).toBe("success");
-    // Redirect now lands on the grow registry with the new grow
-    // highlighted, so the user sees the grow they just created instead
-    // of being force-funneled into a plant-intake form.
-    expect(result.redirectTo).toBe("/grows?growId=grow-new-123&just_created=1");
+    // Redirect now lands on /grows/[id] so the user sees the grow they
+    // just created. useActionWithRecovery's fallbackUrl=/grows covers
+    // the case where the detail page is unreachable.
+    expect(result.redirectTo).toBe("/grows/grow-new-123?just_created=1");
     expect(mocks.revalidatePath).toHaveBeenCalledWith("/grows");
     expect(mocks.revalidatePath).toHaveBeenCalledWith("/plants");
     expect(mocks.revalidatePath).toHaveBeenCalledWith("/dashboard");
@@ -91,9 +91,48 @@ describe("createGrowAction", () => {
       error: null,
     });
     const result = await createGrowAction(buildFormData());
-    expect(result.redirectTo).toBe(
-      "/grows?growId=abc%2Fdef%3Fweird&just_created=1",
+    expect(result.redirectTo).toBe("/grows/abc%2Fdef%3Fweird?just_created=1");
+  });
+
+  it("rejects descriptions longer than 2,000 characters as a fieldError", async () => {
+    const result = await createGrowAction(
+      buildFormData({ description: "x".repeat(2_001) }),
     );
+    expect(result.status).toBe("error");
+    expect(result.fieldErrors?.description).toMatch(/2000 characters/i);
+    expect(mocks.insert).not.toHaveBeenCalled();
+  });
+
+  it("accepts descriptions exactly at the 2,000-character limit", async () => {
+    mocks.single.mockResolvedValue({
+      data: { id: "g-ok" },
+      error: null,
+    });
+    const result = await createGrowAction(
+      buildFormData({ description: "x".repeat(2_000) }),
+    );
+    expect(result.status).toBe("success");
+  });
+
+  it("rejects start dates more than a day in the future", async () => {
+    const tooFar = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000)
+      .toISOString()
+      .slice(0, 10);
+    const result = await createGrowAction(buildFormData({ startDate: tooFar }));
+    expect(result.status).toBe("error");
+    expect(result.fieldErrors?.startDate).toMatch(/day in the future/i);
+    expect(mocks.insert).not.toHaveBeenCalled();
+  });
+
+  it("allows historical start dates (data-entry catching up after the cycle began)", async () => {
+    mocks.single.mockResolvedValue({
+      data: { id: "g-old" },
+      error: null,
+    });
+    const result = await createGrowAction(
+      buildFormData({ startDate: "2020-01-01" }),
+    );
+    expect(result.status).toBe("success");
   });
 
   it("surfaces a friendly duplicate-name message on 23505 without leaking raw error text", async () => {

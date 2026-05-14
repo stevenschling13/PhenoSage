@@ -4,6 +4,7 @@ import { logServerEvent } from "./request-id";
 
 type GrowRow = {
   id: string;
+  is_archived: boolean | null;
   light_type: string | null;
   medium: string | null;
   name: string;
@@ -39,6 +40,7 @@ type FindingRow = {
 export type GrowOverview = {
   id: string;
   imageCount: number;
+  isArchived: boolean;
   lightType: string | null;
   medium: string | null;
   name: string;
@@ -128,7 +130,10 @@ export async function getWorkspaceOverview(): Promise<WorkspaceOverview> {
     await Promise.allSettled([
       supabase
         .from("grows")
-        .select("id,name,stage,medium,light_type,start_date,updated_at")
+        .select(
+          "id,name,stage,medium,light_type,start_date,is_archived,updated_at",
+        )
+        .order("is_archived", { ascending: true })
         .order("updated_at", { ascending: false })
         .limit(12),
       supabase
@@ -218,6 +223,7 @@ export async function getWorkspaceOverview(): Promise<WorkspaceOverview> {
       return {
         id: grow.id,
         imageCount: growImages.length,
+        isArchived: grow.is_archived ?? false,
         lightType: grow.light_type,
         medium: grow.medium,
         name: grow.name,
@@ -230,7 +236,13 @@ export async function getWorkspaceOverview(): Promise<WorkspaceOverview> {
         updatedAt: grow.updated_at,
       } satisfies GrowOverview;
     })
-    .sort(compareUpdatedAtDescending);
+    .sort((a, b) => {
+      // Active grows first, archived last. Within each group preserve
+      // the existing updated_at DESC ordering so the rest of the
+      // dashboard sees the freshest grows at the top.
+      if (a.isArchived !== b.isArchived) return a.isArchived ? 1 : -1;
+      return compareUpdatedAtDescending(a, b);
+    });
 
   // Recent activity should reflect items that still need operator attention.
   // Including resolved findings here misleads the dashboard "open watch

@@ -13,6 +13,7 @@ import {
 
 const FIELD_META = {
   name: { label: "Grow name", targetId: "grow-name" },
+  description: { label: "Description", targetId: "grow-description" },
   stage: { label: "Stage", targetId: "grow-stage" },
   medium: { label: "Medium", targetId: "grow-medium" },
   lightType: { label: "Light type", targetId: "grow-light-type" },
@@ -288,15 +289,26 @@ export function GrowForm({ initialStartDate }: { initialStartDate: string }) {
           Description
         </label>
         <textarea
+          aria-describedby={describedBy(
+            "grow-description",
+            Boolean(state.fieldErrors?.description),
+          )}
+          aria-invalid={Boolean(state.fieldErrors?.description) || undefined}
           className={`${inputClassName} min-h-[120px] resize-y`}
           id="grow-description"
+          maxLength={2_000}
           name="description"
           onChange={(event) => setDescription(event.target.value)}
           placeholder="Where this grow lives, the cultivar, or anything you'd want to remember later."
           value={description}
         />
+        <FieldError
+          fieldId="grow-description"
+          message={state.fieldErrors?.description}
+        />
         <p className="mt-2 text-sm text-muted-foreground">
-          Optional. Use this for location, room constraints, or handoff notes.
+          Optional. Use this for location, room constraints, or handoff notes
+          (up to 2,000 characters).
         </p>
       </div>
 

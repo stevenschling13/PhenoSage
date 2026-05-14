@@ -36,8 +36,19 @@ const validLightTypes = new Set<LightType>([
   "other",
 ]);
 
+// Mirrors the chat tool's MAX_NOTES_LENGTH so both create paths agree
+// on prose size. The DB column is unbounded `text`; cap here to keep
+// list views renderable and lock out paste-bomb fat-fingers.
+const MAX_DESCRIPTION_LENGTH = 2_000;
+
+// Mirrors the chat tool's isoDateNotFarFuture refinement: past start
+// dates are allowed (data-entry catching up is the common case), but
+// the future side is clamped to avoid year-9999 fat-finger inputs.
+const MAX_FUTURE_START_MS = 24 * 60 * 60 * 1000;
+
 export type CreateGrowActionResult = {
   fieldErrors?: {
+    description?: string;
     lightType?: string;
     medium?: string;
     name?: string;
@@ -89,6 +100,10 @@ export async function createGrowAction(
     fieldErrors.name = "Keep the grow name under 120 characters.";
   }
 
+  if (description.length > MAX_DESCRIPTION_LENGTH) {
+    fieldErrors.description = `Keep the description under ${MAX_DESCRIPTION_LENGTH} characters.`;
+  }
+
   if (!validStages.has(stage as GrowStage)) {
     fieldErrors.stage = "Choose a valid grow stage.";
   }
@@ -105,6 +120,9 @@ export async function createGrowAction(
     fieldErrors.startDate = "Start date is required.";
   } else if (!isIsoDate(startDate)) {
     fieldErrors.startDate = "Use a valid start date.";
+  } else if (Date.parse(startDate) > Date.now() + MAX_FUTURE_START_MS) {
+    fieldErrors.startDate =
+      "Start date can't be more than a day in the future.";
   }
 
   if (targetHarvestDate) {
@@ -185,14 +203,12 @@ export async function createGrowAction(
   // as an error boundary hit. Letting the client perform router.push avoids
   // that entire failure mode.
   //
-  // Land on the grow registry with the new grow highlighted so the user
-  // sees what they just created. The previous redirect to /plants/new
-  // visually buried the success in a plant-intake form, which made the
-  // action feel like it had failed. The registry page recognises the
-  // `just_created=1` flag and shows a recovery-friendly banner with
-  // both "Add a plant" and "View grow registry" CTAs.
+  // Land on the grow detail page so the user immediately sees the grow
+  // they just created with plant intake one click away. The form's
+  // useActionWithRecovery falls back to /grows if /grows/[id] is
+  // unreachable for any reason, so users are never stranded.
   const redirectTo = newGrowId
-    ? `/grows?growId=${encodeURIComponent(newGrowId)}&just_created=1`
+    ? `/grows/${encodeURIComponent(newGrowId)}?just_created=1`
     : "/grows";
   return {
     message: "Grow created.",
