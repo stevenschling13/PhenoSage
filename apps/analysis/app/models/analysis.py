@@ -1,9 +1,36 @@
 from __future__ import annotations
 
+import re
 from datetime import datetime
 from enum import StrEnum
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, field_validator
+
+# Supabase Storage object paths are bucket-relative. Allow only safe
+# characters and forbid anything that could escape the object key when
+# interpolated into the storage URL (path traversal, absolute paths,
+# URL schemes, query/fragment delimiters, whitespace, control chars).
+# Each segment must be non-empty alphanumerics with `-`, `_`, or `.`.
+_STORAGE_PATH_SEGMENT = r"[A-Za-z0-9][A-Za-z0-9._-]*"
+_STORAGE_PATH_RE = re.compile(
+    rf"^{_STORAGE_PATH_SEGMENT}(?:/{_STORAGE_PATH_SEGMENT})*$"
+)
+_STORAGE_PATH_MAX_LEN = 512
+
+
+def _validate_storage_path(value: str) -> str:
+    if not isinstance(value, str) or not value:
+        raise ValueError("storage path must be a non-empty string")
+    if len(value) > _STORAGE_PATH_MAX_LEN:
+        raise ValueError("storage path is too long")
+    if ".." in value.split("/"):
+        raise ValueError("storage path must not contain '..' segments")
+    if not _STORAGE_PATH_RE.fullmatch(value):
+        raise ValueError(
+            "storage path may only contain alphanumerics, '.', '_', '-', "
+            "and '/' separators"
+        )
+    return value
 
 
 class FindingCategory(StrEnum):
@@ -48,6 +75,18 @@ class AnalyzeRequest(BaseModel):
     # If provided, compare this image to the previous one
     previous_image_id: str | None = None
     previous_storage_path: str | None = None
+
+    @field_validator("storage_path")
+    @classmethod
+    def _check_storage_path(cls, value: str) -> str:
+        return _validate_storage_path(value)
+
+    @field_validator("previous_storage_path")
+    @classmethod
+    def _check_previous_storage_path(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        return _validate_storage_path(value)
 
 
 class AnalysisFinding(BaseModel):

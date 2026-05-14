@@ -346,3 +346,49 @@ async def test_run_analysis_does_not_swallow_programmer_errors(
 
     with pytest.raises(TypeError, match="programmer bug"):
         await image_analysis.run_analysis(_request())
+
+
+@pytest.mark.parametrize(
+    "bad_path",
+    [
+        "../../etc/passwd",
+        "/absolute/path.jpg",
+        "plants/../../../secret.jpg",
+        "plants//double-slash.jpg",
+        "plants/img.jpg?query=1",
+        "plants/img.jpg#frag",
+        "http://evil.com/img.jpg",
+        "plants/img .jpg",
+        "plants\\img.jpg",
+        "",
+        "a" * 600,
+    ],
+)
+def test_analyze_request_rejects_unsafe_storage_paths(bad_path: str) -> None:
+    """SSRF guard: storage_path values that could escape the bucket must fail validation."""
+    from pydantic import ValidationError
+
+    with pytest.raises(ValidationError):
+        AnalyzeRequest(
+            plant_id="plant-1",
+            image_id="image-1",
+            storage_path=bad_path,
+            grow_context={"grow_id": "grow-1"},
+        )
+
+
+def test_analyze_request_accepts_safe_storage_paths() -> None:
+    for good in [
+        "plants/plant-1/image.jpg",
+        "user-123/plant_abc/2026-01-01-leaf.png",
+        "single-segment.jpg",
+    ]:
+        req = AnalyzeRequest(
+            plant_id="plant-1",
+            image_id="image-1",
+            storage_path=good,
+            grow_context={"grow_id": "grow-1"},
+            previous_storage_path=good,
+        )
+        assert req.storage_path == good
+        assert req.previous_storage_path == good
