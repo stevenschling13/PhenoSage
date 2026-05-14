@@ -71,23 +71,40 @@ export async function loadGrowContextSummary(
 
   const g = grow as GrowRow;
 
-  const { count: plantCount } = await supabase
-    .from("plants")
-    .select("id", { count: "exact", head: true })
-    .eq("grow_id", g.id)
-    .eq("is_archived", false);
-
   const thirtyDaysAgo = new Date(
     Date.now() - 30 * 24 * 60 * 60 * 1000,
   ).toISOString();
 
-  const { data: findings, error: findingsErr } = await supabase
-    .from("plant_findings")
-    .select("title,category,severity,created_at,plants(name)")
-    .eq("grow_id", g.id)
-    .gte("created_at", thirtyDaysAgo)
-    .order("created_at", { ascending: false })
-    .limit(10);
+  // Run the three independent per-grow queries in parallel. Each one is
+  // already constrained by RLS + indexed (`plants(grow_id)`,
+  // `plant_findings(grow_id, created_at desc)`, `grow_tasks(grow_id, status)`)
+  // so the only thing serial waits were buying us was added latency.
+  const [plantCountResult, findingsResult, tasksResult] = await Promise.all([
+    supabase
+      .from("plants")
+      .select("id", { count: "exact", head: true })
+      .eq("grow_id", g.id)
+      .eq("is_archived", false),
+    supabase
+      .from("plant_findings")
+      .select("title,category,severity,created_at,plants(name)")
+      .eq("grow_id", g.id)
+      .gte("created_at", thirtyDaysAgo)
+      .order("created_at", { ascending: false })
+      .limit(10),
+    supabase
+      .from("grow_tasks")
+      .select("id,title,priority,status,created_at,plants(name)")
+      .eq("grow_id", g.id)
+      .in("status", ["open", "in_progress"])
+      .order("priority", { ascending: false })
+      .order("created_at", { ascending: false })
+      .limit(10),
+  ]);
+
+  const { count: plantCount } = plantCountResult;
+  const { data: findings, error: findingsErr } = findingsResult;
+  const { data: tasks, error: tasksErr } = tasksResult;
 
   if (findingsErr) {
     logServerEvent("error", "chat context findings lookup failed", {
@@ -113,15 +130,6 @@ export async function loadGrowContextSummary(
   // Open + in_progress tasks for this grow, urgent first. Capped at 10
   // because this loads into every chat turn — anything beyond that goes
   // through the `list_open_tasks` tool on demand.
-  const { data: tasks, error: tasksErr } = await supabase
-    .from("grow_tasks")
-    .select("id,title,priority,status,created_at,plants(name)")
-    .eq("grow_id", g.id)
-    .in("status", ["open", "in_progress"])
-    .order("priority", { ascending: false })
-    .order("created_at", { ascending: false })
-    .limit(10);
-
   if (tasksErr) {
     logServerEvent("error", "chat context tasks lookup failed", {
       error: tasksErr.message,
