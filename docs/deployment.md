@@ -100,8 +100,125 @@ Vercel Cron is configured in `apps/web/vercel.json`:
 3. Railway will detect the `Dockerfile` automatically
 4. Add all environment variables (see table above)
 5. Set `ANALYSIS_SERVICE_API_KEY` to a strong random secret
-6. Copy the Railway public URL → set as `ANALYSIS_SERVICE_URL` in Vercel
-7. Deploy
+6. **Healthcheck path: `/ready`** (not `/health`). `/ready` is config-aware
+   — it returns 503 when required environment is missing, so Railway will
+   refuse to promote a deploy with broken configuration. `/health` is a
+   liveness probe only and returns 200 even when downstream config is
+   incomplete.
+7. Copy the Railway public URL → set as `ANALYSIS_SERVICE_URL` in Vercel
+8. Deploy
+
+---
+
+## Reliability: Error Envelopes, Retries, and Circuit Breaker
+
+Every `apps/web` JSON API route returns errors in a single envelope so the
+browser can render them uniformly without ever seeing raw upstream text:
+
+```json
+{
+  "error": {
+    "code": "UPSTREAM_UNAVAILABLE",
+    "message": "Analysis service is temporarily unavailable.",
+    "requestId": "9e2658fe-b81b-4c56-aae8-573bfe8c67d0"
+  }
+}
+```
+
+`code` is a stable enum (`apps/web/src/lib/server/api-errors.ts`). Pair the
+client-visible `requestId` with `x-request-id` in the response headers and
+the structured server logs (look for `requestId` in the JSON log lines) to
+trace a single user-reported failure end-to-end. When the upstream sends
+`Retry-After`, it is forwarded as `Retry-After` on the envelope response.
+
+### Retry policy
+
+`apps/web/src/lib/server/resilience.ts` is the single retry/timeout policy
+used by every upstream call:
+
+- Per-attempt deadline (`AbortSignal.timeout(timeoutMs)`).
+- Full-jitter exponential backoff:
+  `delay = random(0, min(maxDelayMs, baseDelayMs * 2 ** (attempt - 1)))`.
+- Honours `Retry-After` from the upstream when present.
+- Retries **only** transient transport errors and the configured retryable
+  HTTP statuses (`408`, `429`, `500`, `502`, `503`, `504`).
+- Never retries `400`, `401`, `403`, `404`, `409`, validation errors, or
+  configuration errors.
+- `maxAttempts > 1` requires the call to be naturally idempotent or carry
+  an `idempotencyKey`. Calling the helper otherwise throws a programmer
+  error, by design — silent duplicate side effects on the upstream are
+  worse than a loud failure.
+
+The analysis `POST /analyze` is retried up to 2 attempts because
+`runAndPersistPlantAnalysis` upserts on `plant_analyses.image_id`
+(uniqueness enforced by migration 004) and replaces findings by `image_id`
+in a single transaction — a retried call cannot create duplicate rows.
+
+### Circuit breaker
+
+`apps/web/src/lib/server/circuit-breaker.ts` wraps the analysis-service
+proxy. It opens after 5 failures within 60s, then fails fast with
+`UPSTREAM_UNAVAILABLE` for a 30s cooldown before allowing a single probe.
+**Limitation**: state is in-memory per Vercel function instance — a cold
+start resets the breaker. This is acceptable for the MVP hardening tier
+because it still protects a warm instance from amplifying a request burst
+against a known-bad upstream. Lifting the breaker into Redis is tracked
+separately.
+
+### Analysis fallback semantics
+
+The analysis service distinguishes two failure classes (see
+`apps/analysis/app/errors.py`):
+
+- **Expected dependency failures** (`StorageUnavailable`, `ModelUnavailable`,
+  `ModelRateLimited`, `ModelBadResponse`, `ConfigurationError`) trigger a
+  **non-diagnostic fallback response** with `is_fallback=true` and a
+  stable `fallback_reason` code (e.g. `"STORAGE_UNAVAILABLE"`). The reason
+  codes are part of the API contract — they are safe to log and surface in
+  diagnostics.
+- **Unexpected programmer errors** (e.g. `TypeError`, `AttributeError`)
+  intentionally propagate. The plant-health output discipline forbids
+  re-skinning a bug as a confident inconclusive diagnosis — see
+  `.github/copilot-instructions.md` §9.
+
+Typed errors are mapped to a safe JSON envelope by the FastAPI exception
+handler in `apps/analysis/app/main.py`:
+
+```json
+{
+  "error": {
+    "code": "MODEL_UNAVAILABLE",
+    "message": "The analysis model is temporarily unavailable.",
+    "request_id": "..."
+  },
+  "retryable": true
+}
+```
+
+---
+
+## Smoke Checks
+
+After every preview / production deploy, run:
+
+```bash
+PHENOSAGE_BASE_URL=https://your-preview.vercel.app pnpm run smoke:preview
+```
+
+`scripts/smoke-preview.mjs` verifies:
+
+- `GET /api/healthz` returns 200 JSON with `status="ok"`.
+- `POST /api/chat` and `POST /api/uploads/sign` without auth return a
+  **structured 401 JSON** envelope with `x-request-id` (not an HTML 500).
+- Malformed JSON requests return a structured 400/401, never an HTML
+  error page.
+- No response body contains forbidden substrings: `fetch failed`, raw env
+  var names (`SUPABASE_SERVICE_ROLE_KEY`, `OPENAI_API_KEY`,
+  `GEMINI_API_KEY`, `ANALYSIS_SERVICE_API_KEY`), signed Supabase storage
+  URL paths, or stack-trace fragments.
+
+Exit code 0 on success, 1 on any failure — wire it into your deploy
+promotion gate.
 
 ---
 

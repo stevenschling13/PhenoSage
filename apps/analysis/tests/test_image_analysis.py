@@ -32,7 +32,7 @@ async def test_run_analysis_returns_inconclusive_fallback_when_storage_is_unconf
 
     assert response.analysis_mode == "fallback"
     assert response.is_fallback is True
-    assert response.fallback_reason == "RuntimeError"
+    assert response.fallback_reason == "CONFIGURATION_ERROR"
     assert response.overall_health_score == 0.0
     assert "Inconclusive fallback result" in response.summary
     assert response.compared_to_image_id == "previous-image"
@@ -147,12 +147,12 @@ async def test_run_model_analysis_uses_low_confidence_defaults_for_incomplete_ou
 
 
 @pytest.mark.asyncio
-async def test_run_model_analysis_raises_when_openai_key_missing(
+async def test_run_model_analysis_raises_configuration_when_openai_key_missing(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     monkeypatch.setattr(settings, "openai_api_key", "")
 
-    with pytest.raises(RuntimeError, match="OPENAI_API_KEY is not configured"):
+    with pytest.raises(image_analysis.ConfigurationError):
         await image_analysis._run_model_analysis(
             _request(),
             image_bytes=b"fake-image",
@@ -187,13 +187,13 @@ def test_parse_findings_skips_non_dict_items() -> None:
 
 
 @pytest.mark.asyncio
-async def test_fetch_storage_image_raises_when_storage_credentials_missing(
+async def test_fetch_storage_image_raises_configuration_when_credentials_missing(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     monkeypatch.setattr(settings, "supabase_url", "")
     monkeypatch.setattr(settings, "supabase_service_role_key", "")
 
-    with pytest.raises(RuntimeError, match="Supabase storage credentials"):
+    with pytest.raises(image_analysis.ConfigurationError):
         await image_analysis._fetch_storage_image("plants/p/img.jpg")
 
 
@@ -314,10 +314,7 @@ async def test_run_analysis_falls_back_when_storage_fetch_fails(
     caplog: pytest.LogCaptureFixture,
 ) -> None:
     async def fake_fetch(storage_path: str) -> tuple[bytes, str]:
-        raise httpx_error()
-
-    def httpx_error() -> Exception:
-        return ConnectionError("upstream unavailable")
+        raise image_analysis.StorageUnavailable("simulated outage")
 
     monkeypatch.setattr(image_analysis, "_fetch_storage_image", fake_fetch)
 
@@ -326,5 +323,72 @@ async def test_run_analysis_falls_back_when_storage_fetch_fails(
 
     assert response.is_fallback is True
     assert response.analysis_mode == "fallback"
-    assert response.fallback_reason == "ConnectionError"
+    # Stable, redaction-safe code — never the raw exception class name.
+    assert response.fallback_reason == "STORAGE_UNAVAILABLE"
     assert "analysis fallback triggered" in caplog.text
+
+
+@pytest.mark.asyncio
+async def test_run_analysis_does_not_swallow_programmer_errors(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Programmer defects must propagate, not become a fake fallback diagnosis.
+
+    The plant-health output discipline (see .github/copilot-instructions.md
+    §9) bans presenting an unexpected internal bug as a confident-looking
+    inconclusive result. Anything that isn't an `AnalysisError` re-raises.
+    """
+
+    async def fake_fetch(storage_path: str) -> tuple[bytes, str]:
+        raise TypeError("oops, programmer bug — null deref")
+
+    monkeypatch.setattr(image_analysis, "_fetch_storage_image", fake_fetch)
+
+    with pytest.raises(TypeError, match="programmer bug"):
+        await image_analysis.run_analysis(_request())
+
+
+@pytest.mark.parametrize(
+    "bad_path",
+    [
+        "../../etc/passwd",
+        "/absolute/path.jpg",
+        "plants/../../../secret.jpg",
+        "plants//double-slash.jpg",
+        "plants/img.jpg?query=1",
+        "plants/img.jpg#frag",
+        "http://evil.com/img.jpg",
+        "plants/img .jpg",
+        "plants\\img.jpg",
+        "",
+        "a" * 600,
+    ],
+)
+def test_analyze_request_rejects_unsafe_storage_paths(bad_path: str) -> None:
+    """SSRF guard: storage_path values that could escape the bucket must fail validation."""
+    from pydantic import ValidationError
+
+    with pytest.raises(ValidationError):
+        AnalyzeRequest(
+            plant_id="plant-1",
+            image_id="image-1",
+            storage_path=bad_path,
+            grow_context={"grow_id": "grow-1"},
+        )
+
+
+def test_analyze_request_accepts_safe_storage_paths() -> None:
+    for good in [
+        "plants/plant-1/image.jpg",
+        "user-123/plant_abc/2026-01-01-leaf.png",
+        "single-segment.jpg",
+    ]:
+        req = AnalyzeRequest(
+            plant_id="plant-1",
+            image_id="image-1",
+            storage_path=good,
+            grow_context={"grow_id": "grow-1"},
+            previous_storage_path=good,
+        )
+        assert req.storage_path == good
+        assert req.previous_storage_path == good

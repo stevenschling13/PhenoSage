@@ -6,6 +6,12 @@ line-length = 100
 select = ["E", "F", "I", "N", "W", "UP"]
 ignore = ["E501"]
 
+[tool.ruff.lint.per-file-ignores]
+# Typed analysis errors intentionally use short, code-like names
+# (StorageUnavailable / ModelRateLimited / ...) per the API spec; they're
+# all subclasses of `AnalysisError` so the suffix is implicit.
+"app/errors.py" = ["N818"]
+
 [tool.mypy]
 python_version = "3.12"
 strict = true

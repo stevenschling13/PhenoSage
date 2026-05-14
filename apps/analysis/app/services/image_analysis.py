@@ -3,11 +3,22 @@ from __future__ import annotations
 import base64
 import json
 import logging
+import re
 from datetime import UTC, datetime
+from urllib.parse import quote
 
 import httpx
 
 from app.config import settings
+from app.errors import (
+    AnalysisError,
+    ConfigurationError,
+    InvalidStoragePath,
+    ModelBadResponse,
+    ModelRateLimited,
+    ModelUnavailable,
+    StorageUnavailable,
+)
 from app.middleware import get_request_id, log_event
 from app.models.analysis import (
     AnalysisFinding,
@@ -21,24 +32,62 @@ from app.services.scoring import compute_health_score
 
 MODEL_VERSION = "gpt-4o-mini-vision"
 logger = logging.getLogger(__name__)
+_STORAGE_PATH_PATTERN = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._/-]*$")
+
+
+def _sanitize_storage_path(storage_path: str) -> str:
+    path = storage_path.strip()
+    if (
+        not path
+        or path.startswith("/")
+        or path.startswith(".")
+        or ".." in path
+        or "\\" in path
+        or "?" in path
+        or "#" in path
+        or not _STORAGE_PATH_PATTERN.fullmatch(path)
+    ):
+        raise InvalidStoragePath()
+    return quote(path, safe="/-._~")
 
 
 async def _fetch_storage_image(storage_path: str) -> tuple[bytes, str]:
     if not settings.supabase_url or not settings.supabase_service_role_key:
-        raise RuntimeError("Supabase storage credentials are not configured")
+        # Missing creds is a deploy-time misconfiguration, not a transient
+        # failure — never retry.
+        raise ConfigurationError("Supabase storage credentials are not configured")
 
+    safe_storage_path = _sanitize_storage_path(storage_path)
     base_url = settings.supabase_url.rstrip("/")
-    url = f"{base_url}/storage/v1/object/authenticated/plant-images/{storage_path}"
+    url = (
+        f"{base_url}/storage/v1/object/authenticated/plant-images/"
+        f"{safe_storage_path}"
+    )
     headers = {
         "Authorization": f"Bearer {settings.supabase_service_role_key}",
         "x-request-id": get_request_id(),
     }
 
-    async with httpx.AsyncClient(timeout=20.0) as client:
-        response = await client.get(url, headers=headers)
-        response.raise_for_status()
-        content_type = response.headers.get("content-type", "image/jpeg")
-        return response.content, content_type
+    try:
+        async with httpx.AsyncClient(timeout=20.0) as client:
+            response = await client.get(url, headers=headers)
+            response.raise_for_status()
+            content_type = response.headers.get("content-type", "image/jpeg")
+            return response.content, content_type
+    except httpx.HTTPStatusError as exc:
+        # 401/403 here means the service-role key is wrong / revoked — that's
+        # a configuration problem, not a transient outage.
+        if exc.response.status_code in (401, 403):
+            raise ConfigurationError(
+                "Supabase rejected the service-role credential."
+            ) from exc
+        raise StorageUnavailable(
+            f"Supabase storage returned HTTP {exc.response.status_code}."
+        ) from exc
+    except (httpx.TimeoutException, httpx.TransportError, ConnectionError) as exc:
+        raise StorageUnavailable(
+            "Supabase storage is unreachable or timed out."
+        ) from exc
 
 
 def _build_fallback_response(
@@ -102,7 +151,7 @@ async def _run_model_analysis(
     content_type: str,
 ) -> AnalyzeResponse:
     if not settings.openai_api_key:
-        raise RuntimeError("OPENAI_API_KEY is not configured")
+        raise ConfigurationError("OPENAI_API_KEY is not configured")
 
     from openai import AsyncOpenAI
 
@@ -110,23 +159,55 @@ async def _run_model_analysis(
     data_url = f"data:{content_type};base64,{encoded}"
     client = AsyncOpenAI(api_key=settings.openai_api_key)
 
-    completion = await client.chat.completions.create(
-        model=MODEL_VERSION,
-        response_format={"type": "json_object"},
-        messages=[
-            {"role": "system", "content": SYSTEM_PROMPT},
-            {
-                "role": "user",
-                "content": [
-                    {"type": "text", "text": build_analysis_prompt(request.grow_context)},
-                    {"type": "image_url", "image_url": {"url": data_url}},
-                ],
-            },
-        ],
-    )
+    try:
+        completion = await client.chat.completions.create(
+            model=MODEL_VERSION,
+            response_format={"type": "json_object"},
+            messages=[
+                {"role": "system", "content": SYSTEM_PROMPT},
+                {
+                    "role": "user",
+                    "content": [
+                        {"type": "text", "text": build_analysis_prompt(request.grow_context)},
+                        {"type": "image_url", "image_url": {"url": data_url}},
+                    ],
+                },
+            ],
+        )
+    except Exception as exc:
+        # Classify the underlying provider error without echoing the
+        # provider response body. We probe by attribute / class-name so
+        # the test suite doesn't need the real `openai` package installed.
+        cls_name = exc.__class__.__name__
+        status = getattr(exc, "status_code", None) or getattr(
+            getattr(exc, "response", None), "status_code", None
+        )
+        if cls_name in {"APITimeoutError", "TimeoutError"} or isinstance(
+            exc, TimeoutError
+        ):
+            raise ModelUnavailable("Model call timed out.") from exc
+        if status == 429 or cls_name == "RateLimitError":
+            raise ModelRateLimited("Model rate limited.") from exc
+        if isinstance(status, int) and status >= 500:
+            raise ModelUnavailable(f"Model upstream returned HTTP {status}.") from exc
+        if cls_name in {"APIConnectionError", "ConnectionError"}:
+            raise ModelUnavailable("Model upstream is unreachable.") from exc
+        if isinstance(status, int) and status in (401, 403):
+            raise ConfigurationError("Model rejected our credentials.") from exc
+        # Anything else is unexpected — re-raise so it surfaces as a
+        # programmer error and is NOT swallowed into a fake fallback
+        # diagnosis.
+        raise
 
     raw_content = completion.choices[0].message.content or "{}"
-    parsed = json.loads(raw_content)
+    try:
+        parsed = json.loads(raw_content)
+    except (ValueError, TypeError) as exc:
+        raise ModelBadResponse("Model returned non-JSON content.") from exc
+
+    if not isinstance(parsed, dict):
+        raise ModelBadResponse("Model returned a non-object JSON payload.")
+
     findings = _parse_findings(parsed.get("findings"))
 
     if not findings:
@@ -185,13 +266,17 @@ async def run_analysis(request: AnalyzeRequest) -> AnalyzeResponse:
             is_fallback=response.is_fallback,
         )
         return response
-    except Exception as exc:
-        reason = exc.__class__.__name__
+    except AnalysisError as exc:
+        # Only EXPECTED dependency failures become an inconclusive fallback.
+        # Programmer defects (TypeError, AttributeError, etc.) intentionally
+        # propagate so they surface as a real error in monitoring instead of
+        # being silently re-skinned as a "fallback diagnosis" — see the
+        # plant-health output discipline rule in .github/copilot-instructions.md.
         log_event(
             logging.WARNING,
             "analysis fallback triggered",
             plant_id=request.plant_id,
             image_id=request.image_id,
-            fallback_reason=reason,
+            fallback_reason=exc.code,
         )
-        return _build_fallback_response(request, reason=reason)
+        return _build_fallback_response(request, reason=exc.code)

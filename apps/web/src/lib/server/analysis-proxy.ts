@@ -1,7 +1,13 @@
 import "server-only";
 import type { AnalysisResponse } from "@phenosage/shared";
 import { getAnalysisServiceConfig } from "./analysis-config";
+import { CircuitOpenError, getCircuitBreaker } from "./circuit-breaker";
 import { REQUEST_ID_HEADER, withRequestIdHeader } from "./request-id";
+import {
+  UpstreamError,
+  withResilience,
+  type ResilienceOptions,
+} from "./resilience";
 
 interface ProxyOptions {
   endpoint: string;
@@ -14,6 +20,21 @@ interface ProxyOptions {
    * surface the failure quickly so the UI can show a real error.
    */
   timeoutMs?: number;
+  /**
+   * Resilience policy overrides for this call. Defaults to a single attempt
+   * so the existing public contract is preserved; callers must opt into
+   * retries via `idempotent` or `idempotencyKey` (see `resilience.ts`).
+   */
+  resilience?: Partial<
+    Pick<
+      ResilienceOptions,
+      | "maxAttempts"
+      | "idempotent"
+      | "idempotencyKey"
+      | "baseDelayMs"
+      | "maxDelayMs"
+    >
+  >;
 }
 
 type RawAnalysisResponse = {
@@ -49,6 +70,11 @@ const DEFAULT_TIMEOUT_MS = 30_000;
  * Proxy client for the Railway analysis service.
  * All calls go through Next.js server routes — the browser never calls
  * the analysis service directly.
+ *
+ * Wraps `fetch` in `withResilience` so timeouts, transport errors, and
+ * retryable HTTP statuses are classified into a single `UpstreamError`
+ * shape that route handlers can map onto the standard `apiError()`
+ * envelope without leaking raw upstream messages.
  */
 export async function callAnalysisService<T = unknown>(
   options: ProxyOptions,
@@ -60,54 +86,139 @@ export async function callAnalysisService<T = unknown>(
     body,
     requestId,
     timeoutMs = DEFAULT_TIMEOUT_MS,
+    resilience,
   } = options;
 
   // Compute the effective request id once so headers, log lines, and
   // error messages all reference the same correlation key.
   const effectiveRequestId = requestId ?? crypto.randomUUID();
 
-  const init: RequestInit = {
-    method,
-    headers: withRequestIdHeader(
-      {
-        "Content-Type": "application/json",
-        Authorization: `Bearer ${apiKey}`,
-      },
-      effectiveRequestId,
-    ),
-    signal: AbortSignal.timeout(timeoutMs),
-  };
-  if (body !== undefined) {
-    init.body = JSON.stringify(body);
-  }
-
-  let response: Response;
+  // Wrap the resilient call in a per-instance circuit breaker keyed on the
+  // upstream. Once the breaker opens, repeated calls from the same warm
+  // instance fail fast with `UPSTREAM_UNAVAILABLE` until the cooldown
+  // elapses — this prevents a request burst from amplifying load against a
+  // known-bad analysis service.
+  const breaker = getCircuitBreaker("analysis-service");
   try {
-    response = await fetch(`${url}${endpoint}`, init);
+    return await breaker.run(() =>
+      withResilience<T>(
+        async (_attempt, signal) => {
+          const init: RequestInit = {
+            method,
+            headers: withRequestIdHeader(
+              {
+                "Content-Type": "application/json",
+                Authorization: `Bearer ${apiKey}`,
+              },
+              effectiveRequestId,
+            ),
+            signal,
+          };
+          if (body !== undefined) {
+            init.body = JSON.stringify(body);
+          }
+
+          const response = await fetch(`${url}${endpoint}`, init);
+
+          if (!response.ok) {
+            // Drain (but do not surface) the upstream body so the connection
+            // returns to the pool. The text is intentionally NOT included in
+            // the thrown error — route handlers must not leak provider error
+            // payloads to the browser.
+            const drained = await response.text().catch(() => "");
+            const upstreamRequestId =
+              response.headers.get(REQUEST_ID_HEADER) ?? effectiveRequestId;
+            const retryAfterHeader = response.headers.get("retry-after");
+            const retryAfterSeconds =
+              parseRetryAfter(retryAfterHeader) ?? undefined;
+            const status = response.status;
+            // Defer retry classification (retryable vs not) to withResilience
+            // by leaving `retryable: false` and letting it consult the
+            // `retryStatuses` allowlist — that way one allowlist governs
+            // every upstream call.
+            throw new UpstreamError({
+              code:
+                status === 429
+                  ? "UPSTREAM_RATE_LIMITED"
+                  : status >= 500
+                    ? "UPSTREAM_UNAVAILABLE"
+                    : "UPSTREAM_BAD_RESPONSE",
+              message: `Analysis service error ${status} (request ${upstreamRequestId})`,
+              operation: "analysis-service",
+              requestId: effectiveRequestId,
+              attempt: _attempt,
+              retryable: false,
+              status,
+              ...(retryAfterSeconds !== undefined ? { retryAfterSeconds } : {}),
+              // Capture the drained snippet on `cause` for server-side
+              // debugging only — never echoed.
+              cause: drained ? new Error(drained.slice(0, 500)) : undefined,
+            });
+          }
+
+          return (await response.json()) as T;
+        },
+        {
+          operation: "analysis-service",
+          requestId: effectiveRequestId,
+          timeoutMs,
+          // Default to a single attempt; per-call retry policy is opt-in
+          // via `resilience.maxAttempts` paired with `idempotent` or
+          // `idempotencyKey`. `analyzeImage` (below) opts in because the
+          // persistence layer in `runAndPersistPlantAnalysis` is
+          // idempotent on `image_id` (UNIQUE constraint from migration
+          // 004 + delete-and-replace findings).
+          maxAttempts: resilience?.maxAttempts ?? 1,
+          ...(resilience?.idempotent !== undefined
+            ? { idempotent: resilience.idempotent }
+            : {}),
+          ...(resilience?.idempotencyKey !== undefined
+            ? { idempotencyKey: resilience.idempotencyKey }
+            : {}),
+          ...(resilience?.baseDelayMs !== undefined
+            ? { baseDelayMs: resilience.baseDelayMs }
+            : {}),
+          ...(resilience?.maxDelayMs !== undefined
+            ? { maxDelayMs: resilience.maxDelayMs }
+            : {}),
+        },
+      ),
+    );
   } catch (err) {
-    // AbortSignal.timeout fires a TimeoutError DOMException; surface a
-    // distinct message so callers + Sentry can tell a hung upstream
-    // apart from a regular fetch failure. Carry the underlying error as
-    // `cause` so debuggers still see the original stack.
-    if (err instanceof Error && err.name === "TimeoutError") {
-      throw new Error(
-        `Analysis service timed out after ${timeoutMs}ms (request ${effectiveRequestId})`,
-        { cause: err },
-      );
+    // Map a tripped circuit into the same UpstreamError shape as a real
+    // upstream failure so the route handler doesn't need to special-case
+    // breaker logic — it just sees an UPSTREAM_UNAVAILABLE with a
+    // Retry-After hint.
+    if (err instanceof CircuitOpenError) {
+      throw new UpstreamError({
+        code: "UPSTREAM_UNAVAILABLE",
+        message: "Analysis service is temporarily unavailable.",
+        operation: "analysis-service",
+        requestId: effectiveRequestId,
+        attempt: 0,
+        retryable: true,
+        retryAfterSeconds: err.retryAfterSeconds,
+        cause: err,
+      });
     }
     throw err;
   }
+}
 
-  if (!response.ok) {
-    const text = await response.text();
-    const upstreamRequestId =
-      response.headers.get(REQUEST_ID_HEADER) ?? effectiveRequestId;
-    throw new Error(
-      `Analysis service error ${response.status} (request ${upstreamRequestId}): ${text}`,
-    );
+/** Parse an HTTP Retry-After value (seconds or HTTP-date) to seconds. */
+function parseRetryAfter(value: string | null): number | null {
+  if (!value) return null;
+  const trimmed = value.trim();
+  const asInt = Number.parseInt(trimmed, 10);
+  if (Number.isFinite(asInt) && String(asInt) === trimmed) {
+    return Math.max(0, asInt);
   }
-
-  return response.json() as Promise<T>;
+  const asDate = Date.parse(trimmed);
+  if (Number.isFinite(asDate)) {
+    const delta = Math.ceil((asDate - Date.now()) / 1000);
+    return delta > 0 ? delta : 0;
+  }
+  return null;
 }
 
 export function normalizeAnalysisResponse(
@@ -234,6 +345,17 @@ export async function analyzeImage(params: {
     method: "POST",
     body,
     ...(params.requestId ? { requestId: params.requestId } : {}),
+    // POST /analyze is safe to retry: the persistence layer in
+    // `runAndPersistPlantAnalysis` upserts on `image_id` (uniqueness
+    // enforced by `plant_analyses.image_id UNIQUE` in migration 004) and
+    // findings are deleted-and-replaced by `image_id` inside the same
+    // function, so a retried call cannot create duplicate rows. The model
+    // call itself is the only side effect that re-runs on retry — that's
+    // acceptable cost for resilience against transient 5xx/timeouts.
+    resilience: {
+      maxAttempts: 2,
+      idempotencyKey: `${params.plantId}:${params.imageId}`,
+    },
   });
   return normalizeAnalysisResponse(raw);
 }
