@@ -101,7 +101,7 @@ describe("updateDisplayNameAction", () => {
   });
 
   it("requires the user to be signed in", async () => {
-    mocks.getServerUser.mockResolvedValueOnce(null);
+    mocks.getServerUser.mockResolvedValueOnce(null as never);
     const result = await updateDisplayNameAction(buildFormData("Steve"));
     expect(result.status).toBe("error");
     expect(result.message).toMatch(/signed in/i);

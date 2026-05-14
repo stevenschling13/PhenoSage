@@ -96,7 +96,7 @@ describe("createGrowAction", () => {
   });
 
   it("rejects when the user is not signed in", async () => {
-    mocks.getServerUser.mockResolvedValueOnce(null);
+    mocks.getServerUser.mockResolvedValueOnce(null as never);
     const result = await createGrowAction(buildFormData());
     expect(result.status).toBe("error");
     expect(result.message).toMatch(/signed in/i);
