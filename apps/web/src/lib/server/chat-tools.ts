@@ -709,6 +709,69 @@ export const CHAT_TOOL_DEFINITIONS = [
       },
     },
   },
+  {
+    type: "function" as const,
+    function: {
+      name: "find_grow",
+      description:
+        "Resolve a free-text reference to a grow ('north tent', 'the spring run', 'soil hydro') into one or more candidate grow ids. Use as the FIRST step when the user mentions a grow conversationally so you can avoid an awkward 'which grow?' round-trip. Case-insensitive substring match on grow name + description, ordered by most recently updated. Returns up to `limit` candidates; if exactly one matches, the model can confidently proceed.",
+      parameters: {
+        type: "object",
+        properties: {
+          query: {
+            type: "string",
+            description:
+              "Free-text reference from the user (1-120 chars). Examples: 'north tent', 'spring 2026', 'flower room'.",
+          },
+          includeArchived: {
+            type: "boolean",
+            description:
+              "Set true to include archived grows. Default false — most resolution queries should ignore archived rows.",
+          },
+          limit: {
+            type: "number",
+            description:
+              "Max candidates to return. Default 5, max 15. Smaller is better — narrow the search if you get too many.",
+          },
+        },
+        required: ["query"],
+        additionalProperties: false,
+      },
+    },
+  },
+  {
+    type: "function" as const,
+    function: {
+      name: "find_plant",
+      description:
+        "Resolve a free-text reference to a plant ('the mother', 'plant 3', 'NL 01', 'phenotype A') into one or more candidate plant ids. Use as the FIRST step when the user mentions a plant conversationally. Case-insensitive substring match across plants.name, strain, and batch_label; optionally scoped to a grow. Ordered by most recently updated. Returns up to `limit` candidates with their grow id so follow-up tools can be called immediately.",
+      parameters: {
+        type: "object",
+        properties: {
+          query: {
+            type: "string",
+            description:
+              "Free-text reference from the user (1-120 chars). Examples: 'the mother', 'NL 01', 'phenotype A', 'plant 3'.",
+          },
+          growId: {
+            type: "string",
+            description:
+              "Optional grow ID to constrain the search. Use this when you already know which grow the user is talking about.",
+          },
+          includeArchived: {
+            type: "boolean",
+            description: "Set true to include archived plants. Default false.",
+          },
+          limit: {
+            type: "number",
+            description: "Max candidates. Default 5, max 15.",
+          },
+        },
+        required: ["query"],
+        additionalProperties: false,
+      },
+    },
+  },
 ];
 
 type ToolResult = { ok: true; data: unknown } | { ok: false; error: string };
@@ -975,6 +1038,27 @@ const FINDING_SEVERITIES = [
   "high",
   "critical",
 ] as const;
+
+const FindGrowArgs = z.object({
+  query: z.string().min(1).max(120),
+  includeArchived: z.boolean().optional(),
+  limit: z.number().optional(),
+});
+
+const FindPlantArgs = z.object({
+  query: z.string().min(1).max(120),
+  growId: z.string().min(1).optional(),
+  includeArchived: z.boolean().optional(),
+  limit: z.number().optional(),
+});
+
+// PostgREST `ilike` requires us to escape the % and _ wildcards so a user
+// query like "50%" matches the literal characters rather than acting as a
+// wildcard. Belt-and-braces — also caps the query length to keep the LIKE
+// pattern bounded.
+function escapeIlikePattern(input: string): string {
+  return input.slice(0, 120).replace(/[%_\\]/g, (m) => `\\${m}`);
+}
 
 const GetPlantTimelineArgs = z.object({
   plantId: z.string().min(1),
@@ -1749,6 +1833,45 @@ export async function executeChatTool(
               error: "analysis pipeline failed; try again in a moment",
             };
           }
+        }
+
+        case "find_grow": {
+          const args = FindGrowArgs.parse(rawArgs);
+          const limit = numClamp(args.limit, 5, 15);
+          const pattern = `%${escapeIlikePattern(args.query)}%`;
+          let q = supabase
+            .from("grows")
+            .select(
+              "id,name,description,stage,medium,light_type,start_date,is_archived,updated_at",
+            )
+            .or(`name.ilike.${pattern},description.ilike.${pattern}`)
+            .order("updated_at", { ascending: false })
+            .limit(limit);
+          if (!args.includeArchived) q = q.eq("is_archived", false);
+          const { data, error } = await q;
+          if (error) return { ok: false, error: error.message };
+          return { ok: true, data: data ?? [] };
+        }
+
+        case "find_plant": {
+          const args = FindPlantArgs.parse(rawArgs);
+          const limit = numClamp(args.limit, 5, 15);
+          const pattern = `%${escapeIlikePattern(args.query)}%`;
+          let q = supabase
+            .from("plants")
+            .select(
+              "id,grow_id,name,strain,batch_label,notes,is_archived,updated_at",
+            )
+            .or(
+              `name.ilike.${pattern},strain.ilike.${pattern},batch_label.ilike.${pattern}`,
+            )
+            .order("updated_at", { ascending: false })
+            .limit(limit);
+          if (args.growId) q = q.eq("grow_id", args.growId);
+          if (!args.includeArchived) q = q.eq("is_archived", false);
+          const { data, error } = await q;
+          if (error) return { ok: false, error: error.message };
+          return { ok: true, data: data ?? [] };
         }
 
         default:
