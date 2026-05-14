@@ -132,11 +132,32 @@ describe("analysis-proxy", () => {
     expect(Object.keys(sent.grow_context)).toEqual(["grow_id"]);
   });
 
-  it("throws with status code when the upstream errors", async () => {
+  it("throws an UpstreamError with the upstream status when the upstream errors", async () => {
     fetchSpy.mockResolvedValue(new Response("boom", { status: 502 }));
     await expect(callAnalysisService({ endpoint: "/broken" })).rejects.toThrow(
       /502/,
     );
+  });
+
+  it("does not echo the upstream response body in the thrown error message", async () => {
+    fetchSpy.mockResolvedValue(
+      new Response(
+        JSON.stringify({ secret_token: "sk_live_should_never_leak" }),
+        { status: 500 },
+      ),
+    );
+    let caught: Error | null = null;
+    try {
+      await callAnalysisService({ endpoint: "/broken" });
+    } catch (err) {
+      caught = err as Error;
+    }
+    expect(caught).not.toBeNull();
+    expect(caught?.message).toMatch(/500/);
+    // The drained body lives on `cause` (server-only debugging only) but
+    // must NOT appear in the user-facing message — route handlers surface
+    // the message through apiError().
+    expect(caught?.message).not.toMatch(/sk_live_should_never_leak/);
   });
 
   it("attaches an abort signal so the fetch can time out", async () => {
@@ -146,7 +167,7 @@ describe("analysis-proxy", () => {
     expect(init.signal).toBeInstanceOf(AbortSignal);
   });
 
-  it("surfaces a friendly timeout error when the upstream hangs", async () => {
+  it("classifies a TimeoutError into a typed UPSTREAM_TIMEOUT", async () => {
     const timeoutError = new Error("operation timed out");
     timeoutError.name = "TimeoutError";
     fetchSpy.mockRejectedValue(timeoutError);
@@ -156,6 +177,11 @@ describe("analysis-proxy", () => {
         requestId: "req-123",
         timeoutMs: 5_000,
       }),
-    ).rejects.toThrow(/timed out after 5000ms.*req-123/);
+    ).rejects.toMatchObject({
+      name: "UpstreamError",
+      code: "UPSTREAM_TIMEOUT",
+      retryable: true,
+      requestId: "req-123",
+    });
   });
 });
