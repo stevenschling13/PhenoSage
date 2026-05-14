@@ -772,6 +772,50 @@ export const CHAT_TOOL_DEFINITIONS = [
       },
     },
   },
+  {
+    type: "function" as const,
+    function: {
+      name: "compare_plants",
+      description:
+        "Side-by-side comparison of 2-4 plants over a recent window. Returns each plant's latest analysis summary (health score, summary, comparison_summary) plus event / observation / open-task / unresolved-finding counts since `sinceDays`. Use for cross-plant longitudinal questions: 'how does plant 3 compare to plant 4 this week', 'which of the seedlings is lagging', 'is the LED tent doing better than the HPS tent overall'. Cheaper than calling get_plant_timeline for each plant — one call returns the comparable summary fields.",
+      parameters: {
+        type: "object",
+        properties: {
+          plantIds: {
+            type: "array",
+            items: { type: "string" },
+            description: "2-4 plant ids to compare. Required.",
+          },
+          sinceDays: {
+            type: "number",
+            description:
+              "Activity window for the counts (events, observations, findings). Default 14, max 90.",
+          },
+        },
+        required: ["plantIds"],
+        additionalProperties: false,
+      },
+    },
+  },
+  {
+    type: "function" as const,
+    function: {
+      name: "get_grow_summary",
+      description:
+        "Whole-grow snapshot in one call — grow metadata (stage, medium, light, days since start), plant count, open-task count broken down by priority, unresolved-finding count broken down by severity, and the most recent event / observation timestamps. Use to answer 'how's the north tent doing overall?' or as a fast first read before deeper investigation. Replaces several separate read tool chains.",
+      parameters: {
+        type: "object",
+        properties: {
+          growId: {
+            type: "string",
+            description: "Grow ID to summarise. Required.",
+          },
+        },
+        required: ["growId"],
+        additionalProperties: false,
+      },
+    },
+  },
 ];
 
 type ToolResult = { ok: true; data: unknown } | { ok: false; error: string };
@@ -1038,6 +1082,15 @@ const FINDING_SEVERITIES = [
   "high",
   "critical",
 ] as const;
+
+const ComparePlantsArgs = z.object({
+  plantIds: z.array(z.string().min(1)).min(2).max(4),
+  sinceDays: z.number().optional(),
+});
+
+const GetGrowSummaryArgs = z.object({
+  growId: z.string().min(1),
+});
 
 const FindGrowArgs = z.object({
   query: z.string().min(1).max(120),
@@ -1872,6 +1925,229 @@ export async function executeChatTool(
           const { data, error } = await q;
           if (error) return { ok: false, error: error.message };
           return { ok: true, data: data ?? [] };
+        }
+
+        case "compare_plants": {
+          const args = ComparePlantsArgs.parse(rawArgs);
+          const sinceDays = numClamp(args.sinceDays, 14, 90);
+          const since = new Date(
+            Date.now() - sinceDays * 24 * 60 * 60 * 1000,
+          ).toISOString();
+
+          // Fan out the per-plant reads in parallel. Each plant gets:
+          //   - plant row (name, strain, grow_id)
+          //   - latest plant_analyses row
+          //   - event count in window
+          //   - observation count in window
+          //   - unresolved finding count in window
+          //   - open task count
+          // Promise.allSettled so one RLS denial or missing row degrades
+          // that plant's summary rather than failing the whole call.
+          const perPlant = await Promise.all(
+            args.plantIds.map(async (plantId) => {
+              const [
+                plantRes,
+                analysisRes,
+                eventCountRes,
+                observationCountRes,
+                findingCountRes,
+                taskCountRes,
+              ] = await Promise.allSettled([
+                supabase
+                  .from("plants")
+                  .select("id,grow_id,name,strain,batch_label,is_archived")
+                  .eq("id", plantId)
+                  .maybeSingle(),
+                supabase
+                  .from("plant_analyses")
+                  .select(
+                    "id,overall_health_score,summary,comparison_summary,analyzed_at,model_version",
+                  )
+                  .eq("plant_id", plantId)
+                  .order("analyzed_at", { ascending: false })
+                  .limit(1)
+                  .maybeSingle(),
+                supabase
+                  .from("grow_events")
+                  .select("id", { count: "exact", head: true })
+                  .eq("plant_id", plantId)
+                  .gte("occurred_at", since),
+                supabase
+                  .from("plant_observations")
+                  .select("id", { count: "exact", head: true })
+                  .eq("plant_id", plantId)
+                  .gte("observed_at", since),
+                supabase
+                  .from("plant_findings")
+                  .select("id", { count: "exact", head: true })
+                  .eq("plant_id", plantId)
+                  .is("resolved_at", null)
+                  .gte("created_at", since),
+                supabase
+                  .from("grow_tasks")
+                  .select("id", { count: "exact", head: true })
+                  .eq("plant_id", plantId)
+                  .in("status", ["open", "in_progress"]),
+              ]);
+
+              const pickCount = (
+                r: PromiseSettledResult<{ count: number | null }>,
+              ): number =>
+                r.status === "fulfilled" ? (r.value.count ?? 0) : 0;
+
+              const plant =
+                plantRes.status === "fulfilled" ? plantRes.value.data : null;
+              const analysis =
+                analysisRes.status === "fulfilled"
+                  ? analysisRes.value.data
+                  : null;
+
+              return {
+                plantId,
+                plant,
+                latestAnalysis: analysis,
+                counts: {
+                  events: pickCount(eventCountRes),
+                  observations: pickCount(observationCountRes),
+                  unresolvedFindings: pickCount(findingCountRes),
+                  openTasks: pickCount(taskCountRes),
+                },
+              };
+            }),
+          );
+
+          return {
+            ok: true,
+            data: {
+              sinceDays,
+              since,
+              plants: perPlant,
+            },
+          };
+        }
+
+        case "get_grow_summary": {
+          const args = GetGrowSummaryArgs.parse(rawArgs);
+
+          const [
+            growRes,
+            plantsRes,
+            findingsRes,
+            tasksRes,
+            latestEventRes,
+            latestObservationRes,
+          ] = await Promise.allSettled([
+            supabase
+              .from("grows")
+              .select(
+                "id,name,description,stage,medium,light_type,start_date,target_harvest_date,is_archived",
+              )
+              .eq("id", args.growId)
+              .maybeSingle(),
+            supabase
+              .from("plants")
+              .select("id,name,strain,is_archived")
+              .eq("grow_id", args.growId)
+              .eq("is_archived", false),
+            supabase
+              .from("plant_findings")
+              .select("id,severity,resolved_at")
+              .eq("grow_id", args.growId)
+              .is("resolved_at", null),
+            supabase
+              .from("grow_tasks")
+              .select("id,priority,status")
+              .eq("grow_id", args.growId)
+              .in("status", ["open", "in_progress"]),
+            supabase
+              .from("grow_events")
+              .select("id,event_type,occurred_at")
+              .eq("grow_id", args.growId)
+              .order("occurred_at", { ascending: false })
+              .limit(1)
+              .maybeSingle(),
+            supabase
+              .from("plant_observations")
+              .select("id,observed_at")
+              .eq("grow_id", args.growId)
+              .order("observed_at", { ascending: false })
+              .limit(1)
+              .maybeSingle(),
+          ]);
+
+          const grow =
+            growRes.status === "fulfilled" ? growRes.value.data : null;
+          if (!grow) {
+            return {
+              ok: false,
+              error:
+                "grow not found or not accessible — confirm growId and that the user owns or is a member of the grow",
+            };
+          }
+
+          const plants =
+            (plantsRes.status === "fulfilled" ? plantsRes.value.data : null) ??
+            [];
+          const findings =
+            (findingsRes.status === "fulfilled"
+              ? findingsRes.value.data
+              : null) ?? [];
+          const tasks =
+            (tasksRes.status === "fulfilled" ? tasksRes.value.data : null) ??
+            [];
+
+          const findingsBySeverity = findings.reduce<Record<string, number>>(
+            (acc, row) => {
+              const sev = (row as { severity: string }).severity ?? "unknown";
+              acc[sev] = (acc[sev] ?? 0) + 1;
+              return acc;
+            },
+            {},
+          );
+          const tasksByPriority = tasks.reduce<Record<string, number>>(
+            (acc, row) => {
+              const pri = (row as { priority: string }).priority ?? "unknown";
+              acc[pri] = (acc[pri] ?? 0) + 1;
+              return acc;
+            },
+            {},
+          );
+
+          const latestEvent =
+            latestEventRes.status === "fulfilled"
+              ? latestEventRes.value.data
+              : null;
+          const latestObservation =
+            latestObservationRes.status === "fulfilled"
+              ? latestObservationRes.value.data
+              : null;
+
+          // daysSinceStart mirrors the daysSinceStart calculation used in
+          // the analysis context so the model's numeric anchor stays
+          // consistent across surfaces.
+          const startDate = (grow as { start_date: string | null }).start_date;
+          const daysSinceStart =
+            startDate && !Number.isNaN(Date.parse(startDate))
+              ? Math.max(
+                  0,
+                  Math.floor((Date.now() - Date.parse(startDate)) / 86_400_000),
+                )
+              : null;
+
+          return {
+            ok: true,
+            data: {
+              grow,
+              daysSinceStart,
+              plantCount: plants.length,
+              unresolvedFindingCount: findings.length,
+              findingsBySeverity,
+              openTaskCount: tasks.length,
+              tasksByPriority,
+              latestEvent,
+              latestObservation,
+            },
+          };
         }
 
         default:

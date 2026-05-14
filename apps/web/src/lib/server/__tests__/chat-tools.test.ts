@@ -96,6 +96,61 @@ function makeBulkInsertMock(result: ListResult) {
   };
 }
 
+// Per-table mock: from(table) returns a chain that records every method
+// call and resolves to the configured value for that table. Chains support
+// the full surface used by the new analytics tools — select/eq/in/is/gte/
+// order/limit/maybeSingle — and are awaitable for the count-only form.
+type CountResult = {
+  // Either a list result (for awaitable count queries) or a single object
+  // for maybeSingle() reads. The router mock branches on which terminal
+  // the executor uses, so callers can configure either shape per table.
+  data: unknown;
+  error: { message: string; code?: string } | null;
+  count?: number | null;
+};
+
+type LazyChain = {
+  select: ReturnType<typeof vi.fn>;
+  eq: ReturnType<typeof vi.fn>;
+  in: ReturnType<typeof vi.fn>;
+  is: ReturnType<typeof vi.fn>;
+  gte: ReturnType<typeof vi.fn>;
+  order: ReturnType<typeof vi.fn>;
+  limit: ReturnType<typeof vi.fn>;
+  maybeSingle: ReturnType<typeof vi.fn>;
+} & PromiseLike<CountResult>;
+
+function makeTableRouterMock(byTable: Record<string, CountResult>) {
+  const calls: Record<string, { method: string; args: unknown[] }[]> = {};
+  const from = vi.fn((table: string) => {
+    const result = byTable[table] ?? {
+      data: null,
+      error: { message: `no mock for table ${table}` },
+    };
+    calls[table] = calls[table] ?? [];
+    const log =
+      (method: string) =>
+      (...args: unknown[]) => {
+        calls[table]!.push({ method, args });
+        return chain;
+      };
+    const chain = {} as LazyChain;
+    chain.select = vi.fn(log("select"));
+    chain.eq = vi.fn(log("eq"));
+    chain.in = vi.fn(log("in"));
+    chain.is = vi.fn(log("is"));
+    chain.gte = vi.fn(log("gte"));
+    chain.order = vi.fn(log("order"));
+    chain.limit = vi.fn(log("limit"));
+    chain.maybeSingle = vi
+      .fn()
+      .mockResolvedValue({ data: result.data, error: result.error });
+    chain.then = Promise.resolve(result).then.bind(Promise.resolve(result));
+    return chain;
+  });
+  return { client: { from }, from, calls };
+}
+
 // .update(payload).eq(col, val).select(...).maybeSingle()
 function makeUpdateEqMaybeSingleMock(result: SingleResult) {
   const maybeSingle = vi.fn().mockResolvedValue(result);
@@ -2277,5 +2332,280 @@ describe("chat-tools — find_plant", () => {
 
     expect(result.ok).toBe(false);
     expect(from).not.toHaveBeenCalled();
+  });
+});
+
+describe("chat-tools — compare_plants", () => {
+  beforeEach(() => {
+    createSupabaseServerClient.mockReset();
+    logServerEvent.mockReset();
+  });
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  it("is exposed in the tool list and requires plantIds only", () => {
+    const def = CHAT_TOOL_DEFINITIONS.find(
+      (t) => t.function.name === "compare_plants",
+    );
+    expect(def).toBeDefined();
+    expect(def?.function.parameters).toMatchObject({ required: ["plantIds"] });
+  });
+
+  it("rejects fewer than 2 plantIds", async () => {
+    const { client, from } = makeTableRouterMock({});
+    createSupabaseServerClient.mockResolvedValue(client);
+    const result = await executeChatTool(
+      "compare_plants",
+      { plantIds: ["p-1"] },
+      CTX_AUTHED,
+    );
+    expect(result.ok).toBe(false);
+    expect(from).not.toHaveBeenCalled();
+  });
+
+  it("rejects more than 4 plantIds", async () => {
+    const { client, from } = makeTableRouterMock({});
+    createSupabaseServerClient.mockResolvedValue(client);
+    const result = await executeChatTool(
+      "compare_plants",
+      { plantIds: ["p-1", "p-2", "p-3", "p-4", "p-5"] },
+      CTX_AUTHED,
+    );
+    expect(result.ok).toBe(false);
+    expect(from).not.toHaveBeenCalled();
+  });
+
+  it("returns per-plant summary with counts from each table", async () => {
+    const { client } = makeTableRouterMock({
+      plants: {
+        data: { id: "p-1", name: "Mother", strain: "NL" },
+        error: null,
+      },
+      plant_analyses: {
+        data: { id: "a-1", overall_health_score: 0.9, summary: "ok" },
+        error: null,
+      },
+      grow_events: { data: [], error: null, count: 7 },
+      plant_observations: { data: [], error: null, count: 3 },
+      plant_findings: { data: [], error: null, count: 1 },
+      grow_tasks: { data: [], error: null, count: 2 },
+    });
+    createSupabaseServerClient.mockResolvedValue(client);
+
+    const result = await executeChatTool(
+      "compare_plants",
+      { plantIds: ["p-1", "p-2"] },
+      CTX_AUTHED,
+    );
+
+    expect(result.ok).toBe(true);
+    if (result.ok) {
+      const data = result.data as {
+        plants: Array<{ counts: Record<string, number> }>;
+      };
+      expect(data.plants).toHaveLength(2);
+      expect(data.plants[0]?.counts).toEqual({
+        events: 7,
+        observations: 3,
+        unresolvedFindings: 1,
+        openTasks: 2,
+      });
+    }
+  });
+
+  it("clamps sinceDays to a max of 90", async () => {
+    const { client } = makeTableRouterMock({
+      plants: { data: null, error: null },
+      plant_analyses: { data: null, error: null },
+      grow_events: { data: [], error: null, count: 0 },
+      plant_observations: { data: [], error: null, count: 0 },
+      plant_findings: { data: [], error: null, count: 0 },
+      grow_tasks: { data: [], error: null, count: 0 },
+    });
+    createSupabaseServerClient.mockResolvedValue(client);
+
+    const result = await executeChatTool(
+      "compare_plants",
+      { plantIds: ["p-1", "p-2"], sinceDays: 9999 },
+      CTX_AUTHED,
+    );
+
+    expect(result.ok).toBe(true);
+    if (result.ok) {
+      const data = result.data as { sinceDays: number };
+      expect(data.sinceDays).toBe(90);
+    }
+  });
+
+  it("degrades gracefully when one of the per-plant reads fails", async () => {
+    const { client } = makeTableRouterMock({
+      plants: { data: null, error: { message: "rls" } },
+      plant_analyses: { data: null, error: null },
+      grow_events: { data: [], error: null, count: 0 },
+      plant_observations: { data: [], error: null, count: 0 },
+      plant_findings: { data: [], error: null, count: 0 },
+      grow_tasks: { data: [], error: null, count: 0 },
+    });
+    createSupabaseServerClient.mockResolvedValue(client);
+
+    const result = await executeChatTool(
+      "compare_plants",
+      { plantIds: ["p-1", "p-2"] },
+      CTX_AUTHED,
+    );
+
+    expect(result.ok).toBe(true);
+    if (result.ok) {
+      const data = result.data as { plants: Array<{ plant: unknown }> };
+      expect(data.plants[0]?.plant).toBeNull();
+    }
+  });
+});
+
+describe("chat-tools — get_grow_summary", () => {
+  beforeEach(() => {
+    createSupabaseServerClient.mockReset();
+    logServerEvent.mockReset();
+  });
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  it("is exposed in the tool list and requires growId only", () => {
+    const def = CHAT_TOOL_DEFINITIONS.find(
+      (t) => t.function.name === "get_grow_summary",
+    );
+    expect(def).toBeDefined();
+    expect(def?.function.parameters).toMatchObject({ required: ["growId"] });
+  });
+
+  it("returns 'not found' when the grow lookup is null", async () => {
+    const { client } = makeTableRouterMock({
+      grows: { data: null, error: null },
+      plants: { data: [], error: null },
+      plant_findings: { data: [], error: null },
+      grow_tasks: { data: [], error: null },
+      grow_events: { data: null, error: null },
+      plant_observations: { data: null, error: null },
+    });
+    createSupabaseServerClient.mockResolvedValue(client);
+
+    const result = await executeChatTool(
+      "get_grow_summary",
+      { growId: "missing" },
+      CTX_AUTHED,
+    );
+
+    expect(result.ok).toBe(false);
+    if (!result.ok)
+      expect(result.error).toMatch(/not found or not accessible/i);
+  });
+
+  it("aggregates plant count, finding severities, and task priorities", async () => {
+    const startDate = new Date(Date.now() - 21 * 86_400_000)
+      .toISOString()
+      .slice(0, 10);
+    const { client } = makeTableRouterMock({
+      grows: {
+        data: {
+          id: "g-1",
+          name: "North Tent",
+          stage: "vegetative",
+          medium: "soil",
+          light_type: "led",
+          start_date: startDate,
+        },
+        error: null,
+      },
+      plants: {
+        data: [
+          { id: "p-1", name: "P1" },
+          { id: "p-2", name: "P2" },
+          { id: "p-3", name: "P3" },
+        ],
+        error: null,
+      },
+      plant_findings: {
+        data: [
+          { id: "f-1", severity: "high", resolved_at: null },
+          { id: "f-2", severity: "high", resolved_at: null },
+          { id: "f-3", severity: "low", resolved_at: null },
+        ],
+        error: null,
+      },
+      grow_tasks: {
+        data: [
+          { id: "t-1", priority: "urgent", status: "open" },
+          { id: "t-2", priority: "medium", status: "in_progress" },
+        ],
+        error: null,
+      },
+      grow_events: {
+        data: {
+          id: "e-9",
+          event_type: "feed",
+          occurred_at: "2026-05-12T00:00:00Z",
+        },
+        error: null,
+      },
+      plant_observations: {
+        data: { id: "o-9", observed_at: "2026-05-13T00:00:00Z" },
+        error: null,
+      },
+    });
+    createSupabaseServerClient.mockResolvedValue(client);
+
+    const result = await executeChatTool(
+      "get_grow_summary",
+      { growId: "g-1" },
+      CTX_AUTHED,
+    );
+
+    expect(result.ok).toBe(true);
+    if (result.ok) {
+      const data = result.data as {
+        plantCount: number;
+        unresolvedFindingCount: number;
+        findingsBySeverity: Record<string, number>;
+        openTaskCount: number;
+        tasksByPriority: Record<string, number>;
+        daysSinceStart: number | null;
+      };
+      expect(data.plantCount).toBe(3);
+      expect(data.unresolvedFindingCount).toBe(3);
+      expect(data.findingsBySeverity).toEqual({ high: 2, low: 1 });
+      expect(data.openTaskCount).toBe(2);
+      expect(data.tasksByPriority).toEqual({ urgent: 1, medium: 1 });
+      expect(data.daysSinceStart).toBeGreaterThanOrEqual(20);
+      expect(data.daysSinceStart).toBeLessThanOrEqual(22);
+    }
+  });
+
+  it("returns null daysSinceStart when start_date is missing", async () => {
+    const { client } = makeTableRouterMock({
+      grows: {
+        data: { id: "g-1", name: "Anon", start_date: null },
+        error: null,
+      },
+      plants: { data: [], error: null },
+      plant_findings: { data: [], error: null },
+      grow_tasks: { data: [], error: null },
+      grow_events: { data: null, error: null },
+      plant_observations: { data: null, error: null },
+    });
+    createSupabaseServerClient.mockResolvedValue(client);
+
+    const result = await executeChatTool(
+      "get_grow_summary",
+      { growId: "g-1" },
+      CTX_AUTHED,
+    );
+
+    expect(result.ok).toBe(true);
+    if (result.ok) {
+      const data = result.data as { daysSinceStart: number | null };
+      expect(data.daysSinceStart).toBeNull();
+    }
   });
 });
