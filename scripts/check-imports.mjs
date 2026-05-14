@@ -12,7 +12,10 @@
 import { readFileSync, readdirSync, statSync, existsSync } from "node:fs";
 import { join, relative, sep } from "node:path";
 
-const ROOT = new URL("..", import.meta.url).pathname.replace(/^\/([A-Za-z]:)/, "$1");
+const ROOT = new URL("..", import.meta.url).pathname.replace(
+  /^\/([A-Za-z]:)/,
+  "$1",
+);
 
 const errors = [];
 
@@ -22,7 +25,8 @@ function* walk(dir, exts) {
     const full = join(dir, entry);
     const st = statSync(full);
     if (st.isDirectory()) {
-      if (entry === "node_modules" || entry === ".next" || entry === "dist") continue;
+      if (entry === "node_modules" || entry === ".next" || entry === "dist")
+        continue;
       yield* walk(full, exts);
     } else if (exts.some((e) => entry.endsWith(e))) {
       yield full;
@@ -34,8 +38,13 @@ function* walk(dir, exts) {
 const sharedDir = join(ROOT, "packages", "shared", "src");
 for (const f of walk(sharedDir, [".ts", ".tsx"])) {
   const text = readFileSync(f, "utf8");
-  if (/from\s+["'](?:\.\.\/)+apps\//.test(text) || /from\s+["']@\/apps\//.test(text)) {
-    errors.push(`packages/shared imports from apps/: ${relative(ROOT, f).split(sep).join("/")}`);
+  if (
+    /from\s+["'](?:\.\.\/)+apps\//.test(text) ||
+    /from\s+["']@\/apps\//.test(text)
+  ) {
+    errors.push(
+      `packages/shared imports from apps/: ${relative(ROOT, f).split(sep).join("/")}`,
+    );
   }
 }
 
@@ -43,19 +52,39 @@ for (const f of walk(sharedDir, [".ts", ".tsx"])) {
 const webSrc = join(ROOT, "apps", "web", "src");
 for (const f of walk(webSrc, [".ts", ".tsx"])) {
   const text = readFileSync(f, "utf8");
-  if (/from\s+["'](?:\.\.\/)+analysis\//.test(text) || /from\s+["'].*apps\/analysis/.test(text)) {
-    errors.push(`apps/web imports from apps/analysis: ${relative(ROOT, f).split(sep).join("/")}`);
+  if (
+    /from\s+["'](?:\.\.\/)+analysis\//.test(text) ||
+    /from\s+["'].*apps\/analysis/.test(text)
+  ) {
+    errors.push(
+      `apps/web imports from apps/analysis: ${relative(ROOT, f).split(sep).join("/")}`,
+    );
   }
 }
 
 // 3. createClient(...) with service role outside server libs
-const SERVER_OK = [/apps[\\/]web[\\/]src[\\/]lib[\\/]server[\\/]/, /scripts[\\/]/];
+//
+// We look for ACTUAL env access (`process.env.SUPABASE_SERVICE_ROLE_KEY` or
+// `process.env["SUPABASE_SERVICE_ROLE_KEY"]`), not bare string mentions of
+// the name. Route handlers, error classifiers, diagnostic endpoints, and
+// CSPs all have legitimate reasons to mention the name (e.g. inside a regex
+// that classifies upstream error messages — see the chat route's top-level
+// catch). Flagging those would either force ugly indirection or push real
+// security signal into the noise.
+const SERVER_OK = [
+  /apps[\\/]web[\\/]src[\\/]lib[\\/]server[\\/]/,
+  /scripts[\\/]/,
+];
+const SERVICE_ROLE_ACCESS_RE =
+  /process\.env(?:\.SUPABASE_SERVICE_ROLE_KEY\b|\[\s*["']SUPABASE_SERVICE_ROLE_KEY["']\s*\])/;
 for (const f of walk(webSrc, [".ts", ".tsx"])) {
   const rel = relative(ROOT, f).split(sep).join("/");
   if (SERVER_OK.some((p) => p.test(rel))) continue;
   const text = readFileSync(f, "utf8");
-  if (/SUPABASE_SERVICE_ROLE_KEY/.test(text)) {
-    errors.push(`SUPABASE_SERVICE_ROLE_KEY referenced outside server libs: ${rel}`);
+  if (SERVICE_ROLE_ACCESS_RE.test(text)) {
+    errors.push(
+      `SUPABASE_SERVICE_ROLE_KEY accessed outside server libs: ${rel}`,
+    );
   }
 }
 

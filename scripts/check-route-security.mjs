@@ -27,6 +27,12 @@ const PUBLIC_ROUTES = new Set([
   // path relative to apps/web/src/app/api, with leading slash
   "/health",
   "/ready",
+  // Chat diagnostic — returns only build SHA + Gemini-key-alias presence
+  // booleans + env-name inventory (no values). Intentionally unauthenticated
+  // so an operator can confirm a deployment's chat env from any browser tab
+  // without provoking a 500 from /api/chat. See route file header for
+  // rationale.
+  "/chat/diag",
 ]);
 
 const errors = [];
