@@ -58,6 +58,12 @@ def assess_image_quality(image_bytes: bytes) -> None:
             # here, not deep in the analysis pipeline.
             opened.load()
             grayscale = opened.convert("L")
+    except Image.DecompressionBombError as exc:
+        # Pillow raises DecompressionBombError for images that exceed
+        # MAX_IMAGE_PIXELS (default ~178 MP) to guard against zip-bomb
+        # style attacks. Map to a stable reason rather than letting it
+        # bubble as an untyped 500.
+        raise ImageQualityInconclusive(reason="image_too_large") from exc
     except (UnidentifiedImageError, OSError, ValueError) as exc:
         raise ImageQualityInconclusive(reason="image_decode_failed") from exc
 

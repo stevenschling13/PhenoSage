@@ -281,11 +281,14 @@ async def run_analysis(request: AnalyzeRequest) -> AnalyzeResponse:
         # propagate so they surface as a real error in monitoring instead of
         # being silently re-skinned as a "fallback diagnosis" — see the
         # plant-health output discipline rule in .github/copilot-instructions.md.
-        log_event(
-            logging.WARNING,
-            "analysis fallback triggered",
-            plant_id=request.plant_id,
-            image_id=request.image_id,
-            fallback_reason=exc.code,
-        )
+        log_kwargs: dict[str, object] = {
+            "plant_id": request.plant_id,
+            "image_id": request.image_id,
+            "fallback_reason": exc.code,
+        }
+        # Surface the granular image-quality reason (e.g. "too_blurry",
+        # "too_dark") for ops triage — exc.code alone is too coarse.
+        if hasattr(exc, "reason"):
+            log_kwargs["image_quality_reason"] = exc.reason
+        log_event(logging.WARNING, "analysis fallback triggered", **log_kwargs)
         return _build_fallback_response(request, reason=exc.code)

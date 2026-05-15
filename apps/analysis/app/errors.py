@@ -86,6 +86,7 @@ renaming an existing entry is a breaking change.
 
 IMAGE_QUALITY_REASONS: tuple[str, ...] = (
     "image_decode_failed",
+    "image_too_large",
     "image_too_small",
     "too_dark",
     "too_bright",

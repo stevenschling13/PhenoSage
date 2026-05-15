@@ -97,6 +97,46 @@ async def test_run_analysis_returns_inconclusive_when_image_quality_gate_fails(
 
 
 @pytest.mark.asyncio
+async def test_run_analysis_logs_image_quality_reason_on_gate_failure(
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """The granular image-quality reason must appear in the fallback log.
+
+    Logging only exc.code ("IMAGE_QUALITY_INCONCLUSIVE") is too coarse for
+    ops triage; the specific reason (e.g. "image_decode_failed") should be
+    present so engineers can distinguish actionable causes like `too_dark` vs
+    `too_blurry` without having to pull raw images.
+    """
+    import json as _json
+
+    monkeypatch.setattr(settings, "openai_api_key", "sk-test")
+
+    async def fake_fetch(_path: str) -> tuple[bytes, str]:
+        return b"not-an-image", "image/jpeg"
+
+    monkeypatch.setattr(image_analysis, "_fetch_storage_image", fake_fetch)
+
+    with caplog.at_level("WARNING"):
+        await image_analysis.run_analysis(_request())
+
+    # log_event serialises all fields as a JSON string in the log message.
+    fallback_payloads = []
+    for record in caplog.records:
+        try:
+            payload = _json.loads(record.getMessage())
+        except (_json.JSONDecodeError, TypeError):
+            continue
+        if payload.get("message") == "analysis fallback triggered":
+            fallback_payloads.append(payload)
+
+    assert fallback_payloads, "expected an 'analysis fallback triggered' log entry"
+    assert fallback_payloads[0].get("image_quality_reason") == "image_decode_failed", (
+        "fallback log must include image_quality_reason for ops triage"
+    )
+
+
+@pytest.mark.asyncio
 async def test_run_model_analysis_parses_structured_model_output(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

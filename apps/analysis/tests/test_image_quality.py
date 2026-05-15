@@ -176,4 +176,31 @@ def test_image_quality_inconclusive_default_is_redaction_safe() -> None:
 
 def test_image_quality_inconclusive_rejects_unknown_reason() -> None:
     with pytest.raises(ValueError):
-        raise ImageQualityInconclusive(reason="nope")  # type: ignore[arg-type]
+        ImageQualityInconclusive(reason="nope")  # type: ignore[arg-type]
+
+
+# ---------------------------------------------------------------------------
+# Decompression-bomb guard
+# ---------------------------------------------------------------------------
+
+
+def test_assess_image_quality_rejects_decompression_bomb(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Pillow's DecompressionBombError must map to the image_too_large reason.
+
+    We monkeypatch Image.open to raise the error rather than constructing a
+    genuine bomb-sized image, which would be slow and might hit resource limits
+    in CI.
+    """
+    from PIL import Image as _PILImage
+
+    def _raise(*_a: object, **_kw: object) -> None:
+        raise _PILImage.DecompressionBombError("Image size exceeds limit")
+
+    monkeypatch.setattr(image_quality.Image, "open", _raise)
+
+    with pytest.raises(ImageQualityInconclusive) as exc_info:
+        image_quality.assess_image_quality(b"fake-image-bytes")
+    assert exc_info.value.reason == "image_too_large"
+    assert exc_info.value.code == "IMAGE_QUALITY_INCONCLUSIVE"
