@@ -124,7 +124,12 @@ export function PlantForm({
           role="status"
         >
           <p className="font-medium">
-            {isBulk ? `${count} plants created.` : "Plant created."}
+            {/* Source of truth: the server action returns "Plant created."
+                or "N plants created." in state.message. Reading the local
+                `count` here would race the form: a user can change the
+                count input while the action is pending (inputs aren't
+                disabled), which would mis-label the banner. */}
+            {state.message ?? "Plant created."}
           </p>
           <p className="mt-1 text-muted-foreground">
             If your screen didn&apos;t move on its own, tap below to continue.

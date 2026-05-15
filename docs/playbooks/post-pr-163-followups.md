@@ -114,21 +114,27 @@ select proname from pg_proc where proname in ('search_grows', 'search_plants');
 Until applied, `find_grow` / `find_plant` log a warn and fall back to
 ILIKE — functional, just unranked.
 
-### P1 — Plant-form recovery banner (small, ~30 min)
+### ~~P1 — Plant-form recovery banner~~ ✅ DONE in PR #164
 
-`apps/web/src/app/(app)/plants/new/plant-form.tsx` adopted the
-`useActionWithRecovery` hook in PR #163 but does **not** render the
-recovery banner that `grow-form.tsx` renders when `state.recoveryUrl` is
-set and navigation didn't take. Copy the pattern from
-`apps/web/src/app/(app)/grows/new/grow-form.tsx` (look for
-`{state.status === "success" && state.recoveryUrl ?` block) and adapt
-the copy for the plant create flow. Single-plant lands on the new plant
-detail page; bulk lands back on `/grows` — both targets are already in
-`state.redirectTo` so the banner just renders a `<Link>` to it.
+Shipped in PR #164 (same commit as this playbook landed). The
+success + error banners now render in
+`apps/web/src/app/(app)/plants/new/plant-form.tsx`, gated on
+`state.status` and `state.recoveryUrl`. Banner copy reads
+`state.message` directly (server-side source of truth) instead of
+local form state so a user mutating an input mid-submit can't
+mis-label the banner.
 
-Tests: add a Vitest case to `apps/web/src/app/(app)/plants/__tests__/`
-that mocks an action result of `{ status: "success", recoveryUrl: "/grows" }`
-and asserts the banner renders.
+**Testing posture for these banners**: no component test. Both
+`grow-form.tsx` and `plant-form.tsx` deliberately omit component
+tests for the recovery banner because the value flow it gates on
+is already covered by
+`apps/web/src/lib/__tests__/action-runner.test.tsx` (the hook
+itself) and the action by
+`apps/web/src/app/(app)/plants/__tests__/actions.test.ts`. The
+banner is pure JSX gated on two state fields — a DOM test would
+over-specify the markup. **If you add a new recovery banner
+anywhere**, follow the same posture; only add a component test
+when the conditional logic itself is non-trivial.
 
 ### P2 — CodeQL severity gate (small, ~45 min)
 
