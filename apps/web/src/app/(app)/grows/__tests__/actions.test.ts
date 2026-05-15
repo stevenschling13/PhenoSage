@@ -353,6 +353,37 @@ describe("createGrowAction", () => {
     );
   });
 
+  it("returns a structured error (does NOT throw) when getServerUser itself throws — defends against AuthConfigError leaking to the server-component boundary", async () => {
+    mocks.getServerUser.mockRejectedValueOnce(
+      Object.assign(new Error("Auth is misconfigured"), {
+        name: "AuthConfigError",
+      }),
+    );
+    const result = await createGrowAction(buildFormData());
+    expect(result.status).toBe("error");
+    // The user gets the "temporarily unavailable" copy specific to
+    // the auth-config branch, not the generic save-failure copy.
+    expect(result.message).toMatch(/temporarily unavailable|try again/i);
+    expect(mocks.logServerEvent).toHaveBeenCalledWith(
+      "error",
+      expect.stringMatching(/top-level threw/i),
+      expect.objectContaining({ errorName: "AuthConfigError" }),
+    );
+    expect(mocks.insert).not.toHaveBeenCalled();
+  });
+
+  it("returns a structured error when rateLimit throws (Redis blowup) instead of leaking a server-component error", async () => {
+    mocks.rateLimit.mockRejectedValueOnce(new Error("redis ECONNRESET"));
+    const result = await createGrowAction(buildFormData());
+    expect(result.status).toBe("error");
+    expect(result.message).toMatch(/refresh|sign in|try once more/i);
+    expect(mocks.logServerEvent).toHaveBeenCalledWith(
+      "error",
+      expect.stringMatching(/top-level threw/i),
+      expect.objectContaining({ userId: "user-1" }),
+    );
+  });
+
   it("propagates the incoming x-request-id header into structured failure logs for cross-system correlation", async () => {
     mocks.headersGet.mockImplementation((name: string) =>
       name === "x-request-id" ? "req-abc-123" : null,

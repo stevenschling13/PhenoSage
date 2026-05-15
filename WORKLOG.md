@@ -4,6 +4,92 @@ Handoff log between sessions. Keep entries short. Newest at top.
 
 ---
 
+## 2026-05-15 — Production audit fixes: create-grow + settings hardening (Claude Opus 4.7)
+
+**In-flight on `claude/review-audit-document-cASys`**
+
+QA audit dated 2026-05-15 (Bloomington, MN) flagged: (1) "Create grow"
+producing a Server Components render error, (2) all three settings
+saves (display name / timezone / email prefs) failing with generic
+"something went wrong" copy, (3) assistant hanging on grow-creation
+requests. Root cause analysis:
+
+- **createGrowAction** had `getServerUser()` and `rateLimit()` calls
+  outside its try/catch. Any throw from those (AuthConfigError on
+  missing env, undici "fetch failed", Redis blowup) propagated to
+  React's error boundary as a Server Components render error.
+- **All three settings actions** depended on `getDbClient()` (service
+  role). When `SUPABASE_SERVICE_ROLE_KEY` is missing/rotated in
+  Vercel, every settings save fails — but the user-write paths only
+  needed RLS-scoped access in the first place.
+- **`profiles` table** had RLS enabled but no INSERT policy (only
+  SELECT + UPDATE). `upsert()` is `INSERT … ON CONFLICT DO UPDATE`,
+  which requires INSERT permission even when the row exists — so
+  switching settings off service-role would have silently broken
+  display-name saves until a new policy was added.
+
+**Landed on branch** `claude/review-audit-document-cASys`:
+
+- `supabase/migrations/021_profiles_self_insert.sql` — adds
+  `profiles: self insert` RLS policy (`auth.uid() = id`) guarded by
+  an idempotent `pg_policies` lookup so re-running the migration is
+  safe.
+- `apps/web/src/app/(app)/grows/actions.ts` — top-level try/catch
+  wraps the entire action body. Any throw from `getServerUser()`,
+  `rateLimit()`, or the supabase write is converted into a
+  structured `{ status: "error" }` result. Next.js
+  `NEXT_REDIRECT`/`NEXT_NOT_FOUND` framework signals still re-throw.
+  Distinct copy + structured log fields for the auth-config branch
+  so on-call can grep for `errorName: "AuthConfigError"`.
+- `apps/web/src/app/(app)/settings/actions.ts` — full rewrite. All
+  three actions now use the RLS-scoped `createSupabaseServerClient`,
+  share a `runSettingsWrite()` helper with the top-level defensive
+  wrapper, and map SQLSTATEs to friendly copy without leaking
+  provider text. `getDbClient` import removed.
+- `apps/web/src/app/(app)/grows/[id]/error.tsx` — route-scoped error
+  boundary so a render hiccup on the post-create detail page can
+  never strand the user. CTA points back to `/grows` where the new
+  grow is visible.
+- `apps/web/src/app/api/internal/diag/route.ts` — operator-only
+  diagnostic endpoint (auth via `CRON_SECRET`) that reports env
+  presence, Supabase reachability through the RLS-scoped client, and
+  RLS read-path readiness in one curl. Returns 200/503 + structured
+  per-check payload.
+- `apps/web/src/lib/server/db.ts` — added
+  `hasServiceRoleConfigured()` so the diag route can probe service-
+  role presence without touching `process.env` directly (env-contract
+  guardrail compliance).
+- Test deltas:
+  - `grows/__tests__/actions.test.ts` +2 cases (getServerUser throws,
+    rateLimit throws → both now return structured errors)
+  - `settings/__tests__/actions.test.ts` rewritten to mock the RLS
+    client; +3 cases (auth client construction throw, getServerUser
+    throw, generic SQLSTATE leak guard)
+  - `api/internal/diag/__tests__/route.test.ts` new — 7 cases
+
+**Validation status**: `pnpm run validate` (5/5), `pnpm turbo run
+type-check lint test` (705/705 web tests), `pnpm run
+security:routes` (15 routes clean), `pnpm run security:audit` (all
+green). Python analysis tests not run (pytest not installed in this
+runner); no analysis code touched.
+
+**Next step (operations, not code)**:
+
+1. Apply migration 021 to production via `supabase db push`.
+2. Verify in Vercel that `NEXT_PUBLIC_SUPABASE_URL` +
+   `NEXT_PUBLIC_SUPABASE_ANON_KEY` are set on the production target.
+   `SUPABASE_SERVICE_ROLE_KEY` is no longer required for grow + settings
+   flows; it is still required for cron + finding-alert dispatch.
+3. Curl `/api/internal/diag` with the cron secret to confirm.
+4. Repeat the May 15 audit's manual test plan; "create grow" and
+   "save display name / timezone / notification" should now all
+   succeed end-to-end. If the Server Components render error persists
+   it must be coming from a different path — capture the request id
+   from the log line `create grow action top-level threw` and pass
+   it to triage.
+
+---
+
 ## 2026-05-15 — Tier 3: active-grow semantic finding retrieval (Copilot)
 
 **In-flight on `copilot/tier-3-roadmap-research`**
