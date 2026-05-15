@@ -121,9 +121,6 @@ const localFiles = readdirSync(MIGRATIONS_DIR)
 const versionOf = (name) => name.replace(/_.*$/, "");
 
 const localVersions = new Set(localFiles.map(versionOf));
-const localByVersion = Object.fromEntries(
-  localFiles.map((f) => [versionOf(f), f]),
-);
 
 // ── 5. Parse the CLI output for applied / pending state ──────────────────────
 
