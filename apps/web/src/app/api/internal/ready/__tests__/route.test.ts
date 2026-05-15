@@ -4,8 +4,10 @@ import { GET } from "../route";
 
 const ORIGINAL_ENV = process.env;
 
-function request(init: RequestInit = {}) {
-  return new NextRequest("http://localhost/api/internal/ready", init);
+function request(headers?: Record<string, string>) {
+  return new NextRequest("http://localhost/api/internal/ready", {
+    ...(headers ? { headers } : {}),
+  });
 }
 
 describe("GET /api/internal/ready", () => {
@@ -31,9 +33,7 @@ describe("GET /api/internal/ready", () => {
   });
 
   it("returns readiness checks with a bearer secret", async () => {
-    const res = GET(
-      request({ headers: { authorization: "Bearer probe-secret" } }),
-    );
+    const res = GET(request({ authorization: "Bearer probe-secret" }));
     expect(res.status).toBe(200);
     const body = await res.json();
     expect(body.status).toBe("ok");

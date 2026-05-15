@@ -28,10 +28,6 @@ export function GET(request: NextRequest) {
       ok: Boolean(process.env["NEXT_PUBLIC_SUPABASE_ANON_KEY"]),
     },
     {
-      name: "service_role_key",
-      ok: Boolean(process.env["SUPABASE_SERVICE_ROLE_KEY"]),
-    },
-    {
       name: "analysis_service_url",
       ok: Boolean(process.env["ANALYSIS_SERVICE_URL"]),
     },
