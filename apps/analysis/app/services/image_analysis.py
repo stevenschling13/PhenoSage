@@ -27,6 +27,7 @@ from app.models.analysis import (
     FindingCategory,
     FindingSeverity,
 )
+from app.services.image_quality import assess_image_quality
 from app.services.prompts import SYSTEM_PROMPT, build_analysis_prompt
 from app.services.scoring import compute_health_score
 
@@ -252,6 +253,12 @@ async def _run_model_analysis(
 async def run_analysis(request: AnalyzeRequest) -> AnalyzeResponse:
     try:
         image_bytes, content_type = await _fetch_storage_image(request.storage_path)
+        # Pre-vision quality gate: refuse unanalysable images here so the
+        # outcome is an explicit *inconclusive* envelope rather than a
+        # low-confidence diagnosis from the vision model. ImageQuality-
+        # Inconclusive is an AnalysisError subclass, so it's routed by the
+        # except branch below into the same fallback path.
+        assess_image_quality(image_bytes)
         response = await _run_model_analysis(
             request,
             image_bytes=image_bytes,

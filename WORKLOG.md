@@ -4,6 +4,60 @@ Handoff log between sessions. Keep entries short. Newest at top.
 
 ---
 
+## 2026-05-15 — Tier 2.4: pre-vision image-quality gate in apps/analysis (Copilot)
+
+**In-flight on `copilot/review-pr-159-and-plan-tier-2`**
+
+Picks up T2.4 from the Tier Implementation Playbook hand-off in PR #161.
+Adds an explicit *inconclusive* path for unanalysable images so the
+vision model is never asked to diagnose blank/blurry/blown-out frames —
+satisfies Rule 9 (Plant-Health Output Discipline).
+
+- **Research**: Pillow 12.2.0 (no advisories per `gh-advisory-database`),
+  pure-Python imaging only — no numpy / cv2 / extra apt deps. Variance of
+  `ImageFilter.FIND_EDGES` on the grayscale channel (border 1 px cropped
+  to drop convolution wrap artefacts) ≈ Laplacian variance for blur;
+  `ImageStat.Stat(L).mean[0]` for luminance. Calibration matrix recorded
+  in `tests/test_image_quality.py`.
+- **`app/errors.py`**: new `ImageQualityInconclusive(AnalysisError)` —
+  code `IMAGE_QUALITY_INCONCLUSIVE`, status 422, retryable=False; `reason`
+  is keyword-only and validated against `IMAGE_QUALITY_REASONS`
+  (`image_decode_failed | image_too_small | too_dark | too_bright |
+  too_blurry`). Default message generic — never embeds pixel metrics.
+- **`app/services/image_quality.py`**: pure `assess_image_quality(bytes)`
+  pipeline — decode → minimum 64 px on each side → luminance window
+  [15, 235] → edge-variance ≥ 50. Luminance check precedes blur check on
+  purpose: a black image is "too dark", not "too blurry" (more actionable
+  copy). Thresholds are module-level constants for one-place tuning.
+- **`app/services/image_analysis.py`**: single-line wire-up between
+  fetch and model. Existing `except AnalysisError` branch routes the new
+  exception to the inconclusive fallback envelope automatically — no
+  changes to the router, the response model, the web proxy, or shared
+  contracts.
+- **Tests**: `tests/test_image_quality.py` (+13 cases — happy path / RGB
+  JPEG / decode-fail / empty bytes / too-small / under-exposed /
+  over-exposed / blurred / uniform-grey / dark-wins-over-blurry / contract
+  surface / unknown-reason guard); `tests/test_errors.py` (+1 case,
+  extended redaction-safety check); `tests/test_image_analysis.py` (+1
+  integration case proving `_run_model_analysis` is not called when the
+  gate fails, plus updated happy-path fixture to return a real PNG that
+  passes the gate).
+
+**Test count**: pytest 100/100 (was 86, +14). `ruff check .`, `mypy app/`,
+`pnpm run validate`, `pnpm run security:routes`, CodeQL all clean.
+Pillow added as the only new dep — pinned to 12.2.0.
+
+**Next session**:
+
+- T2.3: Strain-aware analysis context + per-finding confidence scores
+  (contract-changing — needs `contract-guardian`). Touches
+  `packages/shared/src/types.ts`, `apps/analysis/app/models/**`,
+  `apps/analysis/app/routers/analyze.py`, the web proxy, the findings UI,
+  and a new migration (additive `strain_profile_id` or structured
+  reference table). Likely to burst the 1,500-line cap; plan for a split.
+
+---
+
 ## 2026-05-15 — Tier 2.1: per-user timezone for daily-summary + JSDoc cleanup (Copilot)
 
 **In-flight on `copilot/assess-tier-1-and-plan-tier-2`**

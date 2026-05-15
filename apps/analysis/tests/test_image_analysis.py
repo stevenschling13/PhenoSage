@@ -1,14 +1,36 @@
 from __future__ import annotations
 
+import io
+import itertools
 import json
+import random
 import sys
 from types import SimpleNamespace
 
 import pytest
+from PIL import Image
 
 from app.config import settings
 from app.models.analysis import AnalyzeRequest
 from app.services import image_analysis
+
+
+def _valid_png_bytes() -> bytes:
+    """A 256×256 mid-luminance noisy PNG that passes ``assess_image_quality``.
+
+    Used by tests that exercise the full ``run_analysis`` happy path; the
+    pre-vision quality gate would reject the previous ``b"image-bytes"``
+    stubs used here.
+    """
+    rng = random.Random(1)
+    img = Image.new("L", (256, 256))
+    px = img.load()
+    assert px is not None
+    for y, x in itertools.product(range(256), range(256)):
+        px[x, y] = rng.randint(60, 180)
+    buf = io.BytesIO()
+    img.save(buf, format="PNG")
+    return buf.getvalue()
 
 
 def _request() -> AnalyzeRequest:
@@ -36,6 +58,40 @@ async def test_run_analysis_returns_inconclusive_fallback_when_storage_is_unconf
     assert response.overall_health_score == 0.0
     assert "Inconclusive fallback result" in response.summary
     assert response.compared_to_image_id == "previous-image"
+    assert response.findings[0].title == "Fallback analysis only"
+
+
+@pytest.mark.asyncio
+async def test_run_analysis_returns_inconclusive_when_image_quality_gate_fails(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A blank/garbage image must short-circuit before the model is called.
+
+    Pins Rule 9 (Plant-Health Output Discipline): the user-visible result
+    becomes an explicit *inconclusive* envelope instead of a low-confidence
+    diagnosis from the vision model.
+    """
+    monkeypatch.setattr(settings, "openai_api_key", "sk-test")
+
+    async def fake_fetch(_path: str) -> tuple[bytes, str]:
+        # Bytes that Pillow cannot decode → image_decode_failed reason
+        # → ImageQualityInconclusive → inconclusive fallback envelope.
+        return b"not-an-image", "image/jpeg"
+
+    monkeypatch.setattr(image_analysis, "_fetch_storage_image", fake_fetch)
+
+    # Belt-and-braces: prove the model branch is never reached.
+    async def explode(*_a: object, **_kw: object) -> object:
+        raise AssertionError("vision model must not be called on bad images")
+
+    monkeypatch.setattr(image_analysis, "_run_model_analysis", explode)
+
+    response = await image_analysis.run_analysis(_request())
+
+    assert response.analysis_mode == "fallback"
+    assert response.is_fallback is True
+    assert response.fallback_reason == "IMAGE_QUALITY_INCONCLUSIVE"
+    assert response.overall_health_score == 0.0
     assert response.findings[0].title == "Fallback analysis only"
 
 
@@ -257,7 +313,7 @@ async def test_run_analysis_happy_path_logs_completion(
 
     async def fake_fetch(storage_path: str) -> tuple[bytes, str]:
         assert storage_path == "plants/plant-1/image.jpg"
-        return b"image-bytes", "image/jpeg"
+        return _valid_png_bytes(), "image/png"
 
     monkeypatch.setattr(image_analysis, "_fetch_storage_image", fake_fetch)
 
