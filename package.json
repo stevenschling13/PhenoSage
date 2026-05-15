@@ -18,12 +18,13 @@
     "check:routes": "node scripts/check-route-boundaries.mjs",
     "check:imports": "node scripts/check-imports.mjs",
     "check:code-scanning": "node scripts/check-code-scanning-patterns.mjs",
+    "check:budgets": "node scripts/check-file-budgets.mjs",
     "check:scope": "node scripts/check-changed-scope.mjs",
     "security:routes": "node scripts/check-route-security.mjs",
     "security:audit": "node scripts/security-audit.mjs",
     "pr:guardian": "node scripts/pr-guardian.mjs",
     "smoke:preview": "node scripts/smoke-preview.mjs",
-    "validate": "pnpm run check:env && pnpm run check:routes && pnpm run check:imports && pnpm run check:code-scanning",
+    "validate": "pnpm run check:env && pnpm run check:routes && pnpm run check:imports && pnpm run check:code-scanning && pnpm run check:budgets",
     "prepare": "husky"
   },
   "engines": {

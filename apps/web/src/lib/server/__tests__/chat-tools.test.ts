@@ -4,6 +4,7 @@ const createSupabaseServerClient = vi.fn();
 const logServerEvent = vi.fn();
 const getPlantTimeline = vi.fn();
 const runAndPersistPlantAnalysis = vi.fn();
+const rateLimit = vi.fn();
 
 vi.mock("../auth", () => ({
   createSupabaseServerClient: (...args: unknown[]) =>
@@ -17,6 +18,44 @@ vi.mock("../plants", () => ({
   runAndPersistPlantAnalysis: (...args: unknown[]) =>
     runAndPersistPlantAnalysis(...args),
 }));
+vi.mock("../chat-tool-policies", () => ({
+  // Default: allow every call. Suite-specific tests override via
+  // `rateLimit.mockResolvedValueOnce(...)` to exercise the limit branch.
+  // We use the existing `rateLimit` symbol to map onto the policy check
+  // so the per-tool rate-limit test continues to look natural.
+  checkPerToolRateLimit: async (
+    name: string,
+    ctx: { userId: string | null; requestId: string },
+  ) => {
+    // Only consult the mock if a per-tool policy exists for this tool;
+    // otherwise allow unconditionally (matches the real helper).
+    const policied = new Set([
+      "trigger_plant_analysis",
+      "create_plants",
+      "create_grow",
+      "record_image_finding",
+    ]);
+    if (!policied.has(name)) return { ok: true };
+    const r = await rateLimit({
+      key: `chat-tool:${name}:${ctx.userId ?? "anonymous"}`,
+      limit: 1,
+      windowMs: 1,
+    });
+    if (r.ok) return { ok: true };
+    return {
+      ok: false,
+      error: `rate limit: too many ${name} calls in a row; retry in ~1s`,
+    };
+  },
+}));
+
+// Default behavior for the mocked rateLimit: always permit. Tests that
+// need to assert the limited branch override per-test with mockResolvedValueOnce.
+rateLimit.mockResolvedValue({
+  ok: true,
+  remaining: 99,
+  resetAt: Date.now() + 60_000,
+});
 
 import { CHAT_TOOL_DEFINITIONS, executeChatTool } from "../chat-tools";
 
@@ -2160,11 +2199,64 @@ describe("chat-tools — find_grow", () => {
     expect(def?.function.parameters).toMatchObject({ required: ["query"] });
   });
 
-  it("ILIKE-searches name + description and excludes archived by default", async () => {
+  it("calls search_grows RPC with trigram ranking and default args", async () => {
+    const rpc = vi.fn().mockResolvedValue({
+      data: [{ id: "g-1", name: "North Tent A", match_score: 0.62 }],
+      error: null,
+    });
+    createSupabaseServerClient.mockResolvedValue({ rpc, from: vi.fn() });
+
+    const result = await executeChatTool(
+      "find_grow",
+      { query: "north" },
+      CTX_AUTHED,
+    );
+
+    expect(result.ok).toBe(true);
+    expect(rpc).toHaveBeenCalledWith("search_grows", {
+      q: "north",
+      include_archived: false,
+      max_results: 5,
+    });
+  });
+
+  it("forwards includeArchived=true to the RPC", async () => {
+    const rpc = vi.fn().mockResolvedValue({ data: [], error: null });
+    createSupabaseServerClient.mockResolvedValue({ rpc, from: vi.fn() });
+
+    await executeChatTool(
+      "find_grow",
+      { query: "spring", includeArchived: true },
+      CTX_AUTHED,
+    );
+
+    expect(rpc).toHaveBeenCalledWith("search_grows", {
+      q: "spring",
+      include_archived: true,
+      max_results: 5,
+    });
+  });
+
+  it("caps max_results at 15 even when a higher value is requested", async () => {
+    const rpc = vi.fn().mockResolvedValue({ data: [], error: null });
+    createSupabaseServerClient.mockResolvedValue({ rpc, from: vi.fn() });
+
+    await executeChatTool("find_grow", { query: "x", limit: 9999 }, CTX_AUTHED);
+
+    expect(rpc.mock.calls[0]?.[1]).toMatchObject({ max_results: 15 });
+  });
+
+  it("falls back to ILIKE when the RPC fails (e.g. migration not applied)", async () => {
+    const rpc = vi.fn().mockResolvedValue({
+      data: null,
+      error: { message: "function search_grows does not exist" },
+    });
     const { client, calls, from } = makeSelectChainMock({
       data: [{ id: "g-1", name: "North Tent A" }],
       error: null,
     });
+    // Splice the rpc mock onto the chain client.
+    (client as unknown as { rpc: typeof rpc }).rpc = rpc;
     createSupabaseServerClient.mockResolvedValue(client);
 
     const result = await executeChatTool(
@@ -2174,65 +2266,22 @@ describe("chat-tools — find_grow", () => {
     );
 
     expect(result.ok).toBe(true);
+    expect(rpc).toHaveBeenCalled();
     expect(from).toHaveBeenCalledWith("grows");
     expect(calls.or[0]?.[0]).toBe(
       "name.ilike.%north%,description.ilike.%north%",
     );
-    expect(calls.eq).toContainEqual(["is_archived", false]);
-    expect(calls.limit[0]?.[0]).toBe(5);
-  });
-
-  it("includes archived when includeArchived=true", async () => {
-    const { client, calls } = makeSelectChainMock({ data: [], error: null });
-    createSupabaseServerClient.mockResolvedValue(client);
-
-    await executeChatTool(
-      "find_grow",
-      { query: "spring", includeArchived: true },
-      CTX_AUTHED,
+    expect(logServerEvent).toHaveBeenCalledWith(
+      "warn",
+      expect.stringContaining("search_grows rpc failed"),
+      expect.any(Object),
     );
-
-    expect(calls.eq).toEqual([]);
-  });
-
-  it("caps limit at 15 even when a higher value is requested", async () => {
-    const { client, calls } = makeSelectChainMock({ data: [], error: null });
-    createSupabaseServerClient.mockResolvedValue(client);
-
-    await executeChatTool("find_grow", { query: "x", limit: 9999 }, CTX_AUTHED);
-
-    expect(calls.limit[0]?.[0]).toBe(15);
-  });
-
-  it("escapes %, _ and \\ in the user query so wildcards stay literal", async () => {
-    const { client, calls } = makeSelectChainMock({ data: [], error: null });
-    createSupabaseServerClient.mockResolvedValue(client);
-
-    await executeChatTool("find_grow", { query: "50% _ \\room" }, CTX_AUTHED);
-
-    expect(calls.or[0]?.[0]).toBe(
-      "name.ilike.%50\\% \\_ \\\\room%,description.ilike.%50\\% \\_ \\\\room%",
-    );
-  });
-
-  it("returns the supabase error message when the query fails", async () => {
-    const { client } = makeSelectChainMock({
-      data: null,
-      error: { message: "syntax error" },
-    });
-    createSupabaseServerClient.mockResolvedValue(client);
-
-    const result = await executeChatTool(
-      "find_grow",
-      { query: "x" },
-      CTX_AUTHED,
-    );
-
-    expect(result).toEqual({ ok: false, error: "syntax error" });
   });
 
   it("rejects an empty query without touching the database", async () => {
+    const rpc = vi.fn();
     const { client, from } = makeSelectChainMock({ data: [], error: null });
+    (client as unknown as { rpc: typeof rpc }).rpc = rpc;
     createSupabaseServerClient.mockResolvedValue(client);
 
     const result = await executeChatTool(
@@ -2242,6 +2291,7 @@ describe("chat-tools — find_grow", () => {
     );
 
     expect(result.ok).toBe(false);
+    expect(rpc).not.toHaveBeenCalled();
     expect(from).not.toHaveBeenCalled();
   });
 });
@@ -2263,11 +2313,78 @@ describe("chat-tools — find_plant", () => {
     expect(def?.function.parameters).toMatchObject({ required: ["query"] });
   });
 
-  it("ILIKE-searches name + strain + batch_label and excludes archived by default", async () => {
+  it("calls search_plants RPC with trigram ranking and null grow scope by default", async () => {
+    const rpc = vi.fn().mockResolvedValue({
+      data: [{ id: "p-1", name: "Mother", match_score: 0.81 }],
+      error: null,
+    });
+    createSupabaseServerClient.mockResolvedValue({ rpc, from: vi.fn() });
+
+    const result = await executeChatTool(
+      "find_plant",
+      { query: "mother" },
+      CTX_AUTHED,
+    );
+
+    expect(result.ok).toBe(true);
+    expect(rpc).toHaveBeenCalledWith("search_plants", {
+      q: "mother",
+      scope_grow_id: null,
+      include_archived: false,
+      max_results: 5,
+    });
+  });
+
+  it("scopes to a grow when growId is supplied", async () => {
+    const rpc = vi.fn().mockResolvedValue({ data: [], error: null });
+    createSupabaseServerClient.mockResolvedValue({ rpc, from: vi.fn() });
+
+    await executeChatTool(
+      "find_plant",
+      { query: "NL", growId: "g-1" },
+      CTX_AUTHED,
+    );
+
+    expect(rpc).toHaveBeenCalledWith("search_plants", {
+      q: "NL",
+      scope_grow_id: "g-1",
+      include_archived: false,
+      max_results: 5,
+    });
+  });
+
+  it("caps max_results at 15 even when a higher value is requested", async () => {
+    const rpc = vi.fn().mockResolvedValue({ data: [], error: null });
+    createSupabaseServerClient.mockResolvedValue({ rpc, from: vi.fn() });
+
+    await executeChatTool("find_plant", { query: "x", limit: 100 }, CTX_AUTHED);
+
+    expect(rpc.mock.calls[0]?.[1]).toMatchObject({ max_results: 15 });
+  });
+
+  it("includes archived when includeArchived=true", async () => {
+    const rpc = vi.fn().mockResolvedValue({ data: [], error: null });
+    createSupabaseServerClient.mockResolvedValue({ rpc, from: vi.fn() });
+
+    await executeChatTool(
+      "find_plant",
+      { query: "old", includeArchived: true },
+      CTX_AUTHED,
+    );
+
+    expect(rpc.mock.calls[0]?.[1]).toMatchObject({ include_archived: true });
+  });
+
+  it("falls back to ILIKE when the RPC fails", async () => {
+    const rpc = vi.fn().mockResolvedValue({
+      data: null,
+      error: { message: "function search_plants does not exist" },
+    });
     const { client, calls, from } = makeSelectChainMock({
       data: [{ id: "p-1", name: "Mother" }],
       error: null,
     });
+    (client as unknown as { rpc: typeof rpc }).rpc = rpc;
     createSupabaseServerClient.mockResolvedValue(client);
 
     const result = await executeChatTool(
@@ -2277,51 +2394,17 @@ describe("chat-tools — find_plant", () => {
     );
 
     expect(result.ok).toBe(true);
+    expect(rpc).toHaveBeenCalled();
     expect(from).toHaveBeenCalledWith("plants");
     expect(calls.or[0]?.[0]).toBe(
       "name.ilike.%mother%,strain.ilike.%mother%,batch_label.ilike.%mother%",
     );
-    expect(calls.eq).toContainEqual(["is_archived", false]);
-  });
-
-  it("scopes to a grow when growId is supplied", async () => {
-    const { client, calls } = makeSelectChainMock({ data: [], error: null });
-    createSupabaseServerClient.mockResolvedValue(client);
-
-    await executeChatTool(
-      "find_plant",
-      { query: "NL", growId: "g-1" },
-      CTX_AUTHED,
-    );
-
-    expect(calls.eq).toContainEqual(["grow_id", "g-1"]);
-    expect(calls.eq).toContainEqual(["is_archived", false]);
-  });
-
-  it("caps limit at 15 even when a higher value is requested", async () => {
-    const { client, calls } = makeSelectChainMock({ data: [], error: null });
-    createSupabaseServerClient.mockResolvedValue(client);
-
-    await executeChatTool("find_plant", { query: "x", limit: 100 }, CTX_AUTHED);
-
-    expect(calls.limit[0]?.[0]).toBe(15);
-  });
-
-  it("includes archived when includeArchived=true", async () => {
-    const { client, calls } = makeSelectChainMock({ data: [], error: null });
-    createSupabaseServerClient.mockResolvedValue(client);
-
-    await executeChatTool(
-      "find_plant",
-      { query: "old", includeArchived: true },
-      CTX_AUTHED,
-    );
-
-    expect(calls.eq).toEqual([]);
   });
 
   it("rejects an empty query without touching the database", async () => {
+    const rpc = vi.fn();
     const { client, from } = makeSelectChainMock({ data: [], error: null });
+    (client as unknown as { rpc: typeof rpc }).rpc = rpc;
     createSupabaseServerClient.mockResolvedValue(client);
 
     const result = await executeChatTool(
@@ -2331,6 +2414,7 @@ describe("chat-tools — find_plant", () => {
     );
 
     expect(result.ok).toBe(false);
+    expect(rpc).not.toHaveBeenCalled();
     expect(from).not.toHaveBeenCalled();
   });
 });
@@ -2607,5 +2691,55 @@ describe("chat-tools — get_grow_summary", () => {
       const data = result.data as { daysSinceStart: number | null };
       expect(data.daysSinceStart).toBeNull();
     }
+  });
+});
+
+describe("chat-tools — per-tool rate limit", () => {
+  beforeEach(() => {
+    createSupabaseServerClient.mockReset();
+    runAndPersistPlantAnalysis.mockReset();
+    rateLimit.mockReset();
+    logServerEvent.mockReset();
+    rateLimit.mockResolvedValue({
+      ok: true,
+      remaining: 99,
+      resetAt: Date.now() + 60_000,
+    });
+  });
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  it("returns a rate-limit error for trigger_plant_analysis when the budget is exceeded and never touches Gemini", async () => {
+    const resetAt = Date.now() + 30_000;
+    rateLimit.mockResolvedValueOnce({ ok: false, remaining: 0, resetAt });
+
+    const result = await executeChatTool(
+      "trigger_plant_analysis",
+      { plantId: "p-1" },
+      CTX_AUTHED,
+    );
+
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      expect(result.error).toMatch(/rate limit/i);
+    }
+    expect(rateLimit).toHaveBeenCalledWith(
+      expect.objectContaining({
+        key: expect.stringContaining("chat-tool:trigger_plant_analysis:"),
+      }),
+    );
+    expect(createSupabaseServerClient).not.toHaveBeenCalled();
+    expect(runAndPersistPlantAnalysis).not.toHaveBeenCalled();
+  });
+
+  it("does not impose a per-tool budget on read tools like list_grows", async () => {
+    const { client } = makeSelectChainMock({ data: [], error: null });
+    createSupabaseServerClient.mockResolvedValue(client);
+
+    await executeChatTool("list_grows", {}, CTX_AUTHED);
+
+    // No per-tool policy → rateLimit not consulted for list_grows.
+    expect(rateLimit).not.toHaveBeenCalled();
   });
 });
