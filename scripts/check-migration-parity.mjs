@@ -23,7 +23,7 @@
 // it requires network access and Supabase credentials. It is called by
 // `.github/workflows/migration-parity.yml` on a nightly schedule.
 
-import { spawnSync, execFileSync } from "node:child_process";
+import { spawnSync } from "node:child_process";
 import { existsSync, readdirSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
