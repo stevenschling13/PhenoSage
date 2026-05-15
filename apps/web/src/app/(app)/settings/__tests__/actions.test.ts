@@ -35,7 +35,11 @@ vi.mock("@/lib/server/request-id", () => ({
   logServerEvent: mocks.logServerEvent,
 }));
 
-import { updateDisplayNameAction, updateTimezoneAction } from "../actions";
+import {
+  updateDisplayNameAction,
+  updateEmailPreferencesAction,
+  updateTimezoneAction,
+} from "../actions";
 
 function buildFormData(displayName: string): FormData {
   const fd = new FormData();
@@ -177,5 +181,112 @@ describe("updateTimezoneAction", () => {
     const result = await updateTimezoneAction(buildTzFormData("UTC"));
     expect(result.status).toBe("error");
     expect(result.message).toMatch(/signed in/i);
+  });
+});
+
+// ─── updateEmailPreferencesAction (Tier 2.2) ────────────────────────
+
+function buildEmailPrefsFormData(opts: {
+  dailySummary?: boolean;
+  findingAlerts?: boolean;
+  severityFloor?: string;
+}): FormData {
+  const fd = new FormData();
+  if (opts.dailySummary) fd.set("emailDailySummary", "on");
+  if (opts.findingAlerts) fd.set("emailFindingAlerts", "on");
+  if (opts.severityFloor !== undefined)
+    fd.set("emailAlertSeverityFloor", opts.severityFloor);
+  return fd;
+}
+
+describe("updateEmailPreferencesAction", () => {
+  beforeEach(() => {
+    mocks.upsert.mockReset();
+    mocks.from.mockClear();
+    mocks.getDbClient.mockReturnValue(mocks.dbStub);
+    mocks.getServerUser.mockResolvedValue({ id: "user-1" });
+    mocks.revalidatePath.mockReset();
+    mocks.logServerEvent.mockReset();
+  });
+
+  it("requires authentication", async () => {
+    mocks.getServerUser.mockResolvedValueOnce(null as never);
+    const result = await updateEmailPreferencesAction(
+      buildEmailPrefsFormData({}),
+    );
+    expect(result.status).toBe("error");
+    expect(result.message).toMatch(/signed in/i);
+    expect(mocks.upsert).not.toHaveBeenCalled();
+  });
+
+  it("rejects an unknown severity floor before touching the DB", async () => {
+    const result = await updateEmailPreferencesAction(
+      buildEmailPrefsFormData({ severityFloor: "ULTRA-CRITICAL" }),
+    );
+    expect(result.status).toBe("error");
+    expect(result.message).toMatch(/valid severity/i);
+    expect(mocks.upsert).not.toHaveBeenCalled();
+  });
+
+  it("treats a missing checkbox as opt-out (false) and persists the row", async () => {
+    mocks.upsert.mockResolvedValueOnce({ data: null, error: null });
+    const result = await updateEmailPreferencesAction(
+      buildEmailPrefsFormData({
+        dailySummary: false,
+        findingAlerts: true,
+        severityFloor: "high",
+      }),
+    );
+    expect(result.status).toBe("success");
+    expect(mocks.from).toHaveBeenCalledWith("user_preferences");
+    const [payload, conflict] = mocks.upsert.mock.calls[0] as [
+      Record<string, unknown>,
+      Record<string, unknown>,
+    ];
+    expect(payload).toMatchObject({
+      user_id: "user-1",
+      email_daily_summary: false,
+      email_finding_alerts: true,
+      email_alert_severity_floor: "high",
+    });
+    expect(conflict).toEqual({ onConflict: "user_id" });
+    expect(mocks.revalidatePath).toHaveBeenCalledWith("/settings");
+  });
+
+  it("defaults severityFloor to 'critical' when the form omits the field", async () => {
+    mocks.upsert.mockResolvedValueOnce({ data: null, error: null });
+    await updateEmailPreferencesAction(
+      buildEmailPrefsFormData({ dailySummary: true, findingAlerts: true }),
+    );
+    const [payload] = mocks.upsert.mock.calls[0] as [Record<string, unknown>];
+    expect(payload["email_alert_severity_floor"]).toBe("critical");
+  });
+
+  it("maps SQLSTATE 23514 (CHECK violation) to friendly copy without echoing raw message", async () => {
+    mocks.upsert.mockResolvedValueOnce({
+      data: null,
+      error: { message: "BOOM raw text", code: "23514" },
+    });
+    const result = await updateEmailPreferencesAction(
+      buildEmailPrefsFormData({
+        dailySummary: true,
+        severityFloor: "critical",
+      }),
+    );
+    expect(result.status).toBe("error");
+    expect(result.message).toMatch(/valid severity/i);
+    expect(result.message).not.toMatch(/BOOM/);
+  });
+
+  it("returns a generic error message and never echoes raw provider text on unknown SQLSTATE", async () => {
+    mocks.upsert.mockResolvedValueOnce({
+      data: null,
+      error: { message: "internal exception 42", code: "XX999" },
+    });
+    const result = await updateEmailPreferencesAction(
+      buildEmailPrefsFormData({}),
+    );
+    expect(result.status).toBe("error");
+    expect(result.message).not.toMatch(/internal exception/);
   });
 });

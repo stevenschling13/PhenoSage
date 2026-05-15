@@ -8,9 +8,13 @@ import {
   listUsersWithActiveGrows,
   renderDigest,
 } from "@/lib/server/daily-digest";
+import { dispatchDailySummaryEmail } from "@/lib/server/email-dispatch";
 import { logServerEvent } from "@/lib/server/request-id";
 import { formatOccurredOnInZone } from "@/lib/server/timezone";
-import { loadUserPreferencesBulk } from "@/lib/server/user-preferences";
+import {
+  DEFAULT_USER_PREFERENCES,
+  loadUserPreferencesBulk,
+} from "@/lib/server/user-preferences";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
@@ -86,6 +90,11 @@ export async function GET(request: NextRequest) {
   let wrote = 0;
   let skipped = 0;
   let errored = 0;
+  let emailed = 0;
+  // App URL is read once outside the fan-out so we don't re-read env
+  // per-user. Falls back to a sensible local-dev value; this only
+  // affects link rendering inside emails — the CTA still resolves.
+  const appUrl = process.env["NEXT_PUBLIC_APP_URL"] ?? "http://localhost:3000";
 
   for (let i = 0; i < userIds.length; i += CONCURRENCY) {
     if (Date.now() - startedAt.getTime() > TIME_BUDGET_MS) {
@@ -102,7 +111,10 @@ export async function GET(request: NextRequest) {
 
     // Process a batch concurrently. Each slot returns its outcome so counters
     // are accumulated after the batch — no mutation inside Promise.all.
-    type BatchOutcome = "wrote" | "skipped" | "errored";
+    type BatchOutcome = {
+      result: "wrote" | "skipped" | "errored";
+      emailed?: boolean;
+    };
     const outcomes = await Promise.all(
       userIds
         .slice(i, i + CONCURRENCY)
@@ -113,9 +125,12 @@ export async function GET(request: NextRequest) {
               userId,
               startedAt,
             );
-            if (!hasMeaningfulActivity(snapshot)) return "skipped";
+            if (!hasMeaningfulActivity(snapshot)) return { result: "skipped" };
             const rendered = await renderDigest(snapshot);
-            const tz = preferences.get(userId)?.timezone ?? "UTC";
+            const userPrefs = preferences.get(userId) ?? {
+              ...DEFAULT_USER_PREFERENCES,
+            };
+            const tz = userPrefs.timezone;
             const occurredOn = formatOccurredOnInZone(startedAt, tz);
             const { data: written, error: upsertError } = await supabase
               .from("notifications")
@@ -151,24 +166,52 @@ export async function GET(request: NextRequest) {
                 code: upsertError.code,
                 userId,
               });
-              return "errored";
+              return { result: "errored" };
             }
             // ignoreDuplicates: empty data means the row already existed today.
-            return written && written.length > 0 ? "wrote" : "skipped";
+            const insertedId = written?.[0]?.id;
+            if (!insertedId) {
+              return { result: "skipped" };
+            }
+
+            // Email is best-effort: failure is logged inside the
+            // dispatch helper and never propagates back to the cron.
+            // Resend's 24h idempotency key + the row's `email_sent_at`
+            // stamp prevent same-day duplicates.
+            const dispatch = await dispatchDailySummaryEmail({
+              supabase,
+              userId,
+              notificationId: insertedId,
+              preferences: userPrefs,
+              snapshot,
+              rendered,
+              occurredOn,
+              appUrl,
+            }).catch((err) => {
+              logServerEvent("error", "daily summary: email dispatch threw", {
+                userId,
+                error: err instanceof Error ? err.message : String(err),
+              });
+              return { sent: false as const, reason: "failed" as const };
+            });
+
+            return { result: "wrote", emailed: dispatch.sent };
           } catch (err) {
             logServerEvent("error", "daily summary: user run failed", {
               error: err instanceof Error ? err.message : String(err),
               userId,
             });
-            return "errored";
+            return { result: "errored" };
           }
         }),
     );
 
     for (const outcome of outcomes) {
       processed++;
-      if (outcome === "wrote") wrote++;
-      else if (outcome === "skipped") skipped++;
+      if (outcome.result === "wrote") {
+        wrote++;
+        if (outcome.emailed) emailed++;
+      } else if (outcome.result === "skipped") skipped++;
       else errored++;
     }
   }
@@ -181,5 +224,6 @@ export async function GET(request: NextRequest) {
     wrote,
     skipped,
     errored,
+    emailed,
   });
 }

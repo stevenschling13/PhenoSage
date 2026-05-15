@@ -1,5 +1,6 @@
 import "server-only";
 
+import type { FindingSeverity } from "@phenosage/shared";
 import type { SupabaseClient } from "@supabase/supabase-js";
 
 import { logServerEvent } from "./request-id";
@@ -10,19 +11,75 @@ import { DEFAULT_TIMEZONE, isValidTimezone } from "./timezone";
 // land here so a schema bump doesn't quietly leak to clients.
 export interface UserPreferences {
   timezone: string;
+  emailDailySummary: boolean;
+  emailFindingAlerts: boolean;
+  emailAlertSeverityFloor: FindingSeverity;
+}
+
+// Default to the most-conservative-yet-useful posture: send email by
+// default (these are transactional, tied to the user's verified
+// Supabase Auth address) but only on `critical` severity. Users tune
+// this through the settings page.
+export const DEFAULT_USER_PREFERENCES: UserPreferences = {
+  timezone: DEFAULT_TIMEZONE,
+  emailDailySummary: true,
+  emailFindingAlerts: true,
+  emailAlertSeverityFloor: "critical",
+};
+
+const VALID_SEVERITIES: ReadonlySet<FindingSeverity> = new Set([
+  "info",
+  "low",
+  "medium",
+  "high",
+  "critical",
+]);
+
+interface PreferenceRow {
+  timezone?: string | null;
+  email_daily_summary?: boolean | null;
+  email_finding_alerts?: boolean | null;
+  email_alert_severity_floor?: string | null;
 }
 
 // Normalise a row from `user_preferences` so that callers always get a
-// usable timezone. A row with a malformed `timezone` value (possible
-// only via direct SQL today; the trigger guards the API path) silently
-// degrades to UTC.
-function normalisePreferences(
-  row: { timezone?: string | null } | null,
-): UserPreferences {
+// usable timezone + email defaults. A row with malformed data (only
+// possible via direct SQL today; the trigger + check constraint guard
+// the API path) silently degrades to the safe default.
+function normalisePreferences(row: PreferenceRow | null): UserPreferences {
   const tz = row?.timezone;
-  if (typeof tz === "string" && isValidTimezone(tz)) return { timezone: tz };
-  return { timezone: DEFAULT_TIMEZONE };
+  const timezone =
+    typeof tz === "string" && isValidTimezone(tz) ? tz : DEFAULT_TIMEZONE;
+
+  const emailDailySummary =
+    typeof row?.email_daily_summary === "boolean"
+      ? row.email_daily_summary
+      : DEFAULT_USER_PREFERENCES.emailDailySummary;
+
+  const emailFindingAlerts =
+    typeof row?.email_finding_alerts === "boolean"
+      ? row.email_finding_alerts
+      : DEFAULT_USER_PREFERENCES.emailFindingAlerts;
+
+  const floorRaw = row?.email_alert_severity_floor;
+  const emailAlertSeverityFloor: FindingSeverity =
+    typeof floorRaw === "string" &&
+    VALID_SEVERITIES.has(floorRaw as FindingSeverity)
+      ? (floorRaw as FindingSeverity)
+      : DEFAULT_USER_PREFERENCES.emailAlertSeverityFloor;
+
+  return {
+    timezone,
+    emailDailySummary,
+    emailFindingAlerts,
+    emailAlertSeverityFloor,
+  };
 }
+
+const PREFERENCE_COLUMNS =
+  "user_id,timezone,email_daily_summary,email_finding_alerts,email_alert_severity_floor";
+const PREFERENCE_COLUMNS_NO_ID =
+  "timezone,email_daily_summary,email_finding_alerts,email_alert_severity_floor";
 
 // Bulk-load preferences for a set of user ids. Used by the daily-summary
 // cron so we avoid issuing N round-trips to Supabase across the user
@@ -38,7 +95,7 @@ export async function loadUserPreferencesBulk(
 
   const { data, error } = await supabase
     .from("user_preferences")
-    .select("user_id,timezone")
+    .select(PREFERENCE_COLUMNS)
     .in("user_id", userIds);
 
   if (error) {
@@ -47,19 +104,19 @@ export async function loadUserPreferencesBulk(
       userCount: userIds.length,
     });
     // Fall through to defaults rather than throwing — the cron is
-    // best-effort and a missing tz means UTC.
+    // best-effort and a missing row means defaults.
   }
 
   for (const row of data ?? []) {
     const userId = (row as { user_id?: string }).user_id;
     if (typeof userId !== "string") continue;
-    out.set(userId, normalisePreferences(row as { timezone?: string | null }));
+    out.set(userId, normalisePreferences(row as PreferenceRow));
   }
 
   // Backfill any user id that wasn't returned so callers can rely on
   // the map being total over `userIds`.
   for (const id of userIds) {
-    if (!out.has(id)) out.set(id, { timezone: DEFAULT_TIMEZONE });
+    if (!out.has(id)) out.set(id, { ...DEFAULT_USER_PREFERENCES });
   }
   return out;
 }
@@ -74,7 +131,7 @@ export async function loadUserPreferences(
 ): Promise<UserPreferences> {
   const { data, error } = await supabase
     .from("user_preferences")
-    .select("timezone")
+    .select(PREFERENCE_COLUMNS_NO_ID)
     .eq("user_id", userId)
     .maybeSingle();
 
@@ -83,7 +140,7 @@ export async function loadUserPreferences(
       error: error.message,
       userId,
     });
-    return { timezone: DEFAULT_TIMEZONE };
+    return { ...DEFAULT_USER_PREFERENCES };
   }
-  return normalisePreferences(data as { timezone?: string | null } | null);
+  return normalisePreferences(data as PreferenceRow | null);
 }

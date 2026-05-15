@@ -111,4 +111,56 @@ describe("loadUserPreferences", () => {
     const out = await loadUserPreferences(supabase as never, "u1");
     expect(out.timezone).toBe("UTC");
   });
+
+  it("returns full default email prefs when no row exists", async () => {
+    const supabase = {
+      from: vi.fn(() => makeSingleBuilder({ data: null, error: null })),
+    };
+    const out = await loadUserPreferences(supabase as never, "u1");
+    expect(out).toEqual({
+      timezone: "UTC",
+      emailDailySummary: true,
+      emailFindingAlerts: true,
+      emailAlertSeverityFloor: "critical",
+    });
+  });
+
+  it("loads email opt-out + custom severity floor when present", async () => {
+    const supabase = {
+      from: vi.fn(() =>
+        makeSingleBuilder({
+          data: {
+            timezone: "Europe/Berlin",
+            email_daily_summary: false,
+            email_finding_alerts: true,
+            email_alert_severity_floor: "high",
+          },
+          error: null,
+        }),
+      ),
+    };
+    const out = await loadUserPreferences(supabase as never, "u1");
+    expect(out).toEqual({
+      timezone: "Europe/Berlin",
+      emailDailySummary: false,
+      emailFindingAlerts: true,
+      emailAlertSeverityFloor: "high",
+    });
+  });
+
+  it("falls back to default severity floor for an unknown value", async () => {
+    const supabase = {
+      from: vi.fn(() =>
+        makeSingleBuilder({
+          data: {
+            timezone: "UTC",
+            email_alert_severity_floor: "ULTRA-CRITICAL", // not in enum
+          },
+          error: null,
+        }),
+      ),
+    };
+    const out = await loadUserPreferences(supabase as never, "u1");
+    expect(out.emailAlertSeverityFloor).toBe("critical");
+  });
 });
