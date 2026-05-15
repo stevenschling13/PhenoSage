@@ -1,0 +1,172 @@
+name: Migration parity check
+
+# Nightly drift detector: compares supabase/migrations/*.sql files in the
+# repo against the migrations applied on the linked production Postgres.
+#
+# Fails and opens an issue if:
+#   * There are local migration files not yet applied to production (pending).
+#   * There are migrations applied to production with no matching local file
+#     (orphans — forbidden by the append-only migration contract).
+#
+# NOT wired into `pnpm run validate` because it requires network access +
+# Supabase credentials that are not available in local dev environments.
+#
+# Required secrets:
+#   SUPABASE_ACCESS_TOKEN   — personal / CI token from Supabase Dashboard
+#   SUPABASE_PROJECT_REF    — production project ref
+#   SUPABASE_DB_PASSWORD    — DB password (required by supabase CLI)
+#
+# Triggering manually:
+#   workflow_dispatch always runs the full check (dry_run is always implied
+#   here — this workflow never applies migrations; use db-migrations.yml
+#   for that).
+
+on:
+  schedule:
+    # 08:00 UTC daily — before the EU working day begins.
+    - cron: "0 8 * * *"
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+  issues: write
+
+concurrency:
+  group: migration-parity
+  cancel-in-progress: true
+
+jobs:
+  parity:
+    name: Check migration parity
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    environment: production
+    env:
+      SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
+      SUPABASE_PROJECT_REF: ${{ secrets.SUPABASE_PROJECT_REF }}
+      SUPABASE_DB_PASSWORD: ${{ secrets.SUPABASE_DB_PASSWORD }}
+    steps:
+      - uses: step-security/harden-runner@ab7a9404c0f3da075243ca237b5fac12c98deaa5 # v2
+        with:
+          egress-policy: audit
+
+      - uses: actions/checkout@v6
+
+      - uses: pnpm/action-setup@0e279bb959325dab635dd2c09392533439d90093 # v6
+
+      - uses: actions/setup-node@v6
+        with:
+          node-version: "20"
+          cache: "pnpm"
+
+      - name: Install Supabase CLI
+        uses: supabase/setup-cli@b60b5899c73b63a2d2d651b1e90db8d4c9392f51 # v1.6.0
+        with:
+          version: latest
+
+      - name: Run migration parity check
+        id: parity
+        # The script exits 1 on drift, 0 on clean.
+        # Capture its output so we can include it in the issue body.
+        run: node scripts/check-migration-parity.mjs 2>&1 | tee /tmp/parity-output.txt
+        continue-on-error: true
+
+      - name: Write step summary
+        if: always()
+        shell: bash
+        run: |
+          {
+            echo "## Migration parity check"
+            echo ""
+            echo "* **Triggered by:** schedule / @${{ github.actor }}"
+            echo "* **Ref:** \`${{ github.sha }}\`"
+            echo ""
+            if [ "${{ steps.parity.outcome }}" = "success" ]; then
+              echo "✅ Schema is in sync — no pending or orphaned migrations."
+            else
+              echo "❌ Drift detected. See output below."
+              echo ""
+              echo "<details><summary>Script output</summary>"
+              echo ""
+              echo '```'
+              cat /tmp/parity-output.txt
+              echo '```'
+              echo "</details>"
+            fi
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Open issue on drift
+        if: steps.parity.outcome != 'success'
+        uses: actions/github-script@v9
+        with:
+          script: |
+            const fs = await import('node:fs');
+            const output = fs.readFileSync('/tmp/parity-output.txt', 'utf8').trim();
+            const runUrl = `${context.serverUrl}/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId}`;
+
+            // Check if a migration-parity issue is already open to avoid spam.
+            const { data: existing } = await github.rest.issues.listForRepo({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              state: 'open',
+              labels: 'migration-parity',
+              per_page: 1,
+            });
+
+            if (existing.length > 0) {
+              // Update the existing issue with a new comment instead of opening another.
+              await github.rest.issues.createComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: existing[0].number,
+                body: [
+                  `Still drifted as of [run ${context.runId}](${runUrl}) on ${new Date().toISOString().slice(0, 10)}.`,
+                  '',
+                  '<details><summary>Script output</summary>',
+                  '',
+                  '```',
+                  output,
+                  '```',
+                  '</details>',
+                ].join('\n'),
+              });
+              core.info(`Updated existing issue #${existing[0].number}.`);
+              return;
+            }
+
+            // Open a new issue.
+            const { data: issue } = await github.rest.issues.create({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              title: 'Migration parity drift detected',
+              labels: ['bug', 'database', 'migration-parity'],
+              body: [
+                `The nightly migration parity check detected schema drift.`,
+                `**Workflow run:** ${runUrl}`,
+                '',
+                '---',
+                '',
+                'Output:',
+                '',
+                '```',
+                output,
+                '```',
+                '',
+                '**Resolution:**',
+                '',
+                '* **Pending migrations** — run the [Database migrations workflow]' +
+                  `(${context.serverUrl}/${context.repo.owner}/${context.repo.repo}/actions/workflows/db-migrations.yml)` +
+                  ' with `dry_run=false` to apply.',
+                '* **Orphan migrations** — add a matching `NNN_description.sql` file for',
+                '  each orphaned version and commit it. Never edit or delete an applied migration.',
+                '',
+                'Close this issue once the parity check runs clean.',
+              ].join('\n'),
+            });
+            core.info(`Opened issue #${issue.number}: ${issue.title}`);
+
+      - name: Fail the job on drift
+        if: steps.parity.outcome != 'success'
+        run: |
+          echo "Migration parity check failed — see issue and step summary for details."
+          exit 1
