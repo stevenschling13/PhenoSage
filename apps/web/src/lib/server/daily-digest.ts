@@ -93,13 +93,19 @@ export async function buildDigestSnapshot(
 
   // Fetch owned grows and the user's grow memberships in parallel so
   // collaborator-only users (no owned grows) still receive a digest.
+  // Inner-join ensures archived-grow memberships are excluded at query time,
+  // keeping memberOnlyGrowIds small.
   const [ownedGrowsResult, membershipResult] = await Promise.all([
     supabase
       .from("grows")
       .select("id,name,stage")
       .eq("owner_id", userId)
       .eq("is_archived", false),
-    supabase.from("grow_members").select("grow_id").eq("user_id", userId),
+    supabase
+      .from("grow_members")
+      .select("grow_id, grows!inner(id)")
+      .eq("user_id", userId)
+      .eq("grows.is_archived", false),
   ]);
 
   if (ownedGrowsResult.error) {

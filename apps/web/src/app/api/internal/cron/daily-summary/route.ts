@@ -19,9 +19,10 @@ export const maxDuration = 60;
 
 // Number of users processed in parallel per batch.
 const CONCURRENCY = 5;
-// Stop processing new batches once this much wall-clock time has elapsed
-// so we return before Vercel terminates the function.
-const TIME_BUDGET_MS = 55_000;
+// Stop processing new batches once this much wall-clock time has elapsed.
+// Sized to leave headroom: 60s limit - 5s overhead - worst-case batch time
+// (~CONCURRENCY × max-AI-latency ~= 5 × 2s = 10s) → 45s.
+const TIME_BUDGET_MS = 45_000;
 
 // GET /api/internal/cron/daily-summary
 //
@@ -88,70 +89,75 @@ export async function GET(request: NextRequest) {
       break;
     }
 
-    await Promise.all(
-      userIds.slice(i, i + CONCURRENCY).map(async (userId) => {
-        processed++;
-        try {
-          const snapshot = await buildDigestSnapshot(
-            supabase,
-            userId,
-            startedAt,
-          );
-          if (!hasMeaningfulActivity(snapshot)) {
-            skipped++;
-            return;
-          }
-          const rendered = await renderDigest(snapshot);
-          const { data: written, error: upsertError } = await supabase
-            .from("notifications")
-            .upsert(
-              {
-                user_id: userId,
-                kind: "daily_summary",
-                priority: digestPriority(snapshot),
-                title: rendered.title,
-                body: rendered.body,
-                payload: {
-                  grows: snapshot.grows.map((g) => ({
-                    id: g.id,
-                    name: g.name,
-                  })),
-                  newFindingCount: snapshot.newFindings.length,
-                  newImages: snapshot.newImages,
-                  newObservations: snapshot.newObservations,
-                  newTasks: snapshot.newTasks,
-                  resolvedFindings: snapshot.resolvedFindings,
+    // Process a batch concurrently. Each slot returns its outcome so counters
+    // are accumulated after the batch — no mutation inside Promise.all.
+    type BatchOutcome = "wrote" | "skipped" | "errored";
+    const outcomes = await Promise.all(
+      userIds
+        .slice(i, i + CONCURRENCY)
+        .map(async (userId): Promise<BatchOutcome> => {
+          try {
+            const snapshot = await buildDigestSnapshot(
+              supabase,
+              userId,
+              startedAt,
+            );
+            if (!hasMeaningfulActivity(snapshot)) return "skipped";
+            const rendered = await renderDigest(snapshot);
+            const { data: written, error: upsertError } = await supabase
+              .from("notifications")
+              .upsert(
+                {
+                  user_id: userId,
+                  kind: "daily_summary",
+                  priority: digestPriority(snapshot),
+                  title: rendered.title,
+                  body: rendered.body,
+                  payload: {
+                    grows: snapshot.grows.map((g) => ({
+                      id: g.id,
+                      name: g.name,
+                    })),
+                    newFindingCount: snapshot.newFindings.length,
+                    newImages: snapshot.newImages,
+                    newObservations: snapshot.newObservations,
+                    newTasks: snapshot.newTasks,
+                    resolvedFindings: snapshot.resolvedFindings,
+                  },
+                  occurred_on: occurredOn,
                 },
-                occurred_on: occurredOn,
-              },
-              {
-                onConflict: "user_id,kind,occurred_on",
-                ignoreDuplicates: true,
-              },
-            )
-            .select("id");
-          if (upsertError) {
-            errored++;
-            logServerEvent("error", "daily summary: insert failed", {
-              error: upsertError.message,
-              code: upsertError.code,
+                {
+                  onConflict: "user_id,kind,occurred_on",
+                  ignoreDuplicates: true,
+                },
+              )
+              .select("id");
+            if (upsertError) {
+              logServerEvent("error", "daily summary: insert failed", {
+                error: upsertError.message,
+                code: upsertError.code,
+                userId,
+              });
+              return "errored";
+            }
+            // ignoreDuplicates: empty data means the row already existed today.
+            return written && written.length > 0 ? "wrote" : "skipped";
+          } catch (err) {
+            logServerEvent("error", "daily summary: user run failed", {
+              error: err instanceof Error ? err.message : String(err),
               userId,
             });
-          } else if (written && written.length > 0) {
-            wrote++;
-          } else {
-            // Same-day duplicate was silently ignored by the UNIQUE index.
-            skipped++;
+            return "errored";
           }
-        } catch (err) {
-          errored++;
-          logServerEvent("error", "daily summary: user run failed", {
-            error: err instanceof Error ? err.message : String(err),
-            userId,
-          });
-        }
-      }),
+        }),
     );
+
+    for (const outcome of outcomes) {
+      processed++;
+      if (outcome === "wrote") wrote++;
+      else if (outcome === "skipped") skipped++;
+      else errored++;
+    }
   }
 
   return NextResponse.json({
