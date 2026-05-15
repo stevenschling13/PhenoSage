@@ -15,7 +15,7 @@ Plant-health AI for cannabis cultivators. Four capabilities:
 ## Architecture (one screen)
 
 ```
-browser ──► apps/web (Next.js 15, Vercel)
+browser ──► apps/web (Next.js 16, Vercel)
               │
               ├─► Supabase (auth, Postgres + RLS, Storage w/ signed URLs)
               │
