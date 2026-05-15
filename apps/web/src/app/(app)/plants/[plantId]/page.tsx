@@ -25,6 +25,7 @@ import { EmptyState } from "@/components/ui/empty-state";
 import { PageHeader } from "@/components/ui/page-header";
 import { StatCard } from "@/components/ui/stat-card";
 import { ImageComparison } from "@/components/image-comparison";
+import { HealthTrendChart } from "@/components/health-trend-chart";
 import { getAuthorizedPlantContext } from "@/lib/server/plant-access";
 import { getLatestPlantAnalysis, getPlantTimeline } from "@/lib/server/plants";
 import { getStorageClient } from "@/lib/server/storage";
@@ -126,6 +127,17 @@ export default async function PlantPage({ params }: Props) {
     hasTimeline: imageItems.length > 0 || observationItems.length > 0,
     isFallback: latestAnalysis?.isFallback ?? false,
   });
+
+  // Tier-1 longitudinal intelligence: collect every persisted analysis
+  // attached to an image and surface the score over time. We only show
+  // the chart once there are at least 2 points (the chart component
+  // renders its own "needs more data" state otherwise).
+  const trendPoints = imageItems
+    .filter((item) => item.analysis !== null)
+    .map((item) => ({
+      analyzedAt: item.analysis!.analyzedAt,
+      score: item.analysis!.overallHealthScore,
+    }));
 
   let comparisonImages: {
     afterImage: string;
@@ -324,6 +336,20 @@ export default async function PlantPage({ params }: Props) {
                   title="No timeline entries"
                 />
               )}
+            </CardContent>
+          </Card>
+
+          <Card>
+            <CardHeader>
+              <CardTitle>Health score trend</CardTitle>
+              <CardDescription>
+                Every persisted analysis plotted in the order it was produced. A
+                flat or rising line means the plant is holding or improving — a
+                falling line is the agent&rsquo;s cue to flag a finding.
+              </CardDescription>
+            </CardHeader>
+            <CardContent>
+              <HealthTrendChart points={trendPoints} />
             </CardContent>
           </Card>
 

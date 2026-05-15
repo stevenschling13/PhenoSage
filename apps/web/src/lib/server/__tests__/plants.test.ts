@@ -103,9 +103,26 @@ function makeAnalysisPersistenceDb(params?: {
     error: params?.deleteError ? { message: params.deleteError } : null,
   });
   const deleteFn = vi.fn(() => ({ eq: deleteEq }));
-  const insert = vi.fn().mockResolvedValue({
+  // The findings insert is now followed by .select() so the analysis
+  // pipeline can hand finding IDs to the notifications fan-out. The
+  // mock mirrors the supabase-js builder shape: insert(...).select()
+  // returns { data, error }.
+  const insertSelect = vi.fn().mockResolvedValue({
+    data: params?.findingError
+      ? null
+      : [
+          {
+            id: "finding-1",
+            severity: "info",
+            title: "stub",
+            description: "stub",
+            recommendation: null,
+            category: "general",
+          },
+        ],
     error: params?.findingError ? { message: params.findingError } : null,
   });
+  const insert = vi.fn(() => ({ select: insertSelect }));
   const from = vi.fn((table: string) => {
     if (table === "plant_images") {
       return { select: images.select };
@@ -799,7 +816,21 @@ describe("plants server helpers", () => {
     }));
     const deleteEq = vi.fn().mockResolvedValue({ error: null });
     const deleteFn = vi.fn(() => ({ eq: deleteEq }));
-    const insert = vi.fn().mockResolvedValue({ error: null });
+    const insert = vi.fn(() => ({
+      select: vi.fn().mockResolvedValue({
+        data: [
+          {
+            id: "finding-1",
+            severity: "info",
+            title: "Improved posture",
+            description: "New growth is upright.",
+            recommendation: "Maintain current environment.",
+            category: "positive",
+          },
+        ],
+        error: null,
+      }),
+    }));
     const from = vi.fn((table: string) => {
       if (table === "plant_images") {
         return {

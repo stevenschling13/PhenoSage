@@ -491,23 +491,68 @@ export async function runAndPersistPlantAnalysis(params: {
   }
 
   if (analysis.findings.length) {
-    const { error: findingError } = await db.from("plant_findings").insert(
-      analysis.findings.map((finding) => ({
-        plant_id: context.plantId,
-        grow_id: context.growId,
-        image_id: currentImage.id,
-        category: finding.category,
-        severity: finding.severity,
-        title: finding.title,
-        description: finding.description,
-        recommendation: finding.recommendation ?? null,
-      })),
-    );
+    const { data: insertedFindings, error: findingError } = await db
+      .from("plant_findings")
+      .insert(
+        analysis.findings.map((finding) => ({
+          plant_id: context.plantId,
+          grow_id: context.growId,
+          image_id: currentImage.id,
+          category: finding.category,
+          severity: finding.severity,
+          title: finding.title,
+          description: finding.description,
+          recommendation: finding.recommendation ?? null,
+        })),
+      )
+      .select("id,severity,title,description,recommendation,category");
 
     if (findingError) {
       throw new Error(
         `Failed to persist plant findings: ${findingError.message}`,
       );
+    }
+
+    // Tier-1 event-driven trigger: fan out finding_alert notifications
+    // for high/critical severity findings immediately, instead of
+    // waiting for the daily-summary cron at 8 AM. Best-effort — a
+    // failure here is logged inside emitFindingAlerts and does NOT
+    // propagate, because the analysis itself has already succeeded
+    // and the user must still see their findings.
+    type InsertedFinding = {
+      id: string;
+      severity: import("@phenosage/shared").FindingSeverity;
+      title: string;
+      description: string;
+      recommendation: string | null;
+      category: string;
+    };
+    const inserted = (insertedFindings ?? []) as InsertedFinding[];
+    if (inserted.length > 0) {
+      try {
+        const { emitFindingAlerts } = await import("./notifications");
+        await emitFindingAlerts({
+          userId: context.userId,
+          requestId: params.requestId,
+          findings: inserted.map((f) => ({
+            findingId: f.id,
+            plantId: context.plantId,
+            growId: context.growId,
+            severity: f.severity,
+            title: f.title,
+            description: f.description,
+            recommendation: f.recommendation,
+            category: f.category,
+          })),
+        });
+      } catch (alertErr) {
+        logServerEvent("warn", "plant analysis: alert emission threw", {
+          requestId: params.requestId,
+          plantId: context.plantId,
+          error:
+            alertErr instanceof Error ? alertErr.message : String(alertErr),
+        });
+      }
     }
   }
 
