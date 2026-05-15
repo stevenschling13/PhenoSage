@@ -18,6 +18,7 @@ import { getServerUser } from "@/lib/server/auth";
 import { fetchGrowDetail } from "@/lib/server/workspace-records";
 import { ArchiveButton } from "./archive-button";
 import { DeleteGrowButton } from "./delete-button";
+import { QuickCapture } from "./quick-capture";
 import { StageStepper } from "./stage-stepper";
 
 export const metadata: Metadata = { title: "Grow detail" };
@@ -77,6 +78,7 @@ export default async function GrowDetailPage({ params, searchParams }: Props) {
 
   const activePlants = plants.filter((p) => !p.isArchived);
   const archivedPlants = plants.filter((p) => p.isArchived);
+  const primaryPlant = activePlants[0] ?? null;
 
   return (
     <main className="app-page">
@@ -320,21 +322,29 @@ export default async function GrowDetailPage({ params, searchParams }: Props) {
             <CardTitle>Quick actions</CardTitle>
             <CardDescription>The fastest paths from here.</CardDescription>
           </CardHeader>
-          <CardContent className="space-y-3">
-            <Link
-              className={buttonStyles({ size: "md", variant: "surface" })}
-              href={`/plants/new?growId=${grow.id}`}
-            >
-              <PlantIcon className="h-4 w-4" />
-              Add a plant
-            </Link>
-            <Link
-              className={buttonStyles({ size: "md", variant: "surface" })}
-              href="/assistant"
-            >
-              <GrowIcon className="h-4 w-4" />
-              Open the assistant
-            </Link>
+          <CardContent className="space-y-4">
+            {primaryPlant && !grow.isArchived ? (
+              <QuickCapture
+                plantId={primaryPlant.id}
+                plantName={primaryPlant.name}
+              />
+            ) : null}
+            <div className="flex flex-wrap gap-2">
+              <Link
+                className={buttonStyles({ size: "md", variant: "surface" })}
+                href={`/plants/new?growId=${grow.id}`}
+              >
+                <PlantIcon className="h-4 w-4" />
+                Add a plant
+              </Link>
+              <Link
+                className={buttonStyles({ size: "md", variant: "surface" })}
+                href="/assistant"
+              >
+                <GrowIcon className="h-4 w-4" />
+                Open the assistant
+              </Link>
+            </div>
           </CardContent>
         </Card>
       </section>

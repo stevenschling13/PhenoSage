@@ -1,12 +1,13 @@
 "use client";
 
-import { useId, useState } from "react";
+import { useId, useState, useCallback, type DragEvent } from "react";
 import { useRouter } from "next/navigation";
 import type { AnalysisResponse } from "@phenosage/shared";
 import { CheckCircleIcon, UploadIcon } from "@/components/icons";
 import { Badge } from "@/components/ui/badge";
 import { Button, buttonStyles } from "@/components/ui/button";
 import { createSupabaseBrowserClient } from "@/lib/supabase-client";
+import { cn } from "@/lib/cn";
 
 type UploadNotice = {
   tone: "danger" | "success" | "warning";
@@ -22,6 +23,7 @@ export function UploadPhotoPanel({ plantId }: { plantId: string }) {
   const [file, setFile] = useState<File | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [notice, setNotice] = useState<UploadNotice | null>(null);
+  const [isDragOver, setIsDragOver] = useState(false);
 
   function handleFileSelection(nextFile: File | null) {
     setNotice(null);
@@ -51,6 +53,29 @@ export function UploadPhotoPanel({ plantId }: { plantId: string }) {
 
     setFile(nextFile);
   }
+
+  const handleDragOver = useCallback((e: DragEvent<HTMLDivElement>) => {
+    e.preventDefault();
+    e.stopPropagation();
+    setIsDragOver(true);
+  }, []);
+
+  const handleDragLeave = useCallback((e: DragEvent<HTMLDivElement>) => {
+    e.preventDefault();
+    e.stopPropagation();
+    setIsDragOver(false);
+  }, []);
+
+  const handleDrop = useCallback((e: DragEvent<HTMLDivElement>) => {
+    e.preventDefault();
+    e.stopPropagation();
+    setIsDragOver(false);
+
+    const droppedFile = e.dataTransfer.files[0];
+    if (droppedFile) {
+      handleFileSelection(droppedFile);
+    }
+  }, []);
 
   async function prepareUpload() {
     if (!file || isSubmitting) {
@@ -171,7 +196,17 @@ export function UploadPhotoPanel({ plantId }: { plantId: string }) {
 
   return (
     <div className="space-y-5">
-      <div className="rounded-[1.45rem] border border-dashed border-border-strong/70 bg-background-subtle/70 p-5">
+      <div
+        onDragOver={handleDragOver}
+        onDragLeave={handleDragLeave}
+        onDrop={handleDrop}
+        className={cn(
+          "rounded-[1.45rem] border border-dashed bg-background-subtle/70 p-5 transition-colors",
+          isDragOver
+            ? "border-[rgb(var(--ps-accent))] bg-[rgb(var(--ps-accent-soft))]"
+            : "border-border-strong/70",
+        )}
+      >
         <div className="flex items-start justify-between gap-4">
           <div>
             <Badge tone="accent">Primary action</Badge>
@@ -183,8 +218,8 @@ export function UploadPhotoPanel({ plantId }: { plantId: string }) {
               stronger and alerts more reliable.
             </p>
           </div>
-          <div className="flex h-11 w-11 items-center justify-center rounded-2xl bg-surface text-accent shadow-soft">
-            <UploadIcon className="h-5 w-5" />
+          <div className="flex h-11 w-11 items-center justify-center rounded-2xl bg-surface text-accent shadow-soft transition-transform">
+            <UploadIcon className={cn("h-5 w-5", isDragOver && "scale-110")} />
           </div>
         </div>
 
@@ -198,15 +233,30 @@ export function UploadPhotoPanel({ plantId }: { plantId: string }) {
             }
             type="file"
           />
-          <label
-            className={buttonStyles({
-              className: "w-full justify-center",
-              variant: "surface",
-            })}
-            htmlFor={inputId}
-          >
-            Choose image
-          </label>
+
+          {/* Drag & drop hint or file selection button */}
+          <div className="flex flex-col items-center gap-3">
+            {isDragOver ? (
+              <p className="text-sm font-medium text-[rgb(var(--ps-accent-strong))]">
+                Drop your image here
+              </p>
+            ) : (
+              <>
+                <label
+                  className={buttonStyles({
+                    className: "w-full justify-center cursor-pointer",
+                    variant: "surface",
+                  })}
+                  htmlFor={inputId}
+                >
+                  Choose image or drag here
+                </label>
+                <p className="text-xs text-muted-foreground">
+                  Drag and drop an image, or click to browse
+                </p>
+              </>
+            )}
+          </div>
 
           <div className="rounded-[1.15rem] border border-border/70 bg-surface px-4 py-3 text-sm text-muted-foreground">
             {file ? (
