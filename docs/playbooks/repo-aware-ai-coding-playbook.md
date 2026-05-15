@@ -25,6 +25,22 @@ Before writing code, the agent (or human) must answer:
 - What's the validation plan? (which `pnpm run` and `pytest` commands)
 - What's the rollback story?
 
+### 1.5 Brief the next agent precisely
+
+When handing work to another agent, give it a prompt with:
+
+- **One target outcome** only (one roadmap box / one bug / one contract edit)
+- **Boundary callout** (web, analysis, migration, shared contract, route)
+- **Explicit out-of-scope list** so it does not widen the PR
+- **Validation commands** it must run before finishing
+- **Stop condition** ("if this becomes a breaking contract or exceeds a bounded
+  PR, stop and surface it")
+
+Good handoff prompts name the exact file paths when known and point the next
+agent at `WORKLOG.md` plus the relevant playbook. Broad prompts like "finish
+Tier 3" or "wrap up Milestone 2" are usually counterproductive because they
+encourage scope creep instead of one bounded, reviewable change.
+
 ### 2. Make the change
 
 - Edit the smallest set of files that fully solves the task.

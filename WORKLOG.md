@@ -4,6 +4,68 @@ Handoff log between sessions. Keep entries short. Newest at top.
 
 ---
 
+## 2026-05-15 — Tier 2 closure briefing + next-agent prompt handoff (Copilot)
+
+**Landed on `copilot/review-pr-159-and-plan-tier-2` (commit `bee041f`)**
+
+Follow-up docs-only closeout so this PR can merge cleanly and the next agent can
+start Tier 3 without re-auditing Tier 2.
+
+- **What is complete in this PR's Tier 2 sweep**:
+  - **T2.1** per-user timezone support for daily-summary dedupe / delivery
+  - **T2.2** Resend-backed email delivery for daily summaries + finding alerts
+  - **T2.3** strain-aware analysis context + per-finding confidence
+  - **T2.4** pre-vision image-quality gate with explicit inconclusive handling
+- **What is _not_ complete**: not every open **Milestone 2 roadmap** item. The
+  remaining unchecked roadmap boxes (health trend graph, collaborators, export,
+  few-shot prompt refinement, realtime, monitoring) are backlog work and should
+  not block merging this Tier 2 sweep PR.
+- **Merge recommendation**: merge this branch as the Tier 2 sweep closeout. Do
+  not keep this PR open to chase unrelated Milestone 2 backlog.
+
+**Next agent brief (copy/paste shape, then fill in the exact Tier 3 target)**
+
+- **Goal**: start one Tier 3 roadmap item only; keep the PR bounded to one
+  concern.
+- **Read order**: `CLAUDE.md` → `.github/copilot-instructions.md` →
+  `AGENTS.md` → `WORKLOG.md` → relevant playbook.
+- **First prompt should specify**:
+  1. the exact roadmap item to ship
+  2. allowed scope / files if already known
+  3. whether contract, migration, or server-route boundaries are expected
+  4. required validators
+  5. what is explicitly out of scope
+- **Recommended starting candidates**:
+  - **Milestone 3**: pgvector semantic search, "ask about any past grow"
+    memory, automated grow advisor, phenotype tracking, harvest prediction
+  - **If staying in Milestone 2 instead**: few-shot prompt refinement or
+    Supabase Realtime for live findings updates
+
+**Suggested prompt for the next agent**
+
+> Start a new branch for one Tier 3 roadmap item: **<fill this in>**. First
+> read `/home/runner/work/PhenoSage/PhenoSage/CLAUDE.md`,
+> `/home/runner/work/PhenoSage/PhenoSage/.github/copilot-instructions.md`,
+> `/home/runner/work/PhenoSage/PhenoSage/AGENTS.md`, and
+> `/home/runner/work/PhenoSage/PhenoSage/WORKLOG.md`. Then frame the task using
+> `/home/runner/work/PhenoSage/PhenoSage/docs/playbooks/repo-aware-ai-coding-playbook.md`
+> and `/home/runner/work/PhenoSage/PhenoSage/docs/playbooks/tier-implementation-playbook.md`.
+> Keep the change to one concern, list the exact files you plan to touch, say
+> whether the contract impact is none/additive/breaking, and stop if the work
+> would spill beyond a bounded PR. Run `pnpm run validate`, `pnpm turbo run
+type-check lint test`, `pnpm run security:routes`, and analysis validators if
+> `apps/analysis/**` changes. Update `WORKLOG.md` with what landed, dead ends,
+> and the next session block before finishing.
+
+**Performance note for the next agent**
+
+- A better prompt is usually higher leverage than extra implementation context:
+  be specific about the target box, boundaries, validators, and out-of-scope
+  work. Avoid "finish Tier 3" or "do Milestone 3" prompts; those are too broad
+  and tend to burst PR size caps or mix concerns.
+
+---
+
 ## 2026-05-15 — Tier 2 merge handoff / wrap-up (Copilot)
 
 **Landed on `copilot/review-pr-159-and-plan-tier-2` (commit `f69003a`)**
