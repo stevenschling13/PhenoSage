@@ -1,0 +1,140 @@
+name: Track PR follow-ups
+
+# Opens one GitHub issue per bullet in the "## Follow-ups" section of a
+# merged PR body. This prevents deferred work from rotting in PR bodies
+# that nobody re-reads after merge.
+#
+# Behaviour:
+#   1. Triggered only on PR merge (closed + merged == true).
+#   2. Parses the PR body for a "## Follow-ups" section (case-insensitive).
+#   3. For each bullet line (starts with "- " or "* ") that is NOT a
+#      template placeholder comment (starting with "<!--"):
+#      - Opens an issue titled "[follow-up] <bullet text>"
+#      - Labels it "follow-up" and "from:pr-<N>"
+#      - Includes a link back to the source PR in the body.
+#   4. If no bullets are found, or the "## Follow-ups" section is absent or
+#      contains only placeholder text, the workflow exits 0 without creating
+#      any issues.
+#
+# This workflow does NOT create issues for items that were already completed
+# (marked with "~~…~~" or "[x]" checkboxes).
+
+on:
+  pull_request:
+    types: [closed]
+    branches: [main]
+
+permissions:
+  contents: read
+  issues: write
+  pull-requests: read
+
+jobs:
+  open-followup-issues:
+    name: Open follow-up issues
+    runs-on: ubuntu-latest
+    if: github.event.pull_request.merged == true
+    steps:
+      - name: Parse follow-ups and open issues
+        uses: actions/github-script@v9
+        with:
+          script: |
+            const body = context.payload.pull_request.body ?? '';
+            const prNumber = context.payload.pull_request.number;
+            const prTitle = context.payload.pull_request.title;
+            const prUrl = context.payload.pull_request.html_url;
+            const { owner, repo } = context.repo;
+
+            // ── 1. Extract the "## Follow-ups" section ──────────────────
+            // Match from the heading to the next heading (## or end of body).
+            const sectionMatch = body.match(
+              /^##\s+Follow-ups\s*\n([\s\S]*?)(?=^##\s|\z)/im
+            );
+            if (!sectionMatch) {
+              core.info('No "## Follow-ups" section found — nothing to do.');
+              return;
+            }
+            const section = sectionMatch[1];
+
+            // ── 2. Parse bullet lines ────────────────────────────────────
+            const bullets = section
+              .split('\n')
+              .map(l => l.trim())
+              // Keep only lines starting with "- " or "* "
+              .filter(l => /^[-*]\s+/.test(l))
+              // Remove the bullet marker
+              .map(l => l.replace(/^[-*]\s+/, '').trim())
+              // Drop template placeholder comments
+              .filter(l => !l.startsWith('<!--'))
+              // Drop empty lines and already-completed items (~~text~~ / [x])
+              .filter(l => l.length > 0 && !/^~~.+~~$/.test(l) && !/^\[x\]/i.test(l));
+
+            if (bullets.length === 0) {
+              core.info('Follow-ups section has no actionable bullets — nothing to do.');
+              return;
+            }
+
+            core.info(`Found ${bullets.length} follow-up(s) from PR #${prNumber}.`);
+
+            // ── 3. Ensure the "follow-up" label exists ───────────────────
+            const followUpLabel = 'follow-up';
+            try {
+              await github.rest.issues.getLabel({ owner, repo, name: followUpLabel });
+            } catch {
+              await github.rest.issues.createLabel({
+                owner,
+                repo,
+                name: followUpLabel,
+                color: 'fbca04',
+                description: 'Deferred work tracked from a merged PR',
+              });
+            }
+
+            // ── 4. Ensure "from:pr-N" label exists ──────────────────────
+            const prLabel = `from:pr-${prNumber}`;
+            try {
+              await github.rest.issues.getLabel({ owner, repo, name: prLabel });
+            } catch {
+              await github.rest.issues.createLabel({
+                owner,
+                repo,
+                name: prLabel,
+                color: 'c2e0c6',
+                description: `Follow-up items from PR #${prNumber}`,
+              });
+            }
+
+            // ── 5. Open one issue per bullet ────────────────────────────
+            const created = [];
+            for (const bullet of bullets) {
+              const issueTitle = `[follow-up] ${bullet}`;
+              const issueBody = [
+                `Deferred from **PR #${prNumber}**: [${prTitle}](${prUrl})`,
+                '',
+                '---',
+                '',
+                `> ${bullet}`,
+                '',
+                'This issue was opened automatically by the `track-followups` workflow.',
+                'Close it when the work is shipped or confirmed unnecessary.',
+              ].join('\n');
+
+              const { data: issue } = await github.rest.issues.create({
+                owner,
+                repo,
+                title: issueTitle,
+                body: issueBody,
+                labels: [followUpLabel, prLabel],
+              });
+              core.info(`Opened issue #${issue.number}: ${issueTitle}`);
+              created.push(`#${issue.number} — ${issueTitle}`);
+            }
+
+            // ── 6. Summary ───────────────────────────────────────────────
+            const summary = [
+              `## Follow-up issues from PR #${prNumber}`,
+              '',
+              ...created.map(i => `- ${i}`),
+            ].join('\n');
+            core.summary.addRaw(summary);
+            await core.summary.write();

@@ -72,3 +72,15 @@ How do we revert this safely?
 ```
 <rollback notes>
 ```
+
+## Follow-ups
+
+<!-- List items that are intentionally deferred from this PR.
+     The track-followups workflow will automatically open a GitHub issue
+     for each bullet here when this PR is merged.
+     Format: one bullet per deferred item, starting with "- ". -->
+
+<!-- Example:
+- Add X to handle edge case Y
+- Write integration test for Z path
+-->

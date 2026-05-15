@@ -45,3 +45,66 @@ jobs:
       - uses: github/codeql-action/analyze@v4
         with:
           category: "/language:${{ matrix.language }}"
+
+  # Gate: block merge when CodeQL finds High or Critical severity alerts on
+  # this ref. Runs after all three language scans complete.
+  #
+  # On pull_request events the SHA is the merge commit GitHub creates; the
+  # API returns alerts scoped to that SHA so we only block on NEW alerts
+  # introduced by this PR, not pre-existing ones on main.
+  #
+  # On push to main (post-merge) a failure here pages the on-call via the
+  # standard CI-all-green gate that branch protection requires. See
+  # docs/runbooks/codeql-triage.md for investigation and exemption steps.
+  severity-gate:
+    name: CodeQL — Block High/Critical
+    runs-on: ubuntu-latest
+    needs: analyze
+    # Only run on PRs and direct pushes — skip the weekly scheduled re-scan
+    # to avoid false alerts on stale code that hasn't changed.
+    if: github.event_name != 'schedule'
+    permissions:
+      security-events: read
+    steps:
+      - name: Check for open High/Critical alerts on this ref
+        uses: actions/github-script@v9
+        with:
+          script: |
+            const ref = context.sha;
+            const { owner, repo } = context.repo;
+            const blocking = ['critical', 'high'];
+            const found = [];
+
+            for (const severity of blocking) {
+              let page = 1;
+              while (true) {
+                const { data } = await github.rest.codeScanning.listAlertsForRepo({
+                  owner,
+                  repo,
+                  severity,
+                  state: 'open',
+                  ref,
+                  per_page: 100,
+                  page,
+                });
+                for (const alert of data) {
+                  found.push(
+                    `[${severity.toUpperCase()}] ${alert.rule.id}: ${alert.rule.description} ` +
+                    `(${alert.most_recent_instance?.location?.path ?? 'unknown'}:` +
+                    `${alert.most_recent_instance?.location?.start_line ?? '?'})`
+                  );
+                }
+                if (data.length < 100) break;
+                page++;
+              }
+            }
+
+            if (found.length > 0) {
+              const list = found.map(f => `  • ${f}`).join('\n');
+              core.setFailed(
+                `${found.length} open High/Critical CodeQL alert(s) on ${ref.slice(0, 8)}:\n${list}\n\n` +
+                `See docs/runbooks/codeql-triage.md to investigate or request an exemption.`
+              );
+            } else {
+              core.info(`No open High/Critical CodeQL alerts on ${ref.slice(0, 8)}. ✓`);
+            }
