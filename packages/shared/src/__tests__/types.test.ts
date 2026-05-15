@@ -5,8 +5,11 @@ import type {
   FindingSeverity,
   Grow,
   GrowStage,
+  GrowTask,
   Plant,
   PlantFinding,
+  TaskPriority,
+  TaskStatus,
 } from "../types";
 
 describe("shared contract types", () => {
@@ -78,9 +81,44 @@ describe("shared contract types", () => {
       severity: severities[4]!,
       title: "N deficiency",
       description: "Yellowing lower leaves",
+      source: "ai",
       createdAt: "2026-04-01T00:00:00Z",
     };
     expect(finding.severity).toBe("critical");
+  });
+
+  it("accepts a user-reported PlantFinding (migration 010)", () => {
+    const finding: PlantFinding = {
+      id: "f2",
+      plantId: "p1",
+      growId: "g1",
+      category: "pest",
+      severity: "high",
+      title: "Spider mites on lower fan leaves",
+      description: "Stippling + webbing observed at lights-on",
+      source: "user_reported",
+      createdAt: "2026-04-02T00:00:00Z",
+    };
+    expect(finding.source).toBe("user_reported");
+  });
+
+  it("accepts a GrowTask covering all priorities and statuses (migration 008)", () => {
+    const priorities: TaskPriority[] = ["low", "medium", "high", "urgent"];
+    const statuses: TaskStatus[] = ["open", "in_progress", "done", "dismissed"];
+    const task: GrowTask = {
+      id: "t1",
+      growId: "g1",
+      plantId: "p1",
+      findingId: "f1",
+      title: "Address: N deficiency",
+      description: "Bump base nutrient EC by 0.2",
+      priority: priorities[3]!,
+      status: statuses[0]!,
+      createdAt: "2026-04-01T00:00:00Z",
+      updatedAt: "2026-04-01T00:00:00Z",
+    };
+    expect(task.priority).toBe("urgent");
+    expect(task.status).toBe("open");
   });
 
   it("accepts an AnalysisResponse with findings array", () => {
