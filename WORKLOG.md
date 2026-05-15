@@ -4,12 +4,55 @@ Handoff log between sessions. Keep entries short. Newest at top.
 
 ---
 
+## 2026-05-15 — Tier 2.3: strain-aware prompt + per-finding confidence (Copilot)
+
+**Landed on `copilot/review-pr-159-and-plan-tier-2` (commit `b86dd76`)**
+
+Closes the last remaining item from the Tier 2 sweep: the analysis service now
+requests a confidence score per finding, treats cultivar / strain as a weak
+prior instead of proof, persists confidence on `plant_findings`, and surfaces
+it in the plant detail findings rail.
+
+- **Migration `20260515175712_analysis_finding_confidence.sql`** — additive
+  nullable `plant_findings.confidence_score numeric(3,2)` plus a `0..1`
+  range check.
+- **Shared contract** — `packages/shared/src/types.ts` adds additive optional
+  `confidenceScore` on both `AnalysisFinding` and `PlantFinding`.
+- **FastAPI mirror** — `apps/analysis/app/models/analysis.py` adds
+  `confidence_score`; `prompts.py` documents the new JSON field and makes the
+  strain/cultivar guidance explicit: use cultivar context as a weak prior only,
+  never over visible evidence in the image.
+- **Analysis defaults** — synthetic fallback / incomplete findings now carry
+  explicit low confidence scores (`0.0` and `0.15`) so the UI can surface that
+  they are non-diagnostic / low-confidence states.
+- **Web proxy + persistence** — nested analysis-service
+  `confidence_score` is normalized to `confidenceScore`, persisted through
+  `apps/web/src/lib/server/plants.ts`, and rendered as a percentage in the
+  plant detail findings rail.
+- **Tests** — focused passes:
+  - `apps/analysis`: `ruff check . && mypy app/ && pytest tests/test_prompts.py tests/test_image_analysis.py tests/test_analyze_router.py` → **45/45**
+  - `packages/shared`: `pnpm test && pnpm type-check` → **7/7**
+  - `apps/web`: `pnpm test -- --run src/lib/server/__tests__/analysis-proxy.test.ts src/lib/server/__tests__/plants.test.ts && pnpm type-check && pnpm lint` → **33/33**
+
+**Dead end / env note**
+
+- `pnpm run build` in this sandbox still fails at `next/font` because the
+  build cannot reach `fonts.googleapis.com` for Fraunces / JetBrains Mono.
+  This is an environment/network limitation, not a code regression; CI/Vercel
+  has previously built this path successfully.
+
+**Next session**:
+
+- Tier 2 sweep is complete. Next likely milestone items are
+  **refined prompts with few-shot examples**, **live findings updates via
+  Supabase Realtime**, or other remaining Milestone 2 roadmap items.
+
 ## 2026-05-15 — Tier 2.4: pre-vision image-quality gate in apps/analysis (Copilot)
 
 **In-flight on `copilot/review-pr-159-and-plan-tier-2`**
 
 Picks up T2.4 from the Tier Implementation Playbook hand-off in PR #161.
-Adds an explicit *inconclusive* path for unanalysable images so the
+Adds an explicit _inconclusive_ path for unanalysable images so the
 vision model is never asked to diagnose blank/blurry/blown-out frames —
 satisfies Rule 9 (Plant-Health Output Discipline).
 
@@ -23,7 +66,7 @@ satisfies Rule 9 (Plant-Health Output Discipline).
   code `IMAGE_QUALITY_INCONCLUSIVE`, status 422, retryable=False; `reason`
   is keyword-only and validated against `IMAGE_QUALITY_REASONS`
   (`image_decode_failed | image_too_small | too_dark | too_bright |
-  too_blurry`). Default message generic — never embeds pixel metrics.
+too_blurry`). Default message generic — never embeds pixel metrics.
 - **`app/services/image_quality.py`**: pure `assess_image_quality(bytes)`
   pipeline — decode → minimum 64 px on each side → luminance window
   [15, 235] → edge-variance ≥ 50. Luminance check precedes blur check on

@@ -61,13 +61,13 @@
 ### Analysis Service
 
 - [ ] Refined prompts with few-shot examples
-- [ ] Strain-aware analysis context
-- [ ] Confidence scores per finding
-- [ ] Image quality validation (reject blurry/dark images)
+- [x] Strain-aware analysis context
+- [x] Confidence scores per finding
+- [x] Image quality validation (reject blurry/dark images)
 
 ### Infrastructure
 
-- [ ] Email notifications (Resend or SendGrid)
+- [x] Email notifications (Resend or SendGrid)
 - [ ] Supabase Realtime for live findings updates
 - [ ] Error monitoring (Sentry)
 - [ ] Performance monitoring
