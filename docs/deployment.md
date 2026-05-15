@@ -225,7 +225,35 @@ promotion gate.
 ## Supabase Setup
 
 1. Create a new Supabase project
-2. Run migrations. Two paths:
+2. Connect local tooling:
+
+   **MCP (repo-scoped).** `.mcp.json` is already checked in with:
+
+   ```json
+   {
+     "mcpServers": {
+       "supabase": {
+         "type": "http",
+         "url": "https://mcp.supabase.com/mcp?project_ref=yjemotnclrnlxgcfntaf"
+       }
+     }
+   }
+   ```
+
+   The first MCP use still requires completing the Supabase OAuth consent
+   flow in your agent. That consent is what grants read/write scopes; do not
+   commit service-role keys or database passwords into `.mcp.json`.
+
+   **CLI / direct Postgres.** Copy the root `.env.example` and set:
+   - `SUPABASE_PROJECT_REF=yjemotnclrnlxgcfntaf`
+   - `SUPABASE_DB_PASSWORD=<database-password>`
+   - `SUPABASE_DB_URL=postgresql://postgres:<password>@db.yjemotnclrnlxgcfntaf.supabase.co:5432/postgres`
+
+   Use the direct `db.<ref>.supabase.co:5432` URL for admin sessions,
+   migration recovery, and other non-browser operations. If you are on an
+   IPv4-only network, switch to the Supabase session pooler URL instead.
+
+3. Run migrations. Two paths:
 
    **From GitHub Actions (recommended for production).** The
    [`Database migrations`](../.github/workflows/db-migrations.yml)
@@ -241,19 +269,19 @@ promotion gate.
 
    ```bash
    supabase login
-   supabase link --project-ref <your-project-ref>
+   supabase link --project-ref "$SUPABASE_PROJECT_REF"
    supabase db push
    ```
 
-3. In Supabase Storage → create bucket `plant-images` (private)
-4. Enable Email Auth (or your preferred provider) in Supabase Auth settings
-5. **Enable leaked-password protection.** Dashboard → Project Settings →
+4. In Supabase Storage → create bucket `plant-images` (private)
+5. Enable Email Auth (or your preferred provider) in Supabase Auth settings
+6. **Enable leaked-password protection.** Dashboard → Project Settings →
    Auth → Password Strength → toggle **HaveIBeenPwned compromise check**
    on. This is a Supabase-managed setting (no SQL knob exposed), so the
    `Database migrations` workflow can't apply it — it's a one-click
    manual step per project. Without it, `get_advisors` keeps reporting
    `auth_leaked_password_protection`.
-6. Copy the project URL and keys to Vercel environment variables
+7. Copy the project URL and keys to Vercel environment variables
 
 ---
 
