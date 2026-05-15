@@ -2,6 +2,7 @@ import type { ReactNode } from "react";
 import { redirect } from "next/navigation";
 import { AppShell } from "@/components/app-shell";
 import { isNextFrameworkError } from "@/lib/server/auth-errors";
+import { countUnreadNotifications } from "@/lib/server/notifications";
 import { getCurrentProfile } from "@/lib/server/profile";
 import { logServerEvent } from "@/lib/server/request-id";
 
@@ -37,8 +38,18 @@ export default async function AppLayout({ children }: { children: ReactNode }) {
     redirect("/auth");
   }
 
+  // Fetch unread count for the header bell + sidebar badge. This call
+  // already swallows errors and returns 0 on failure (see
+  // notifications.ts), so a Supabase blip degrades to "no badge"
+  // rather than taking the whole shell down.
+  const unreadNotifications = await countUnreadNotifications();
+
   return (
-    <AppShell displayName={profile.displayName} userEmail={profile.email}>
+    <AppShell
+      displayName={profile.displayName}
+      userEmail={profile.email}
+      unreadNotifications={unreadNotifications}
+    >
       {children}
     </AppShell>
   );

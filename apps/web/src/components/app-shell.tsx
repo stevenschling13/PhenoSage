@@ -6,6 +6,7 @@ import { usePathname } from "next/navigation";
 import { signOutAction } from "@/app/auth/actions";
 import {
   AssistantIcon,
+  BellIcon,
   DashboardIcon,
   GrowIcon,
   LogoMark,
@@ -41,6 +42,12 @@ const navItems = [
     match: ["/assistant"],
   },
   {
+    href: "/notifications",
+    icon: BellIcon,
+    label: "Inbox",
+    match: ["/notifications"],
+  },
+  {
     href: "/settings",
     icon: SettingsIcon,
     label: "Settings",
@@ -54,14 +61,24 @@ function isActive(pathname: string, matchers: string[]) {
   );
 }
 
+// Render the unread badge as a small pill. Capped at "9+" so a runaway
+// notification feed can't blow out the layout.
+function formatBadge(count: number): string {
+  if (count <= 0) return "";
+  if (count > 9) return "9+";
+  return String(count);
+}
+
 export function AppShell({
   children,
   displayName,
   userEmail,
+  unreadNotifications = 0,
 }: {
   children: ReactNode;
   displayName?: string | null;
   userEmail?: string | null;
+  unreadNotifications?: number;
 }) {
   const pathname = usePathname();
   const operatorLabel =
@@ -81,6 +98,7 @@ export function AppShell({
     .slice(0, 2)
     .join("")
     .toUpperCase();
+  const badge = formatBadge(unreadNotifications);
 
   return (
     <div className="min-h-screen bg-[rgb(var(--ps-canvas))] text-[rgb(var(--ps-ink))]">
@@ -114,6 +132,7 @@ export function AppShell({
             {navItems.map((item) => {
               const active = isActive(pathname, item.match);
               const Icon = item.icon;
+              const showBadge = item.href === "/notifications" && badge !== "";
               return (
                 <Link
                   key={item.href}
@@ -134,7 +153,20 @@ export function AppShell({
                         : "text-[rgb(var(--ps-muted))] group-hover:text-[rgb(var(--ps-ink))]",
                     )}
                   />
-                  <span>{item.label}</span>
+                  <span className="flex-1">{item.label}</span>
+                  {showBadge ? (
+                    <span
+                      aria-label={`${unreadNotifications} unread notifications`}
+                      className={cn(
+                        "ps-mono inline-flex h-[18px] min-w-[18px] items-center justify-center rounded-full px-1.5 text-[10px] font-medium leading-none",
+                        active
+                          ? "bg-[rgb(var(--ps-canvas))] text-[rgb(var(--ps-ink))]"
+                          : "bg-[rgb(var(--ps-accent))] text-white",
+                      )}
+                    >
+                      {badge}
+                    </span>
+                  ) : null}
                 </Link>
               );
             })}
@@ -204,6 +236,25 @@ export function AppShell({
 
               <div className="flex items-center gap-2">
                 <Link
+                  aria-label={
+                    badge
+                      ? `Notifications, ${unreadNotifications} unread`
+                      : "Notifications"
+                  }
+                  className="relative inline-flex h-9 w-9 items-center justify-center rounded-full border border-[rgb(var(--ps-line)/var(--ps-line-strength))] bg-[rgb(var(--ps-surface))] text-[rgb(var(--ps-ink-2))] transition-colors hover:text-[rgb(var(--ps-ink))]"
+                  href="/notifications"
+                >
+                  <BellIcon className="h-4 w-4" />
+                  {badge ? (
+                    <span
+                      aria-hidden="true"
+                      className="ps-mono absolute -right-0.5 -top-0.5 inline-flex h-[18px] min-w-[18px] items-center justify-center rounded-full bg-[rgb(var(--ps-accent))] px-1.5 text-[10px] font-medium leading-none text-white"
+                    >
+                      {badge}
+                    </span>
+                  ) : null}
+                </Link>
+                <Link
                   className={buttonStyles({ size: "sm", variant: "outline" })}
                   href="/assistant"
                 >
@@ -221,17 +272,23 @@ export function AppShell({
             className="fixed bottom-3 left-3 right-3 z-30 lg:hidden"
             style={{ paddingBottom: "env(safe-area-inset-bottom)" }}
           >
-            <ul className="grid grid-cols-5 gap-1 rounded-full border border-[rgb(var(--ps-line)/var(--ps-line-strength))] bg-[rgb(var(--ps-surface))] p-1.5 shadow-soft">
+            <ul className="grid grid-cols-6 gap-1 rounded-full border border-[rgb(var(--ps-line)/var(--ps-line-strength))] bg-[rgb(var(--ps-surface))] p-1.5 shadow-soft">
               {navItems.map((item) => {
                 const active = isActive(pathname, item.match);
                 const Icon = item.icon;
+                const showBadge =
+                  item.href === "/notifications" && badge !== "";
                 return (
                   <li key={item.href}>
                     <Link
                       aria-current={active ? "page" : undefined}
-                      aria-label={item.label}
+                      aria-label={
+                        showBadge
+                          ? `${item.label}, ${unreadNotifications} unread`
+                          : item.label
+                      }
                       className={cn(
-                        "flex h-10 flex-col items-center justify-center gap-0.5 rounded-full px-1 text-[10px] font-medium transition-colors",
+                        "relative flex h-10 flex-col items-center justify-center gap-0.5 rounded-full px-1 text-[10px] font-medium transition-colors",
                         active
                           ? "bg-[rgb(var(--ps-ink))] text-[rgb(var(--ps-canvas))]"
                           : "text-[rgb(var(--ps-muted))] hover:text-[rgb(var(--ps-ink))]",
@@ -240,6 +297,12 @@ export function AppShell({
                     >
                       <Icon className="h-[18px] w-[18px]" />
                       <span className="leading-none">{item.label}</span>
+                      {showBadge ? (
+                        <span
+                          aria-hidden="true"
+                          className="absolute right-1 top-0.5 inline-block h-1.5 w-1.5 rounded-full bg-[rgb(var(--ps-accent))]"
+                        />
+                      ) : null}
                     </Link>
                   </li>
                 );
