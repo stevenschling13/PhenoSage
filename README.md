@@ -77,6 +77,14 @@ Copy the root `.env.example` and fill in your values:
 cp .env.example .env.local
 ```
 
+For Supabase operations and MCP access, the root env example now includes:
+
+- `SUPABASE_PROJECT_REF` — project ref used by `.mcp.json`, `supabase link`, and the migrations workflow
+- `SUPABASE_DB_PASSWORD` — direct Postgres password for CLI/admin flows
+- `SUPABASE_DB_URL` — direct Postgres connection string (`db.<ref>.supabase.co:5432`) for admin sessions and recovery work
+
+The checked-in `.mcp.json` already points at the production Supabase MCP endpoint for `yjemotnclrnlxgcfntaf`; full MCP read/write access is granted through the Supabase OAuth consent flow in your agent, not by committing secrets into the repo.
+
 See each app's `.env.example` for service-specific variables.
 
 ### Run web app

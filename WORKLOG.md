@@ -4,6 +4,28 @@ Handoff log between sessions. Keep entries short. Newest at top.
 
 ---
 
+## 2026-05-15 — Supabase MCP wiring + agent skills (Copilot)
+
+**In-flight on `copilot/wire-mcp-connection`**
+
+- **Landed on branch** `copilot/wire-mcp-connection` at `609aa6c`:
+  installed the checked-in Supabase agent skills under `.agents/skills/**`,
+  added Claude symlinks under `.claude/skills/**`, and recorded the install in
+  `skills-lock.json`.
+- **Ops env/docs**: root `.env.example` now includes `SUPABASE_PROJECT_REF`,
+  `SUPABASE_DB_PASSWORD`, and `SUPABASE_DB_URL` placeholders for direct
+  Postgres / CLI / MCP-adjacent workflows. `README.md` and `docs/deployment.md`
+  now document that `.mcp.json` is already project-scoped to
+  `yjemotnclrnlxgcfntaf`, while MCP read/write access comes from the Supabase
+  OAuth consent flow rather than committed secrets.
+- **Validation**: `pnpm run validate`, `pnpm turbo run type-check lint test`,
+  and `pnpm run security:routes` passed after the changes.
+- **Dead ends**: the `npx skills add supabase/agent-skills` flow is interactive
+  and easy to mis-key in a TTY; selecting both bundled skills required stepping
+  through the prompts manually.
+
+---
+
 ## 2026-05-15 — Tier 2.1: per-user timezone for daily-summary + JSDoc cleanup (Copilot)
 
 **In-flight on `copilot/assess-tier-1-and-plan-tier-2`**
