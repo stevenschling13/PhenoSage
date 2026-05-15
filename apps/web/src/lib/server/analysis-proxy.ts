@@ -89,13 +89,17 @@ const DEFAULT_TIMEOUT_MS = 30_000;
 export async function callAnalysisService<T = unknown>(
   options: ProxyOptions,
 ): Promise<T> {
-  const { url, apiKey } = getAnalysisServiceConfig();
+  const {
+    url,
+    apiKey,
+    timeoutMs: configuredTimeoutMs,
+  } = getAnalysisServiceConfig();
   const {
     endpoint,
     method = "GET",
     body,
     requestId,
-    timeoutMs = DEFAULT_TIMEOUT_MS,
+    timeoutMs = configuredTimeoutMs || DEFAULT_TIMEOUT_MS,
     resilience,
   } = options;
 

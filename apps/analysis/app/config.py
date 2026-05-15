@@ -5,6 +5,7 @@ class Settings(BaseSettings):
     # Service auth — shared secret between Next.js proxy and this service.
     # Set in Railway environment variables. Never expose to browser.
     analysis_service_api_key: str = "dev-api-key"
+    readiness_probe_secret: str = ""
 
     # CORS — comma-separated list of allowed origins.
     allowed_origins: str = "http://localhost:3000"
@@ -32,4 +33,3 @@ class Settings(BaseSettings):
 
 
 settings = Settings()
-

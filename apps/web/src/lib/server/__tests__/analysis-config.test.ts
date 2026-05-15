@@ -17,7 +17,15 @@ describe("getAnalysisServiceConfig", () => {
     expect(getAnalysisServiceConfig()).toEqual({
       url: "https://analysis.example.com",
       apiKey: "key-123",
+      timeoutMs: 30000,
     });
+  });
+
+  it("reads an optional positive timeout override", () => {
+    process.env["ANALYSIS_SERVICE_URL"] = "https://analysis.example.com";
+    process.env["ANALYSIS_SERVICE_API_KEY"] = "key-123";
+    process.env["ANALYSIS_SERVICE_TIMEOUT_MS"] = "7500";
+    expect(getAnalysisServiceConfig().timeoutMs).toBe(7500);
   });
 
   it("throws when ANALYSIS_SERVICE_URL is missing", () => {

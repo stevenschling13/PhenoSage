@@ -2,7 +2,6 @@
 
 import { useId, useState } from "react";
 import { useRouter } from "next/navigation";
-import type { AnalysisResponse } from "@phenosage/shared";
 import { CheckCircleIcon, UploadIcon } from "@/components/icons";
 import { Badge } from "@/components/ui/badge";
 import { Button, buttonStyles } from "@/components/ui/button";
@@ -61,7 +60,7 @@ export function UploadPhotoPanel({ plantId }: { plantId: string }) {
     setNotice(null);
 
     try {
-      const response = await fetch("/api/uploads/sign", {
+      const response = await fetch("/api/upload/sign", {
         body: JSON.stringify({
           contentType: file.type,
           fileName: file.name,
@@ -74,18 +73,20 @@ export function UploadPhotoPanel({ plantId }: { plantId: string }) {
       });
 
       const payload = (await response.json()) as {
+        data?: {
+          imageId?: string;
+          storagePath?: string;
+          token?: string;
+        };
         error?: string;
-        imageId?: string;
-        storagePath?: string;
-        token?: string;
-        analysis?: AnalysisResponse;
       };
 
       if (!response.ok) {
         throw new Error(payload.error || "Upload signing failed.");
       }
 
-      if (!payload.storagePath || !payload.token || !payload.imageId) {
+      const signed = payload.data ?? {};
+      if (!signed.storagePath || !signed.token || !signed.imageId) {
         throw new Error(
           "Upload preparation did not return the required storage token.",
         );
@@ -94,7 +95,7 @@ export function UploadPhotoPanel({ plantId }: { plantId: string }) {
       const supabase = createSupabaseBrowserClient();
       const { error: uploadError } = await supabase.storage
         .from("plant-images")
-        .uploadToSignedUrl(payload.storagePath, payload.token, file, {
+        .uploadToSignedUrl(signed.storagePath, signed.token, file, {
           contentType: file.type,
         });
 
@@ -102,11 +103,12 @@ export function UploadPhotoPanel({ plantId }: { plantId: string }) {
         throw new Error(uploadError.message);
       }
 
-      const finalizeResponse = await fetch(`/api/plants/${plantId}/images`, {
+      const finalizeResponse = await fetch("/api/upload/finalize", {
         body: JSON.stringify({
-          imageId: payload.imageId,
+          imageId: signed.imageId,
+          plantId,
           source: "upload",
-          storagePath: payload.storagePath,
+          storagePath: signed.storagePath,
         }),
         headers: {
           "Content-Type": "application/json",
@@ -124,8 +126,8 @@ export function UploadPhotoPanel({ plantId }: { plantId: string }) {
         );
       }
 
-      const analysisResponse = await fetch(`/api/plants/${plantId}/analyze`, {
-        body: JSON.stringify({ imageId: payload.imageId }),
+      const analysisResponse = await fetch("/api/analyze", {
+        body: JSON.stringify({ image_id: signed.imageId, plant_id: plantId }),
         headers: {
           "Content-Type": "application/json",
         },
@@ -133,11 +135,11 @@ export function UploadPhotoPanel({ plantId }: { plantId: string }) {
       });
 
       const analysisPayload = (await analysisResponse.json()) as {
+        data?: { job_id?: string; status?: string };
         error?: string;
-        analysis?: AnalysisResponse;
       };
 
-      if (!analysisResponse.ok || !analysisPayload.analysis) {
+      if (!analysisResponse.ok || !analysisPayload.data?.job_id) {
         setNotice({
           tone: "warning",
           text:
@@ -149,12 +151,9 @@ export function UploadPhotoPanel({ plantId }: { plantId: string }) {
         return;
       }
 
-      const fallback = analysisPayload.analysis.analysisMode === "fallback";
       setNotice({
-        tone: fallback ? "warning" : "success",
-        text: fallback
-          ? "Image uploaded, but the analysis result is inconclusive fallback output. Retry after verifying storage and OpenAI availability."
-          : `Image uploaded and analyzed. Latest summary: ${analysisPayload.analysis.summary}`,
+        tone: "success",
+        text: "Image uploaded and queued for analysis. Refresh shortly to view the latest result.",
       });
       setFile(null);
       router.refresh();
