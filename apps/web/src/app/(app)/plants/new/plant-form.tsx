@@ -111,6 +111,57 @@ export function PlantForm({
         fieldMeta={FIELD_META}
       />
 
+      {state.status === "success" && state.recoveryUrl ? (
+        // Defence-in-depth recovery banner. router.push is fired by the
+        // runner on success; if for any reason it didn't navigate (a
+        // chunk error, a blocked transition, the user disabled JS
+        // routing), this CTA is the manual continue. Once navigation
+        // takes effect this component unmounts so the user never
+        // notices it under happy-path conditions.
+        <div
+          aria-live="polite"
+          className="rounded-[1.15rem] border border-success/40 bg-success/10 px-4 py-4 text-sm leading-6 text-foreground"
+          role="status"
+        >
+          <p className="font-medium">
+            {/* Source of truth: the server action returns "Plant created."
+                or "N plants created." in state.message. Reading the local
+                `count` here would race the form: a user can change the
+                count input while the action is pending (inputs aren't
+                disabled), which would mis-label the banner. */}
+            {state.message ?? "Plant created."}
+          </p>
+          <p className="mt-1 text-muted-foreground">
+            If your screen didn&apos;t move on its own, tap below to continue.
+          </p>
+          <div className="mt-3 flex flex-wrap gap-2">
+            <Link
+              className={buttonStyles({ size: "sm" })}
+              href={state.recoveryUrl}
+            >
+              {isBulk ? "Open the grow registry" : "Open the new plant"}
+            </Link>
+          </div>
+        </div>
+      ) : null}
+
+      {state.status === "error" && state.recoveryUrl ? (
+        // After a permanent error AND retries exhausted, give the user a
+        // fallback page so they're never stranded on a dead form. The
+        // fieldErrors above tell them what to fix; the link below tells
+        // them where to go if they want to bail.
+        <div
+          aria-live="polite"
+          className="rounded-[1.15rem] border border-border/70 bg-background-subtle/60 px-4 py-3 text-sm leading-6 text-muted-foreground"
+        >
+          Need to step away?{" "}
+          <Link className="text-accent underline" href={state.recoveryUrl}>
+            Open the grow registry
+          </Link>{" "}
+          — your form input stays here when you come back.
+        </div>
+      ) : null}
+
       <div>
         <label
           className="block text-sm font-medium text-foreground"
