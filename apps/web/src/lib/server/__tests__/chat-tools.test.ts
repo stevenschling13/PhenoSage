@@ -5,6 +5,8 @@ const logServerEvent = vi.fn();
 const getPlantTimeline = vi.fn();
 const runAndPersistPlantAnalysis = vi.fn();
 const rateLimit = vi.fn();
+const persistSingleFindingEmbeddingBestEffort = vi.fn();
+const executeSearchSimilarFindingsTool = vi.fn();
 
 vi.mock("../auth", () => ({
   createSupabaseServerClient: (...args: unknown[]) =>
@@ -34,6 +36,7 @@ vi.mock("../chat-tool-policies", () => ({
       "create_plants",
       "create_grow",
       "record_image_finding",
+      "search_similar_findings",
     ]);
     if (!policied.has(name)) return { ok: true };
     const r = await rateLimit({
@@ -47,6 +50,14 @@ vi.mock("../chat-tool-policies", () => ({
       error: `rate limit: too many ${name} calls in a row; retry in ~1s`,
     };
   },
+}));
+vi.mock("../embeddings", () => ({
+  persistSingleFindingEmbeddingBestEffort: (...args: unknown[]) =>
+    persistSingleFindingEmbeddingBestEffort(...args),
+}));
+vi.mock("../semantic-findings", () => ({
+  executeSearchSimilarFindingsTool: (...args: unknown[]) =>
+    executeSearchSimilarFindingsTool(...args),
 }));
 
 // Default behavior for the mocked rateLimit: always permit. Tests that
@@ -214,6 +225,7 @@ describe("chat-tools — write tool definitions", () => {
     const names = CHAT_TOOL_DEFINITIONS.map((t) => t.function.name).sort();
     expect(names).toContain("log_grow_event");
     expect(names).toContain("log_plant_observation");
+    expect(names).toContain("search_similar_findings");
   });
 
   it("log_grow_event declares required growId + eventType only", () => {
@@ -1765,6 +1777,8 @@ describe("chat-tools — record_image_finding", () => {
   beforeEach(() => {
     createSupabaseServerClient.mockReset();
     logServerEvent.mockReset();
+    persistSingleFindingEmbeddingBestEffort.mockReset();
+    persistSingleFindingEmbeddingBestEffort.mockResolvedValue(undefined);
   });
   afterEach(() => {
     vi.restoreAllMocks();
@@ -1825,6 +1839,52 @@ describe("chat-tools — record_image_finding", () => {
         recommendation: "Defoliate affected leaves and apply copper",
         source: "user_reported",
       }),
+    );
+    expect(persistSingleFindingEmbeddingBestEffort).toHaveBeenCalledWith(
+      expect.objectContaining({
+        id: "f-1",
+        category: "disease",
+        title: "Suspected septoria",
+      }),
+      { requestId: "req-123", userId: "user-1" },
+    );
+  });
+
+  it("returns the finding even when semantic embedding persistence fails", async () => {
+    persistSingleFindingEmbeddingBestEffort.mockResolvedValue(undefined);
+    const { client } = makeInsertMock({
+      data: {
+        id: "f-3",
+        category: "general",
+        description: "",
+        recommendation: null,
+        severity: "info",
+        source: "user_reported",
+        title: "Observation",
+      },
+      error: null,
+    });
+    createSupabaseServerClient.mockResolvedValue(client);
+
+    const result = await executeChatTool(
+      "record_image_finding",
+      {
+        plantId: "p-1",
+        growId: "g-1",
+        category: "general",
+        severity: "info",
+        title: "Observation",
+      },
+      CTX_AUTHED,
+    );
+
+    expect(result).toEqual({
+      ok: true,
+      data: expect.objectContaining({ id: "f-3" }),
+    });
+    expect(persistSingleFindingEmbeddingBestEffort).toHaveBeenCalledWith(
+      expect.objectContaining({ id: "f-3" }),
+      { requestId: "req-123", userId: "user-1" },
     );
   });
 
@@ -1920,6 +1980,40 @@ describe("chat-tools — record_image_finding", () => {
     if (!result.ok) expect(result.error).toMatch(/owner or collaborator only/i);
   });
 
+  it("hides raw insert errors and logs them server-side", async () => {
+    const { client } = makeInsertMock({
+      data: null,
+      error: { code: "57014", message: "statement timeout at SQL text" },
+    });
+    createSupabaseServerClient.mockResolvedValue(client);
+
+    const result = await executeChatTool(
+      "record_image_finding",
+      {
+        plantId: "p-1",
+        growId: "g-1",
+        category: "disease",
+        severity: "high",
+        title: "X",
+      },
+      CTX_AUTHED,
+    );
+
+    expect(result).toEqual({
+      ok: false,
+      error: "could not record finding right now; please try again later",
+    });
+    expect(logServerEvent).toHaveBeenCalledWith(
+      "warn",
+      "chat record_image_finding failed",
+      expect.objectContaining({
+        requestId: "req-123",
+        code: "57014",
+        error: "statement timeout at SQL text",
+      }),
+    );
+  });
+
   it("rejects when the user is not authenticated", async () => {
     const { client, insert } = makeInsertMock({ data: null, error: null });
     createSupabaseServerClient.mockResolvedValue(client);
@@ -1938,6 +2032,88 @@ describe("chat-tools — record_image_finding", () => {
 
     expect(result).toEqual({ error: "not authenticated", ok: false });
     expect(insert).not.toHaveBeenCalled();
+  });
+});
+
+describe("chat-tools — search_similar_findings", () => {
+  beforeEach(() => {
+    createSupabaseServerClient.mockReset();
+    executeSearchSimilarFindingsTool.mockReset();
+    logServerEvent.mockReset();
+  });
+
+  it("returns semantic matches for the active grow", async () => {
+    const client = { rpc: vi.fn() };
+    createSupabaseServerClient.mockResolvedValue(client);
+    executeSearchSimilarFindingsTool.mockResolvedValue({
+      ok: true,
+      data: [
+        {
+          id: "finding-1",
+          plantId: "plant-1",
+          plantName: "Blue Dream #1",
+          category: "nutrient_deficiency",
+          severity: "medium",
+          title: "Lower fan yellowing",
+          description: "Yellowing lower leaves",
+          recommendation: null,
+          source: "ai",
+          createdAt: "2026-05-01T00:00:00Z",
+          similarity: 0.86,
+        },
+      ],
+    });
+
+    const result = await executeChatTool(
+      "search_similar_findings",
+      {
+        growId: "grow-1",
+        query: "yellowing lower leaves",
+        limit: 3,
+      },
+      CTX_AUTHED,
+    );
+
+    expect(result).toEqual({
+      ok: true,
+      data: [expect.objectContaining({ id: "finding-1", similarity: 0.86 })],
+    });
+    expect(executeSearchSimilarFindingsTool).toHaveBeenCalledWith(
+      {
+        growId: "grow-1",
+        query: "yellowing lower leaves",
+        limit: 3,
+      },
+      {
+        supabase: client,
+        requestId: "req-123",
+        userId: "user-1",
+      },
+    );
+  });
+
+  it("returns friendly copy when semantic search is unavailable", async () => {
+    createSupabaseServerClient.mockResolvedValue({ rpc: vi.fn() });
+    executeSearchSimilarFindingsTool.mockResolvedValue({
+      ok: false,
+      error:
+        "semantic finding search is temporarily unavailable; use recent findings or timeline context instead",
+    });
+
+    const result = await executeChatTool(
+      "search_similar_findings",
+      {
+        growId: "grow-1",
+        query: "yellowing lower leaves",
+      },
+      CTX_AUTHED,
+    );
+
+    expect(result).toEqual({
+      ok: false,
+      error:
+        "semantic finding search is temporarily unavailable; use recent findings or timeline context instead",
+    });
   });
 });
 

@@ -2,8 +2,10 @@ import "server-only";
 import { z } from "zod";
 import { createSupabaseServerClient } from "./auth";
 import { checkPerToolRateLimit } from "./chat-tool-policies";
+import { persistSingleFindingEmbeddingBestEffort } from "./embeddings";
 import { getPlantTimeline, runAndPersistPlantAnalysis } from "./plants";
 import { logServerEvent } from "./request-id";
+import { executeSearchSimilarFindingsTool } from "./semantic-findings";
 
 // Tool definitions live in chat-tool-definitions.ts (pure data) so this
 // module — executor + schemas + handlers — stays focused on behavior.
@@ -995,14 +997,40 @@ export async function executeChatTool(
               /permission denied|row-level security/i.test(
                 error?.message ?? "",
               );
+            logServerEvent("warn", "chat record_image_finding failed", {
+              requestId: ctx.requestId,
+              userId: ctx.userId,
+              growId: args.growId,
+              plantId: args.plantId,
+              code: error?.code,
+              error: error?.message ?? "no row returned",
+            });
             return {
               ok: false,
               error: denied
                 ? "you do not have permission to record findings on this grow (owner or collaborator only)"
-                : `could not record finding: ${error?.message ?? "no row returned"}`,
+                : "could not record finding right now; please try again later",
             };
           }
+          await persistSingleFindingEmbeddingBestEffort(
+            {
+              id: data.id,
+              category: data.category,
+              severity: data.severity,
+              title: data.title,
+              description: data.description,
+              recommendation: data.recommendation,
+            },
+            { requestId: ctx.requestId, userId: ctx.userId },
+          );
           return { ok: true, data };
+        }
+        case "search_similar_findings": {
+          return executeSearchSimilarFindingsTool(rawArgs, {
+            supabase,
+            requestId: ctx.requestId,
+            userId: ctx.userId,
+          });
         }
 
         case "get_plant_timeline": {

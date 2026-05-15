@@ -6,6 +6,7 @@ const getAuthorizedPlantContext = vi.fn();
 const getDbClient = vi.fn();
 const getStorageClient = vi.fn();
 const logServerEvent = vi.fn();
+const persistFindingEmbeddings = vi.fn();
 
 vi.mock("../analysis-proxy", () => ({
   analyzeImage: (...args: unknown[]) => analyzeImage(...args),
@@ -16,6 +17,10 @@ vi.mock("../auth", () => ({
 }));
 vi.mock("../db", () => ({
   getDbClient: (...args: unknown[]) => getDbClient(...args),
+}));
+vi.mock("../embeddings", () => ({
+  persistFindingEmbeddings: (...args: unknown[]) =>
+    persistFindingEmbeddings(...args),
 }));
 vi.mock("../plant-access", () => ({
   getAuthorizedPlantContext: (...args: unknown[]) =>
@@ -144,6 +149,14 @@ describe("plants server helpers", () => {
     getDbClient.mockReset();
     getStorageClient.mockReset();
     logServerEvent.mockReset();
+    persistFindingEmbeddings.mockReset();
+    persistFindingEmbeddings.mockResolvedValue({
+      failed: 0,
+      generated: 1,
+      ok: true,
+      skipped: 0,
+      updated: 1,
+    });
     getAuthorizedPlantContext.mockResolvedValue(PLANT_CONTEXT);
   });
 
@@ -890,7 +903,64 @@ describe("plants server helpers", () => {
         title: "Improved posture",
       }),
     ]);
+    expect(persistFindingEmbeddings).toHaveBeenCalledWith(
+      { from },
+      [
+        expect.objectContaining({
+          id: "finding-1",
+          category: "positive",
+          title: "Improved posture",
+        }),
+      ],
+      { requestId: "req-1" },
+    );
     now.mockRestore();
+  });
+
+  it("keeps analysis successful when semantic embedding persistence fails", async () => {
+    persistFindingEmbeddings.mockResolvedValue({
+      code: "embedding_unavailable",
+      failed: 1,
+      generated: 0,
+      ok: false,
+      skipped: 0,
+      updated: 0,
+    });
+    analyzeImage.mockResolvedValue({
+      analysisMode: "model",
+      analyzedAt: "2026-05-11T00:00:00Z",
+      findings: [
+        {
+          category: "general",
+          description: "Needs review.",
+          severity: "info",
+          title: "Observation",
+        },
+      ],
+      imageId: "image-current",
+      isFallback: false,
+      modelVersion: "gpt-4o-mini-vision",
+      overallHealthScore: 70,
+      plantId: "plant-1",
+      requestId: "analysis-req",
+      summary: "Review recommended.",
+    });
+    const db = makeAnalysisPersistenceDb();
+    getDbClient.mockReturnValue({ from: db.from });
+
+    await expect(
+      runAndPersistPlantAnalysis({
+        plantId: "plant-1",
+        requestId: "req-1",
+      }),
+    ).resolves.toMatchObject({
+      analysis: { summary: "Review recommended." },
+    });
+    expect(logServerEvent).toHaveBeenCalledWith(
+      "warn",
+      "plant analysis: finding embeddings skipped",
+      expect.objectContaining({ code: "embedding_unavailable" }),
+    );
   });
 
   it.each([

@@ -21,6 +21,8 @@ export const PER_TOOL_RATE_LIMITS: Record<
   // Wallet-spending writes worth capping per minute.
   create_grow: { limit: 10, windowMs: 60_000 },
   record_image_finding: { limit: 20, windowMs: 60_000 },
+  // Embeds a query with Gemini, then performs a vector RPC.
+  search_similar_findings: { limit: 20, windowMs: 60_000 },
 };
 
 export type RateLimitToolResult = { ok: true } | { ok: false; error: string };
