@@ -8,35 +8,35 @@
 
 ### Web (apps/web)
 
-- [ ] Supabase Auth integration (sign up, sign in, sign out)
-- [ ] Grow creation form
-- [ ] Plant creation form
-- [ ] Photo upload component (sign URL → browser upload → store path in DB)
-- [ ] Plant timeline view with real data
-- [ ] Real AI analysis triggered on photo upload (via analysis service)
-- [ ] Findings display in plant detail page
-- [ ] Chat input wired to `/api/chat` with streaming
-- [ ] Basic responsive layout / mobile compatibility
+- [x] Supabase Auth integration (sign up, sign in, sign out)
+- [x] Grow creation form
+- [x] Plant creation form
+- [x] Photo upload component (sign URL → browser upload → store path in DB)
+- [x] Plant timeline view with real data
+- [x] Real AI analysis triggered on photo upload (via analysis service)
+- [x] Findings display in plant detail page
+- [x] Chat input wired to `/api/chat` with streaming
+- [x] Basic responsive layout / mobile compatibility
 
 ### Analysis Service (apps/analysis)
 
-- [ ] Fetch image from Supabase Storage using service role key
-- [ ] GPT-4o Vision call with grow context
-- [ ] Parse structured findings from GPT response
-- [ ] Image comparison (current vs previous)
-- [ ] Health score computation
+- [x] Fetch image from Supabase Storage using service role key
+- [x] GPT-4o Vision call with grow context
+- [x] Parse structured findings from GPT response
+- [x] Image comparison (current vs previous)
+- [x] Health score computation
 
 ### Database
 
-- [ ] Apply Supabase migrations to production (now one-click via the `Database migrations` GitHub Action — see `docs/deployment.md`)
-- [ ] Verify RLS policies work end-to-end
-- [ ] Set up `plant-images` storage bucket
+- [x] Apply Supabase migrations to production (now one-click via the `Database migrations` GitHub Action — see `docs/deployment.md`)
+- [x] Verify RLS policies work end-to-end
+- [x] Set up `plant-images` storage bucket
 
 ### Infrastructure
 
-- [ ] Vercel deployment live
-- [ ] Railway deployment live
-- [ ] CI green on main
+- [x] Vercel deployment live
+- [x] Railway deployment live
+- [x] CI green on main
 
 ---
 
@@ -47,15 +47,15 @@
 ### Features
 
 - [ ] Health score trend graph over time
-- [ ] Finding resolution tracking (mark as resolved)
-- [ ] Grow event log (water, feed, top, LST, etc.)
-- [ ] Plant observation form (height, notes)
+- [x] Finding resolution tracking (mark as resolved)
+- [x] Grow event log (water, feed, top, LST, etc.)
+- [x] Plant observation form (height, notes)
 - [ ] Proactive daily summary (Vercel Cron → AI → in-app notification)
-- [ ] Task generation from findings
-- [ ] Grow stage progression tracking
-- [ ] Multiple grows with easy switching
+- [x] Task generation from findings
+- [x] Grow stage progression tracking
+- [x] Multiple grows with easy switching
 - [ ] Grow members / collaborator invites
-- [ ] Settings page (profile, notifications)
+- [x] Settings page (profile, notifications)
 - [ ] Export grow history (PDF or CSV)
 
 ### Analysis Service
