@@ -20,7 +20,13 @@ unresolved Copilot review thread on PR #159 (JSDoc drift on
   trigger.
 - **`apps/web/src/lib/server/timezone.ts`**: `isValidTimezone` (uses
   `Intl.DateTimeFormat`) and `formatOccurredOnInZone` (uses `en-CA`
-  to get YYYY-MM-DD without manual zero-pad). No new dep.
+  to get YYYY-MM-DD without manual zero-pad). No new dep. **Optimization
+  pass (2026-05-15 evening)**: added a per-process positive cache so the
+  daily-summary cron stops constructing two `Intl.DateTimeFormat` per
+  user (constructor is ~10–100× slower than `.format()`); validation
+  and formatting now share one cache hit per IANA zone seen this
+  process. Bounded by the IANA zone universe (~600). Test count went
+  to 620/620 (+2 cache-coverage tests).
 - **`apps/web/src/lib/server/user-preferences.ts`**: `loadUserPreferences`
   (single, RLS-scoped) and `loadUserPreferencesBulk` (cron path,
   service-role; backfills missing users to UTC default; query error
@@ -38,9 +44,10 @@ unresolved Copilot review thread on PR #159 (JSDoc drift on
   app-level SELECT-then-INSERT with 23505 as a race backstop, not
   `ignoreDuplicates: true`.
 
-**Test count**: 618/618 web pass (was 593, +25 new across timezone /
-user-preferences / settings action / cron route). `pnpm run validate`,
-`pnpm run security:routes`, type-check, lint, CodeQL all clean.
+**Test count**: 620/620 web pass (was 593, +27 across timezone /
+user-preferences / settings action / cron route + cache coverage).
+`pnpm run validate`, `pnpm run security:routes`, type-check, lint,
+CodeQL all clean.
 
 **Next session**:
 
