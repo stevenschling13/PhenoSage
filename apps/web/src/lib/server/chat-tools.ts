@@ -1025,7 +1025,6 @@ export async function executeChatTool(
           );
           return { ok: true, data };
         }
-
         case "search_similar_findings": {
           return executeSearchSimilarFindingsTool(rawArgs, {
             supabase,
