@@ -7,6 +7,7 @@
 **Goal:** A grower can sign up, create a grow, add plants, upload photos, get real AI analysis, and chat about their grow.
 
 ### Web (apps/web)
+
 - [ ] Supabase Auth integration (sign up, sign in, sign out)
 - [ ] Grow creation form
 - [ ] Plant creation form
@@ -18,6 +19,7 @@
 - [ ] Basic responsive layout / mobile compatibility
 
 ### Analysis Service (apps/analysis)
+
 - [ ] Fetch image from Supabase Storage using service role key
 - [ ] GPT-4o Vision call with grow context
 - [ ] Parse structured findings from GPT response
@@ -25,11 +27,13 @@
 - [ ] Health score computation
 
 ### Database
-- [ ] Apply Supabase migrations to production
+
+- [ ] Apply Supabase migrations to production (now one-click via the `Database migrations` GitHub Action — see `docs/deployment.md`)
 - [ ] Verify RLS policies work end-to-end
 - [ ] Set up `plant-images` storage bucket
 
 ### Infrastructure
+
 - [ ] Vercel deployment live
 - [ ] Railway deployment live
 - [ ] CI green on main
@@ -41,6 +45,7 @@
 **Goal:** PhenoSage feels like a polished professional tool. Analysis is accurate and trusted. Tracking is effortless.
 
 ### Features
+
 - [ ] Health score trend graph over time
 - [ ] Finding resolution tracking (mark as resolved)
 - [ ] Grow event log (water, feed, top, LST, etc.)
@@ -54,12 +59,14 @@
 - [ ] Export grow history (PDF or CSV)
 
 ### Analysis Service
+
 - [ ] Refined prompts with few-shot examples
 - [ ] Strain-aware analysis context
 - [ ] Confidence scores per finding
 - [ ] Image quality validation (reject blurry/dark images)
 
 ### Infrastructure
+
 - [ ] Email notifications (Resend or SendGrid)
 - [ ] Supabase Realtime for live findings updates
 - [ ] Error monitoring (Sentry)
@@ -72,6 +79,7 @@
 **Goal:** PhenoSage is the definitive AI platform for serious cannabis cultivators.
 
 ### Features
+
 - [ ] pgvector semantic search over grow history
 - [ ] "Ask about any past grow" AI memory
 - [ ] Automated grow advisor: suggests feed schedule adjustments
@@ -82,6 +90,7 @@
 - [ ] API access for advanced users
 
 ### Infrastructure
+
 - [ ] pgvector enabled for semantic search
 - [ ] Background job queue (Railway worker) for heavy analysis
 - [ ] CDN-optimized image serving
