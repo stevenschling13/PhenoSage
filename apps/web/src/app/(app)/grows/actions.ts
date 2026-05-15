@@ -1,10 +1,12 @@
 "use server";
 
 import { revalidatePath } from "next/cache";
+import { headers } from "next/headers";
 import type { GrowMedium, GrowStage, LightType } from "@phenosage/shared";
 import { createSupabaseServerClient, getServerUser } from "@/lib/server/auth";
 import { isNextFrameworkError } from "@/lib/server/auth-errors";
-import { logServerEvent } from "@/lib/server/request-id";
+import { rateLimit } from "@/lib/server/rate-limit";
+import { logServerEvent, REQUEST_ID_HEADER } from "@/lib/server/request-id";
 
 const validStages = new Set<GrowStage>([
   "germination",
@@ -46,6 +48,28 @@ const MAX_DESCRIPTION_LENGTH = 2_000;
 // the future side is clamped to avoid year-9999 fat-finger inputs.
 const MAX_FUTURE_START_MS = 24 * 60 * 60 * 1000;
 
+// Per-attempt deadline on the Supabase insert. Vercel's serverless
+// timeout is 60s on the hobby plan / 300s on pro, but a user staring at
+// a "Saving…" spinner for more than ~8s feels broken. We surface a
+// retryable error before then so the user gets fast, honest feedback.
+const INSERT_TIMEOUT_MS = 8_000;
+
+// Soft idempotency window: a single user can only fire the create
+// action once per 2 s. Defends against React 18 double-invocation in
+// dev, accidental double-clicks the disabled-button guard misses, and
+// network-layer retries that re-POST the form. The action is NOT
+// natively idempotent (no client-supplied idempotency key), so we lean
+// on a tight per-user window plus the (owner_id, lower(name)) UNIQUE
+// index from migration 011 as the database-level backstop.
+const IDEMPOTENCY_WINDOW_MS = 2_000;
+const IDEMPOTENCY_LIMIT = 1;
+
+// Per-user abuse cap: 20 grow creations per minute is well above any
+// legitimate workflow (the median grower has < 10 grows lifetime) and
+// well below what a runaway script could cost us.
+const ABUSE_LIMIT_WINDOW_MS = 60_000;
+const ABUSE_LIMIT = 20;
+
 export type CreateGrowActionResult = {
   fieldErrors?: {
     description?: string;
@@ -73,13 +97,139 @@ function isIsoDate(value: string) {
   return /^\d{4}-\d{2}-\d{2}$/.test(value) && !Number.isNaN(Date.parse(value));
 }
 
+// Postgres SQLSTATE → user-facing copy. Each entry is a deliberate
+// trade-off between specificity (so the user knows what to fix) and
+// not leaking schema details (so we don't tell an attacker which
+// table/column failed). Codes that aren't in this map fall through to
+// the generic "couldn't save" copy below. Reference:
+// https://www.postgresql.org/docs/current/errcodes-appendix.html
+const POSTGRES_ERROR_COPY: Record<string, string> = {
+  // 23505 unique_violation — the (owner_id, lower(name)) partial UNIQUE
+  // index from migration 011 fires here on duplicate names (case-
+  // insensitive, ignoring archived grows).
+  "23505": "A grow with that name already exists. Try a different name.",
+  // 23502 not_null_violation — should be impossible because validation
+  // above catches missing required fields. If we ever land here it's a
+  // schema-vs-validator drift bug; the user-friendly copy is generic
+  // while the structured log includes the errorCode for triage.
+  "23502":
+    "A required field is missing. Please fill in every required field and try again.",
+  // 23514 check_violation — column-level CHECK constraint failed (e.g.
+  // an enum value the client passed wasn't recognised). Validation
+  // catches the documented enums; this is the contract-drift backstop.
+  "23514":
+    "One of the values you entered isn't valid for this field. Please pick a different option.",
+  // 23503 foreign_key_violation — owner_id references auth.users(id);
+  // hitting this means the user record was deleted between
+  // getServerUser() and the insert. Force a fresh sign-in.
+  "23503":
+    "Your account couldn't be linked to the new grow. Please sign in again and retry.",
+  // 42501 insufficient_privilege — RLS denied the insert. Most likely
+  // cause is a session that just expired. Friendly copy nudges re-auth.
+  "42501":
+    "You don't have permission to create a grow right now. Please refresh and sign in again.",
+  // 40001 serialization_failure — concurrent update conflict. Retryable
+  // by the user (rare in practice for an INSERT, but possible if a
+  // trigger touches contended state).
+  "40001":
+    "Another save happened at the same moment. Please try again in a moment.",
+  // 40P01 deadlock_detected — same retry posture as 40001.
+  "40P01": "The system was briefly busy. Please try again in a moment.",
+  // 57014 query_canceled — Postgres cancelled the statement, usually
+  // because of a statement_timeout. Same surface as our own AbortSignal
+  // timeout below.
+  "57014":
+    "The save took too long. Please try again — if it keeps happening, your network may be slow.",
+  // 08xxx connection_exception family — Supabase is unreachable from the
+  // serverless function. Often a Supabase incident or a project paused
+  // for inactivity. Always retryable.
+  "08000": "We couldn't reach the database. Please try again in a moment.",
+  "08001": "We couldn't reach the database. Please try again in a moment.",
+  "08006": "We couldn't reach the database. Please try again in a moment.",
+};
+
+// Default copy when the failure isn't a Postgres error or has an
+// unmapped SQLSTATE. Kept short, actionable, and free of provider
+// details — matches the pattern in describeAuthError().
+const DEFAULT_INSERT_FAILURE_COPY =
+  "We couldn't save the grow right now. Please try again in a moment.";
+
+function describePostgresError(code: string | null | undefined): string {
+  if (typeof code === "string" && POSTGRES_ERROR_COPY[code]) {
+    return POSTGRES_ERROR_COPY[code]!;
+  }
+  return DEFAULT_INSERT_FAILURE_COPY;
+}
+
+// Best-effort request-id resolver. Server actions don't expose the
+// raw Request object, but Next 15 lets us peek at incoming headers.
+// On any failure (e.g. inside a unit test that doesn't mock headers())
+// we degrade gracefully so error-handling itself never throws.
+async function resolveRequestId(): Promise<string> {
+  try {
+    const h = await headers();
+    const incoming = h.get(REQUEST_ID_HEADER)?.trim();
+    if (incoming) return incoming;
+  } catch {
+    // Fall through — headers() can throw outside a request scope (tests,
+    // background contexts). The fallback id keeps logs structured.
+  }
+  try {
+    return crypto.randomUUID();
+  } catch {
+    return "unknown";
+  }
+}
+
 export async function createGrowAction(
   formData: FormData,
 ): Promise<CreateGrowActionResult> {
+  const requestId = await resolveRequestId();
+
   const user = await getServerUser();
   if (!user) {
     return {
       message: "You must be signed in to create a grow.",
+      status: "error",
+    };
+  }
+
+  // ─── Soft idempotency + abuse caps ──────────────────────────────────
+  // Order matters: the tight 2 s window catches double-submits before
+  // we run any validation, so a user spamming the button doesn't get
+  // 5× field-error renders. The 60 s cap is the abuse backstop.
+  const idempotency = await rateLimit({
+    key: `create-grow:idem:u:${user.id}`,
+    limit: IDEMPOTENCY_LIMIT,
+    windowMs: IDEMPOTENCY_WINDOW_MS,
+  });
+  if (!idempotency.ok) {
+    logServerEvent("warn", "create grow rate-limited (idempotency window)", {
+      requestId,
+      resetAt: idempotency.resetAt,
+      userId: user.id,
+    });
+    return {
+      message:
+        "We're already saving your last submission — give it a moment, then try again if it didn't go through.",
+      status: "error",
+    };
+  }
+
+  const abuse = await rateLimit({
+    key: `create-grow:abuse:u:${user.id}`,
+    limit: ABUSE_LIMIT,
+    windowMs: ABUSE_LIMIT_WINDOW_MS,
+  });
+  if (!abuse.ok) {
+    logServerEvent("warn", "create grow rate-limited (abuse cap)", {
+      requestId,
+      resetAt: abuse.resetAt,
+      userId: user.id,
+    });
+    return {
+      message:
+        "You've created a lot of grows in the last minute. Please slow down and try again shortly.",
       status: "error",
     };
   }
@@ -149,6 +299,13 @@ export async function createGrowAction(
   let newGrowId: string | null = null;
   try {
     const supabase = await createSupabaseServerClient();
+    // Per-attempt deadline. AbortSignal.timeout fires at INSERT_TIMEOUT_MS
+    // and supabase-js v2 forwards it to its underlying fetch via
+    // .abortSignal(). On fire we treat it as a retryable timeout — the
+    // INSERT either landed (and we never see the row) or it didn't; the
+    // (owner_id, lower(name)) UNIQUE index converts a phantom-success
+    // double into a friendly 23505 on retry.
+    const timeoutSignal = AbortSignal.timeout(INSERT_TIMEOUT_MS);
     const { data, error } = await supabase
       .from("grows")
       .insert({
@@ -162,6 +319,7 @@ export async function createGrowAction(
         target_harvest_date: targetHarvestDate || null,
       })
       .select("id")
+      .abortSignal(timeoutSignal)
       .single();
 
     if (error || !data) {
@@ -173,14 +331,12 @@ export async function createGrowAction(
         lightType,
         medium,
         nameLength: name.length,
+        requestId,
         stage,
         userId: user.id,
       });
       return {
-        message:
-          error?.code === "23505"
-            ? "A grow with that name already exists. Try a different name."
-            : "We couldn't save the grow right now. Please try again in a moment.",
+        message: describePostgresError(error?.code ?? null),
         status: "error",
       };
     }
@@ -193,19 +349,31 @@ export async function createGrowAction(
   } catch (err) {
     // Re-throw Next framework control-flow signals untouched.
     if (isNextFrameworkError(err)) throw err;
+    // Differentiate the timeout/abort path so the user gets actionable
+    // copy ("took too long") instead of a generic "something went wrong".
+    // AbortSignal.timeout fires a DOMException with name "TimeoutError";
+    // a caller-cancelled abort fires "AbortError". Either way the
+    // database state is uncertain — see the UNIQUE-index backstop note
+    // above the insert.
+    const errName = err instanceof Error ? err.name : "";
+    const isTimeout = errName === "TimeoutError" || errName === "AbortError";
     logServerEvent("error", "create grow action threw", {
       error: err instanceof Error ? err.message : String(err),
+      errorName: errName || null,
       hasDescription: description.length > 0,
       hasTargetHarvestDate: targetHarvestDate.length > 0,
+      isTimeout,
       lightType,
       medium,
       nameLength: name.length,
+      requestId,
       stage,
       userId: user.id,
     });
     return {
-      message:
-        "We couldn't save the grow right now. Please try again in a moment — if it keeps failing, your sign-in may have expired.",
+      message: isTimeout
+        ? "The save took longer than expected. Please try again — your input is preserved."
+        : "We couldn't save the grow right now. Please try again in a moment — if it keeps failing, your sign-in may have expired.",
       status: "error",
     };
   }
