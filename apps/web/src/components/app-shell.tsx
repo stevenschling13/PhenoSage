@@ -232,6 +232,10 @@ export function AppShell({
                 <span className="ps-mono text-[11px] uppercase tracking-[0.14em] text-[rgb(var(--ps-muted))]">
                   Operator workspace
                 </span>
+                <span className="text-[rgb(var(--ps-muted))]">·</span>
+                <kbd className="rounded border border-[rgb(var(--ps-line)/var(--ps-line-strength))] bg-[rgb(var(--ps-surface-2))] px-1.5 py-0.5 font-mono text-[10px] text-[rgb(var(--ps-muted))]">
+                  ⌘K
+                </kbd>
               </div>
 
               <div className="flex items-center gap-2">

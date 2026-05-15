@@ -2,6 +2,7 @@
 
 import { useId, useState, useCallback, type DragEvent } from "react";
 import { useRouter } from "next/navigation";
+import { toast } from "sonner";
 import { CameraIcon, CheckCircleIcon, UploadIcon } from "@/components/icons";
 import { Badge } from "@/components/ui/badge";
 import { Button, buttonStyles } from "@/components/ui/button";
@@ -162,12 +163,19 @@ export function QuickCapture({ plantId, plantName }: QuickCaptureProps) {
         tone: "success",
         text: `Photo uploaded to ${plantName}. Analysis running in background.`,
       });
+      toast.success("Quick capture complete", {
+        description: `Photo uploaded to ${plantName}. Analysis running.`,
+      });
       setFile(null);
       router.refresh();
     } catch (error) {
+      const errorMessage = error instanceof Error ? error.message : "Upload failed.";
       setNotice({
         tone: "danger",
-        text: error instanceof Error ? error.message : "Upload failed.",
+        text: errorMessage,
+      });
+      toast.error("Upload failed", {
+        description: errorMessage,
       });
     } finally {
       setIsSubmitting(false);

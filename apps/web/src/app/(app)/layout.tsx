@@ -1,10 +1,13 @@
 import type { ReactNode } from "react";
 import { redirect } from "next/navigation";
 import { AppShell } from "@/components/app-shell";
+import { CommandPalette } from "@/components/command-palette";
+import { Toaster } from "@/components/ui/toaster";
 import { isNextFrameworkError } from "@/lib/server/auth-errors";
 import { countUnreadNotifications } from "@/lib/server/notifications";
 import { getCurrentProfile } from "@/lib/server/profile";
 import { logServerEvent } from "@/lib/server/request-id";
+import { getWorkspaceOverview } from "@/lib/server/workspace-overview";
 
 // Every page under (app) reads the authenticated user via getCurrentProfile.
 // Mark the group dynamic so `next build` doesn't try to statically prerender
@@ -42,7 +45,22 @@ export default async function AppLayout({ children }: { children: ReactNode }) {
   // already swallows errors and returns 0 on failure (see
   // notifications.ts), so a Supabase blip degrades to "no badge"
   // rather than taking the whole shell down.
-  const unreadNotifications = await countUnreadNotifications();
+  const [unreadNotifications, overview] = await Promise.all([
+    countUnreadNotifications(),
+    getWorkspaceOverview(),
+  ]);
+
+  // Prepare command palette data
+  const commandPaletteGrows = overview.grows.map((g) => ({
+    id: g.id,
+    name: g.name,
+  }));
+  const commandPalettePlants = overview.grows
+    .filter((g) => g.primaryPlantId && g.primaryPlantName)
+    .map((g) => ({
+      id: g.primaryPlantId!,
+      name: g.primaryPlantName!,
+    }));
 
   return (
     <AppShell
@@ -51,6 +69,8 @@ export default async function AppLayout({ children }: { children: ReactNode }) {
       unreadNotifications={unreadNotifications}
     >
       {children}
+      <CommandPalette grows={commandPaletteGrows} plants={commandPalettePlants} />
+      <Toaster />
     </AppShell>
   );
 }

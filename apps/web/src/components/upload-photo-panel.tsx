@@ -2,6 +2,7 @@
 
 import { useId, useState, useCallback, type DragEvent } from "react";
 import { useRouter } from "next/navigation";
+import { toast } from "sonner";
 import type { AnalysisResponse } from "@phenosage/shared";
 import { CheckCircleIcon, UploadIcon } from "@/components/icons";
 import { Badge } from "@/components/ui/badge";
@@ -169,6 +170,9 @@ export function UploadPhotoPanel({ plantId }: { plantId: string }) {
             analysisPayload.error ||
             "Image uploaded successfully, but analysis is unavailable right now.",
         });
+        toast.warning("Analysis unavailable", {
+          description: "Your image was uploaded but analysis couldn't complete right now.",
+        });
         setFile(null);
         router.refresh();
         return;
@@ -181,13 +185,27 @@ export function UploadPhotoPanel({ plantId }: { plantId: string }) {
           ? "Image uploaded, but the analysis result is inconclusive fallback output. Retry after verifying storage and OpenAI availability."
           : `Image uploaded and analyzed. Latest summary: ${analysisPayload.analysis.summary}`,
       });
+      
+      if (fallback) {
+        toast.warning("Analysis completed with fallback", {
+          description: "The analysis used fallback mode. Results may be limited.",
+        });
+      } else {
+        toast.success("Photo analyzed successfully", {
+          description: `Health score: ${analysisPayload.analysis.overallHealthScore}/100`,
+        });
+      }
+      
       setFile(null);
       router.refresh();
     } catch (error) {
+      const errorMessage = error instanceof Error ? error.message : "Upload preparation failed.";
       setNotice({
         tone: "danger",
-        text:
-          error instanceof Error ? error.message : "Upload preparation failed.",
+        text: errorMessage,
+      });
+      toast.error("Upload failed", {
+        description: errorMessage,
       });
     } finally {
       setIsSubmitting(false);
