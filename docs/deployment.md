@@ -247,7 +247,13 @@ promotion gate.
 
 3. In Supabase Storage → create bucket `plant-images` (private)
 4. Enable Email Auth (or your preferred provider) in Supabase Auth settings
-5. Copy the project URL and keys to Vercel environment variables
+5. **Enable leaked-password protection.** Dashboard → Project Settings →
+   Auth → Password Strength → toggle **HaveIBeenPwned compromise check**
+   on. This is a Supabase-managed setting (no SQL knob exposed), so the
+   `Database migrations` workflow can't apply it — it's a one-click
+   manual step per project. Without it, `get_advisors` keeps reporting
+   `auth_leaked_password_protection`.
+6. Copy the project URL and keys to Vercel environment variables
 
 ---
 
