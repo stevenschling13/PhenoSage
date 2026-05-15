@@ -15,14 +15,24 @@ import {
   CardTitle,
 } from "@/components/ui/card";
 import { PageHeader } from "@/components/ui/page-header";
+import { createSupabaseServerClient } from "@/lib/server/auth";
 import { getCurrentProfile } from "@/lib/server/profile";
+import { loadUserPreferences } from "@/lib/server/user-preferences";
 import { signOutAction } from "@/app/auth/actions";
 import { SettingsProfileForm } from "./settings-profile-form";
+import { SettingsTimezoneForm } from "./settings-timezone-form";
 
 export const metadata: Metadata = { title: "Settings" };
 
 export default async function SettingsPage() {
   const profile = await getCurrentProfile();
+  // Use the user-scoped (RLS) client so the read is allowed only when
+  // there's an authenticated session — `loadUserPreferences` returns
+  // the UTC default if no row exists yet.
+  const supabase = await createSupabaseServerClient();
+  const preferences = profile
+    ? await loadUserPreferences(supabase, profile.id)
+    : { timezone: "UTC" };
 
   return (
     <main className="app-page">
@@ -51,6 +61,19 @@ export default async function SettingsPage() {
                 email={profile?.email ?? "Not available"}
                 initialDisplayName={profile?.displayName ?? ""}
               />
+            </CardContent>
+          </Card>
+
+          <Card>
+            <CardHeader>
+              <CardTitle>Timezone</CardTitle>
+              <CardDescription>
+                Drives when “today” starts for the daily summary you receive in
+                the inbox.
+              </CardDescription>
+            </CardHeader>
+            <CardContent>
+              <SettingsTimezoneForm initialTimezone={preferences.timezone} />
             </CardContent>
           </Card>
 

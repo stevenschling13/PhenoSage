@@ -372,11 +372,20 @@ function buildAlertBody(input: FindingAlertInput): string {
  * see migration 014 access model).
  *
  * Idempotency: migration 016 adds a partial UNIQUE on
- * (user_id, kind, payload->>'findingId') WHERE kind='finding_alert',
- * so `ignoreDuplicates: true` makes a re-run a no-op rather than
- * throwing. This is critical because `runAndPersistPlantAnalysis` is
- * called both on photo upload AND from the chat tool
- * `trigger_plant_analysis`, and the same finding can be regenerated.
+ * `(user_id, (payload->>'findingId'))` with predicate
+ * `WHERE kind = 'finding_alert' AND (payload->>'findingId') IS NOT NULL`
+ * — `kind` lives in the partial index *predicate*, not in the index
+ * key. Because PostgREST's `on_conflict` parameter only accepts plain
+ * column names and cannot resolve to an expression-index target, this
+ * function performs an app-level SELECT-then-INSERT: we look up which
+ * candidate findingIds already have an alert and INSERT only the rest.
+ * The partial UNIQUE remains as a race backstop — a concurrent emit
+ * that slips through raises SQLSTATE 23505, which we log at `info`
+ * and treat as a benign no-op (the user already has the alert).
+ *
+ * This matters because `runAndPersistPlantAnalysis` is called both on
+ * photo upload AND from the chat tool `trigger_plant_analysis`, and
+ * the same finding can be regenerated.
  *
  * Failure isolation: a row-level insert failure is logged but does
  * NOT propagate — the analysis itself has already succeeded and the

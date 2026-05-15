@@ -9,6 +9,8 @@ import {
   renderDigest,
 } from "@/lib/server/daily-digest";
 import { logServerEvent } from "@/lib/server/request-id";
+import { formatOccurredOnInZone } from "@/lib/server/timezone";
+import { loadUserPreferencesBulk } from "@/lib/server/user-preferences";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
@@ -36,7 +38,9 @@ const TIME_BUDGET_MS = 45_000;
 //   2. If nothing happened → skip (no AI call, no DB write).
 //   3. Otherwise → call the AI to render a 2-3 sentence digest, then
 //      UPSERT a `notifications` row keyed (user_id, kind, occurred_on)
-//      with ignoreDuplicates=true. The partial UNIQUE index from
+//      with ignoreDuplicates=true. `occurred_on` is the user's *local*
+//      calendar date, derived from `user_preferences.timezone` (UTC if
+//      no row / unrecognised zone). The partial UNIQUE index from
 //      migration 015 silently ignores same-day re-runs so no error
 //      is returned by PostgREST; a duplicate counts as "skipped".
 //
@@ -55,7 +59,11 @@ export async function GET(request: NextRequest) {
   }
 
   const startedAt = new Date();
-  const occurredOn = startedAt.toISOString().slice(0, 10); // YYYY-MM-DD UTC
+  // `occurred_on` is now computed per-user using their stored timezone
+  // (loaded below). `occurredOnUtc` is retained as the response payload
+  // and as a fallback so observability still reports "what day did this
+  // run on" for operators reading dashboards in UTC.
+  const occurredOnUtc = startedAt.toISOString().slice(0, 10); // YYYY-MM-DD UTC
 
   let supabase: ReturnType<typeof getDbClient>;
   try {
@@ -71,6 +79,9 @@ export async function GET(request: NextRequest) {
   }
 
   const userIds = await listUsersWithActiveGrows(supabase);
+  // Bulk-load preferences once so we don't issue N round-trips inside
+  // the fan-out. Missing users degrade to UTC inside the helper.
+  const preferences = await loadUserPreferencesBulk(supabase, userIds);
   let processed = 0;
   let wrote = 0;
   let skipped = 0;
@@ -104,6 +115,8 @@ export async function GET(request: NextRequest) {
             );
             if (!hasMeaningfulActivity(snapshot)) return "skipped";
             const rendered = await renderDigest(snapshot);
+            const tz = preferences.get(userId)?.timezone ?? "UTC";
+            const occurredOn = formatOccurredOnInZone(startedAt, tz);
             const { data: written, error: upsertError } = await supabase
               .from("notifications")
               .upsert(
@@ -163,7 +176,7 @@ export async function GET(request: NextRequest) {
   return NextResponse.json({
     status: "ok",
     ran: startedAt.toISOString(),
-    occurredOn,
+    occurredOn: occurredOnUtc,
     processed,
     wrote,
     skipped,

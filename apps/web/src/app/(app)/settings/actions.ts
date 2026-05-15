@@ -5,6 +5,7 @@ import { getServerUser } from "@/lib/server/auth";
 import { isNextFrameworkError } from "@/lib/server/auth-errors";
 import { getDbClient } from "@/lib/server/db";
 import { logServerEvent } from "@/lib/server/request-id";
+import { isValidTimezone } from "@/lib/server/timezone";
 
 export type UpdateDisplayNameActionResult = {
   message?: string;
@@ -82,6 +83,110 @@ export async function updateDisplayNameAction(
     return {
       message:
         "We couldn't save your display name right now. Please try again in a moment.",
+      status: "error",
+    };
+  }
+}
+
+// ─── Timezone preference ─────────────────────────────────────────────
+
+export type UpdateTimezoneActionResult = {
+  message?: string;
+  status: "error" | "idle" | "success";
+};
+
+export const updateTimezoneActionInitialState: UpdateTimezoneActionResult = {
+  status: "idle",
+};
+
+// Friendly copy for the SQLSTATE codes this path can plausibly throw.
+// `22023` is the migration's validation trigger telling us the IANA
+// name is unrecognised — surface that in user copy. Everything else
+// follows the same pattern createGrowAction uses (no raw provider
+// text reaches the client).
+const TIMEZONE_SQLSTATE_COPY: Record<string, string> = {
+  "22023": "We don't recognise that timezone. Please pick one from the list.",
+  "42501":
+    "You don't have permission to update this preference. Please refresh and sign in again.",
+  "23503":
+    "Your account couldn't be linked to a preference row. Please refresh and try again.",
+  "57014": "The save took too long. Please try again in a moment.",
+  "08000": "We couldn't reach the database. Please try again in a moment.",
+  "08001": "We couldn't reach the database. Please try again in a moment.",
+  "08006": "We couldn't reach the database. Please try again in a moment.",
+};
+
+export async function updateTimezoneAction(
+  formData: FormData,
+): Promise<UpdateTimezoneActionResult> {
+  const user = await getServerUser();
+  if (!user) {
+    return {
+      message: "You must be signed in to update your timezone.",
+      status: "error",
+    };
+  }
+
+  const timezone = asTrimmedString(formData.get("timezone"));
+  if (!timezone) {
+    return {
+      message: "Pick a timezone from the list before saving.",
+      status: "error",
+    };
+  }
+  // Validate at the edge so an obviously bad value never reaches Postgres.
+  // The migration trigger is the authoritative check (race-safe), this
+  // is just a friendlier failure path for the common case.
+  if (!isValidTimezone(timezone)) {
+    return {
+      message:
+        "We don't recognise that timezone. Please pick one from the list.",
+      status: "error",
+    };
+  }
+
+  try {
+    const db = getDbClient();
+    const { error } = await db.from("user_preferences").upsert(
+      {
+        user_id: user.id,
+        timezone,
+      },
+      { onConflict: "user_id" },
+    );
+
+    if (error) {
+      logServerEvent("error", "update timezone upsert failed", {
+        error: error.message,
+        code: error.code,
+        userId: user.id,
+      });
+      const mapped = error.code
+        ? TIMEZONE_SQLSTATE_COPY[error.code]
+        : undefined;
+      return {
+        message:
+          mapped ??
+          "We couldn't save your timezone right now. Please try again in a moment.",
+        status: "error",
+      };
+    }
+
+    revalidatePath("/settings");
+
+    return {
+      message: `Timezone saved (${timezone}).`,
+      status: "success",
+    };
+  } catch (err) {
+    if (isNextFrameworkError(err)) throw err;
+    logServerEvent("error", "update timezone action threw", {
+      error: err instanceof Error ? err.message : String(err),
+      userId: user.id,
+    });
+    return {
+      message:
+        "We couldn't save your timezone right now. Please try again in a moment.",
       status: "error",
     };
   }

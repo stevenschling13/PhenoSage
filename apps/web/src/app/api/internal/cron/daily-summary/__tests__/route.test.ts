@@ -45,6 +45,11 @@ const mocks = vi.hoisted(() => {
     renderDigest: vi.fn<() => Promise<{ title: string; body: string }>>(),
     digestPriority: vi.fn<() => "info" | "warning" | "critical">(),
     logServerEvent: vi.fn(),
+    loadUserPreferencesBulk: vi.fn(async (_db: unknown, userIds: string[]) => {
+      const map = new Map<string, { timezone: string }>();
+      for (const id of userIds) map.set(id, { timezone: "UTC" });
+      return map;
+    }),
   };
 });
 
@@ -60,6 +65,9 @@ vi.mock("@/lib/server/daily-digest", () => ({
 }));
 vi.mock("@/lib/server/request-id", () => ({
   logServerEvent: mocks.logServerEvent,
+}));
+vi.mock("@/lib/server/user-preferences", () => ({
+  loadUserPreferencesBulk: mocks.loadUserPreferencesBulk,
 }));
 
 import { GET } from "../route";
@@ -208,6 +216,45 @@ describe("GET /api/internal/cron/daily-summary", () => {
     // YYYY-MM-DD
     expect(typeof upsertedRow["occurred_on"]).toBe("string");
     expect((upsertedRow["occurred_on"] as string).length).toBe(10);
+  });
+
+  it("computes occurred_on in the user's preferred timezone", async () => {
+    process.env["CRON_SECRET"] = "secret";
+    mocks.listUsersWithActiveGrows.mockResolvedValueOnce(["u-tz"]);
+    mocks.buildDigestSnapshot.mockResolvedValueOnce({
+      userId: "u-tz",
+      grows: [],
+      newFindings: [],
+      newImages: 1,
+      newObservations: 0,
+      newTasks: 0,
+      resolvedFindings: 0,
+    });
+    mocks.hasMeaningfulActivity.mockReturnValueOnce(true);
+    // Pacific is UTC-7/8; if the cron fires near UTC midnight, the
+    // user's local date should be the *previous* calendar day. We
+    // assert by comparing to the same Intl computation rather than
+    // hard-coding a date so this remains deterministic across days.
+    mocks.loadUserPreferencesBulk.mockImplementationOnce(async () => {
+      const map = new Map<string, { timezone: string }>();
+      map.set("u-tz", { timezone: "America/Los_Angeles" });
+      return map;
+    });
+
+    const before = new Date();
+    const res = await GET(makeRequest("Bearer secret"));
+    expect(res.status).toBe(200);
+    const upsertedRow = mocks.upsert.mock.calls[0]?.[0] as Record<
+      string,
+      unknown
+    >;
+    const expected = new Intl.DateTimeFormat("en-CA", {
+      timeZone: "America/Los_Angeles",
+      year: "numeric",
+      month: "2-digit",
+      day: "2-digit",
+    }).format(before);
+    expect(upsertedRow["occurred_on"]).toBe(expected);
   });
 
   // ─── failure isolation ──────────────────────────────────────────────
