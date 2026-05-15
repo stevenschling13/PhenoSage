@@ -4,6 +4,35 @@ Handoff log between sessions. Keep entries short. Newest at top.
 
 ---
 
+## 2026-05-15 — Tier 3: active-grow semantic finding retrieval (Copilot)
+
+**In-flight on `copilot/tier-3-roadmap-research`**
+
+- **Landed on branch** `copilot/tier-3-roadmap-research`:
+  - `782c213` — added additive migration
+    `020_semantic_findings_search.sql`, server-only Gemini/OpenAI-compatible
+    finding embeddings, active-grow vector RPC retrieval, and the
+    `search_similar_findings` chat tool.
+  - `f34c18d` — moved semantic tool execution out of the oversized
+    `chat-tools.ts` hot file so `scripts/check-file-budgets.mjs` stays green.
+- **Validation status**: `pnpm install --frozen-lockfile`, `pnpm run validate`,
+  `pnpm turbo run type-check lint test`, `pnpm run security:routes`, and
+  CodeQL all passed. Web tests are now 687/687.
+- **Dead ends / things tried**:
+  - Initial baseline validation failed because `pnpm` was not on PATH; fixed by
+    enabling pnpm via Corepack (`corepack prepare pnpm@9.0.0 --activate`).
+  - First full validation failed because added logic pushed
+    `apps/web/src/lib/server/chat-tools.ts` over the 1,500-line budget; fixed
+    by extracting semantic execution into `semantic-findings.ts`.
+  - `supabase db push --dry-run` and `supabase db lint` could not run locally
+    because the Supabase CLI is not installed in this runner.
+- **Next bounded follow-up**: apply migration 020 in Supabase, verify
+  `match_similar_grow_findings` recall/latency with real `plant_findings`
+  embeddings, then decide in a perf-only PR whether to replace/augment the
+  existing IVFFlat index with HNSW.
+
+---
+
 ## 2026-05-15 — Supabase MCP wiring + agent skills (Copilot)
 
 **In-flight on `copilot/wire-mcp-connection`**
