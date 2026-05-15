@@ -26,6 +26,240 @@ Handoff log between sessions. Keep entries short. Newest at top.
 
 ---
 
+## 2026-05-15 — Tier 3/4 handoff standard tightened (Copilot)
+
+**Landed on `copilot/review-pr-159-and-plan-tier-2` (commit `57b259e`)**
+
+- Standardised the next-agent process for Tier 3 / Tier 4 so the handoff is
+  explicitly research-first: reputable primary sources, recency anchored to at
+  least 2026-05-15, optimization opportunities captured before coding, and
+  boundary-specific error-handling tools chosen up front.
+- Updated the reusable guidance in:
+  - `docs/playbooks/tier-implementation-playbook.md`
+  - `docs/playbooks/repo-aware-ai-coding-playbook.md`
+  - the suggested Tier 3 prompt block in this file
+- Validation in this sandbox:
+  - `pnpm install --frozen-lockfile`
+  - `pnpm run validate`
+  - `pnpm turbo run type-check lint test`
+  - `pnpm run security:routes`
+
+**In flight**
+
+- Tier 2 sweep PR remains the merge target; use the strengthened prompt / playbook
+  language for the first bounded Tier 3 or Tier 4 follow-up after merge.
+
+**Dead ends**
+
+- `pnpm` was not initially on `PATH`; enabled it with Corepack before running the
+  validation chain.
+
+## 2026-05-15 — Tier 2 closure briefing + next-agent prompt handoff (Copilot)
+
+**Landed on `copilot/review-pr-159-and-plan-tier-2` (commit `bee041f`)**
+
+Follow-up docs-only closeout so this PR can merge cleanly and the next agent can
+start Tier 3 without re-auditing Tier 2.
+
+- **What is complete in this PR's Tier 2 sweep**:
+  - **T2.1** per-user timezone support for daily-summary dedupe / delivery
+  - **T2.2** Resend-backed email delivery for daily summaries + finding alerts
+  - **T2.3** strain-aware analysis context + per-finding confidence
+  - **T2.4** pre-vision image-quality gate with explicit inconclusive handling
+- **What is _not_ complete**: not every open **Milestone 2 roadmap** item. The
+  remaining unchecked roadmap boxes (health trend graph, collaborators, export,
+  few-shot prompt refinement, realtime, monitoring) are backlog work and should
+  not block merging this Tier 2 sweep PR.
+- **Merge recommendation**: merge this branch as the Tier 2 sweep closeout. Do
+  not keep this PR open to chase unrelated Milestone 2 backlog.
+
+**Next agent brief (copy/paste shape, then fill in the exact Tier 3 target)**
+
+- **Goal**: start one Tier 3 roadmap item only; keep the PR bounded to one
+  concern.
+- **Read order**: `CLAUDE.md` → `.github/copilot-instructions.md` →
+  `AGENTS.md` → `WORKLOG.md` → relevant playbook.
+- **First prompt should specify**:
+  1. the exact roadmap item to ship
+  2. allowed scope / files if already known
+  3. whether contract, migration, or server-route boundaries are expected
+  4. required validators
+  5. what is explicitly out of scope
+- **Recommended starting candidates**:
+  - **Milestone 3**: pgvector semantic search, "ask about any past grow"
+    memory, automated grow advisor, phenotype tracking, harvest prediction
+  - **If staying in Milestone 2 instead**: few-shot prompt refinement or
+    Supabase Realtime for live findings updates
+
+**Suggested prompt for the next agent**
+
+> Start a new branch for one Tier 3 roadmap item: **<fill this in>**. First
+> read `/home/runner/work/PhenoSage/PhenoSage/CLAUDE.md`,
+> `/home/runner/work/PhenoSage/PhenoSage/.github/copilot-instructions.md`,
+> `/home/runner/work/PhenoSage/PhenoSage/AGENTS.md`, and
+> `/home/runner/work/PhenoSage/PhenoSage/WORKLOG.md`. Then frame the task using
+> `/home/runner/work/PhenoSage/PhenoSage/docs/playbooks/repo-aware-ai-coding-playbook.md`
+> and `/home/runner/work/PhenoSage/PhenoSage/docs/playbooks/tier-implementation-playbook.md`.
+> Operate like a professional software engineer: do a research-first pass using
+> reputable primary sources current through at least 2026-05-15, look for best
+> practices plus obvious optimization opportunities, and explicitly choose the
+> error-handling tools / affordances that fit each boundary you touch before
+> writing code. Keep the change to one concern, list the exact files you plan to
+> touch, say whether the contract impact is none/additive/breaking, and stop if
+> the work would spill beyond a bounded PR. Run `pnpm run validate`, `pnpm turbo run
+type-check lint test`, `pnpm run security:routes`, and analysis validators if
+> `apps/analysis/**` changes. Update `WORKLOG.md` with what landed, dead ends,
+> and the next session block before finishing.
+
+**Performance note for the next agent**
+
+- A better prompt is usually higher leverage than extra implementation context:
+  be specific about the target box, boundaries, validators, and out-of-scope
+  work. Avoid "finish Tier 3" or "do Milestone 3" prompts; those are too broad
+  and tend to burst PR size caps or mix concerns.
+
+---
+
+## 2026-05-15 — Tier 2 merge handoff / wrap-up (Copilot)
+
+**Landed on `copilot/review-pr-159-and-plan-tier-2` (commit `f69003a`)**
+
+Final pass to make the Tier 2 PR merge-ready and give the next agent a clean
+Tier 3 handoff.
+
+- **Tier 2 sweep status** — complete on this branch:
+  - **T2.1** per-user timezone for daily summary / notification dedupe
+  - **T2.2** Resend-backed email delivery for `daily_summary` and
+    `finding_alert`
+  - **T2.3** strain-aware analysis context + per-finding confidence scores
+  - **T2.4** pre-vision image-quality gate
+- **T2.4 last-mile hardening** — Pillow `DecompressionBombError` now maps to
+  stable reason `image_too_large`, and the fallback log includes
+  `image_quality_reason` for ops triage instead of collapsing to an untyped
+  500 / generic fallback.
+- **Validation** — all green in this sandbox after bootstrapping the toolchain:
+  - `pnpm install --frozen-lockfile`
+  - `pnpm run validate`
+  - `pnpm turbo run type-check lint test`
+  - `pnpm run security:routes`
+  - `cd apps/analysis && ruff check . && mypy app/ && pytest --cov=app`
+- **Merge assessment** — no further Tier 2 optimization is merge-blocking.
+  Any future tuning should be field-data follow-up work (for example image
+  quality thresholds), not more scope in this PR.
+
+**Dead end / env note**
+
+- `pnpm run build` remains blocked in this sandbox by `next/font` reaching
+  `fonts.googleapis.com` for Fraunces / JetBrains Mono. This is an environment
+  network limitation, not a known code regression on the branch.
+
+**Next session**:
+
+- Treat this PR as the end of the Tier 2 sweep and start a fresh Tier 3 branch.
+- Tier 3 roadmap entry points: pgvector semantic search, "ask about any past
+  grow" memory, automated grow advisor, phenotype tracking, harvest prediction.
+- Milestone 2 still has unrelated roadmap items open (for example health trend
+  graph, collaborators, export history, few-shot prompt refinement, realtime,
+  monitoring), but they are outside this Tier 2 PR handoff.
+
+---
+
+## 2026-05-15 — Tier 2.3: strain-aware prompt + per-finding confidence (Copilot)
+
+**Landed on `copilot/review-pr-159-and-plan-tier-2` (commit `b86dd76`)**
+
+Closes the last remaining item from the Tier 2 sweep: the analysis service now
+requests a confidence score per finding, treats cultivar / strain as a weak
+prior instead of proof, persists confidence on `plant_findings`, and surfaces
+it in the plant detail findings rail.
+
+- **Migration `20260515175712_analysis_finding_confidence.sql`** — additive
+  nullable `plant_findings.confidence_score numeric(3,2)` plus a `0..1`
+  range check.
+- **Shared contract** — `packages/shared/src/types.ts` adds additive optional
+  `confidenceScore` on both `AnalysisFinding` and `PlantFinding`.
+- **FastAPI mirror** — `apps/analysis/app/models/analysis.py` adds
+  `confidence_score`; `prompts.py` documents the new JSON field and makes the
+  strain/cultivar guidance explicit: use cultivar context as a weak prior only,
+  never over visible evidence in the image.
+- **Analysis defaults** — synthetic fallback / incomplete findings now carry
+  explicit low confidence scores (`0.0` and `0.15`) so the UI can surface that
+  they are non-diagnostic / low-confidence states.
+- **Web proxy + persistence** — nested analysis-service
+  `confidence_score` is normalized to `confidenceScore`, persisted through
+  `apps/web/src/lib/server/plants.ts`, and rendered as a percentage in the
+  plant detail findings rail.
+- **Tests** — focused passes:
+  - `apps/analysis`: `ruff check . && mypy app/ && pytest tests/test_prompts.py tests/test_image_analysis.py tests/test_analyze_router.py` → **45/45**
+  - `packages/shared`: `pnpm test && pnpm type-check` → **7/7**
+  - `apps/web`: `pnpm test -- --run src/lib/server/__tests__/analysis-proxy.test.ts src/lib/server/__tests__/plants.test.ts && pnpm type-check && pnpm lint` → **33/33**
+
+**Dead end / env note**
+
+- `pnpm run build` in this sandbox still fails at `next/font` because the
+  build cannot reach `fonts.googleapis.com` for Fraunces / JetBrains Mono.
+  This is an environment/network limitation, not a code regression; CI/Vercel
+  has previously built this path successfully.
+
+**Next session**:
+
+- Tier 2 sweep is complete. Next likely milestone items are
+  **refined prompts with few-shot examples**, **live findings updates via
+  Supabase Realtime**, or other remaining Milestone 2 roadmap items.
+
+## 2026-05-15 — Tier 2.4: pre-vision image-quality gate in apps/analysis (Copilot)
+
+**Landed on `copilot/review-pr-159-and-plan-tier-2` (commit `f69003a`)**
+
+Picks up T2.4 from the Tier Implementation Playbook hand-off in PR #161.
+Adds an explicit _inconclusive_ path for unanalysable images so the
+vision model is never asked to diagnose blank/blurry/blown-out frames —
+satisfies Rule 9 (Plant-Health Output Discipline).
+
+- **Research**: Pillow 12.2.0 (no advisories per `gh-advisory-database`),
+  pure-Python imaging only — no numpy / cv2 / extra apt deps. Variance of
+  `ImageFilter.FIND_EDGES` on the grayscale channel (border 1 px cropped
+  to drop convolution wrap artefacts) ≈ Laplacian variance for blur;
+  `ImageStat.Stat(L).mean[0]` for luminance. Calibration matrix recorded
+  in `tests/test_image_quality.py`.
+- **`app/errors.py`**: new `ImageQualityInconclusive(AnalysisError)` —
+  code `IMAGE_QUALITY_INCONCLUSIVE`, status 422, retryable=False; `reason`
+  is keyword-only and validated against `IMAGE_QUALITY_REASONS`
+  (`image_decode_failed | image_too_large | image_too_small | too_dark |
+too_bright | too_blurry`). Default message generic — never embeds pixel
+  metrics.
+- **`app/services/image_quality.py`**: pure `assess_image_quality(bytes)`
+  pipeline — decode → decompression-bomb guard → minimum 64 px on each side →
+  luminance window [15, 235] → edge-variance ≥ 50. Luminance check precedes
+  blur check on purpose: a black image is "too dark", not "too blurry" (more
+  actionable copy). Thresholds are module-level constants for one-place
+  tuning.
+- **`app/services/image_analysis.py`**: single-line wire-up between fetch and
+  model. Existing `except AnalysisError` branch routes the new exception to the
+  inconclusive fallback envelope automatically — no changes to the router, the
+  response model, the web proxy, or shared contracts. Fallback telemetry now
+  logs `image_quality_reason` for ops triage.
+- **Tests**: `tests/test_image_quality.py` (+14 cases — happy path / RGB JPEG /
+  decode-fail / decompression-bomb / empty bytes / too-small /
+  under-exposed / over-exposed / blurred / uniform-grey /
+  dark-wins-over-blurry / contract surface / unknown-reason guard);
+  `tests/test_errors.py` (+1 case, extended redaction-safety check);
+  `tests/test_image_analysis.py` (+2 integration cases proving
+  `_run_model_analysis` is not called when the gate fails, the fallback log
+  carries `image_quality_reason`, plus updated happy-path fixture to return a
+  real PNG that passes the gate).
+
+**Test count**: pytest 102/102 (was 86, +16). `ruff check .`, `mypy app/`,
+`pnpm run validate`, `pnpm run security:routes`, CodeQL all clean.
+Pillow added as the only new dep — pinned to 12.2.0.
+
+**Next session**:
+
+- No Tier 2 follow-up required on this branch; see the Tier 2 wrap-up entry
+  above for merge / Tier 3 handoff.
+
+---
+
 ## 2026-05-15 — Tier 2.1: per-user timezone for daily-summary + JSDoc cleanup (Copilot)
 
 **In-flight on `copilot/assess-tier-1-and-plan-tier-2`**

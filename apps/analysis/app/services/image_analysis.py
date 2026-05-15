@@ -27,6 +27,7 @@ from app.models.analysis import (
     FindingCategory,
     FindingSeverity,
 )
+from app.services.image_quality import assess_image_quality
 from app.services.prompts import SYSTEM_PROMPT, build_analysis_prompt
 from app.services.scoring import compute_health_score
 
@@ -98,6 +99,7 @@ def _build_fallback_response(
     finding = AnalysisFinding(
         category=FindingCategory.general,
         severity=FindingSeverity.info,
+        confidence_score=0.0,
         title="Fallback analysis only",
         description=(
             "PhenoSage could not verify the image with the primary model path. "
@@ -215,6 +217,7 @@ async def _run_model_analysis(
             AnalysisFinding(
                 category=FindingCategory.general,
                 severity=FindingSeverity.info,
+                confidence_score=0.15,
                 title="No issues confidently identified",
                 description=(
                     "The model did not return structured findings. Treat the result as "
@@ -252,6 +255,12 @@ async def _run_model_analysis(
 async def run_analysis(request: AnalyzeRequest) -> AnalyzeResponse:
     try:
         image_bytes, content_type = await _fetch_storage_image(request.storage_path)
+        # Pre-vision quality gate: refuse unanalysable images here so the
+        # outcome is an explicit *inconclusive* envelope rather than a
+        # low-confidence diagnosis from the vision model. ImageQuality-
+        # Inconclusive is an AnalysisError subclass, so it's routed by the
+        # except branch below into the same fallback path.
+        assess_image_quality(image_bytes)
         response = await _run_model_analysis(
             request,
             image_bytes=image_bytes,
@@ -272,11 +281,14 @@ async def run_analysis(request: AnalyzeRequest) -> AnalyzeResponse:
         # propagate so they surface as a real error in monitoring instead of
         # being silently re-skinned as a "fallback diagnosis" — see the
         # plant-health output discipline rule in .github/copilot-instructions.md.
-        log_event(
-            logging.WARNING,
-            "analysis fallback triggered",
-            plant_id=request.plant_id,
-            image_id=request.image_id,
-            fallback_reason=exc.code,
-        )
+        log_kwargs: dict[str, object] = {
+            "plant_id": request.plant_id,
+            "image_id": request.image_id,
+            "fallback_reason": exc.code,
+        }
+        # Surface the granular image-quality reason (e.g. "too_blurry",
+        # "too_dark") for ops triage — exc.code alone is too coarse.
+        if hasattr(exc, "reason"):
+            log_kwargs["image_quality_reason"] = exc.reason
+        log_event(logging.WARNING, "analysis fallback triggered", **log_kwargs)
         return _build_fallback_response(request, reason=exc.code)

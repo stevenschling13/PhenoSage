@@ -13,6 +13,7 @@ from app.config import settings
 from app.errors import (
     AnalysisError,
     ConfigurationError,
+    ImageQualityInconclusive,
     ModelBadResponse,
     ModelRateLimited,
     ModelUnavailable,
@@ -42,6 +43,10 @@ def test_typed_errors_have_stable_codes_and_status() -> None:
     assert ConfigurationError.code == "CONFIGURATION_ERROR"
     assert ConfigurationError.retryable is False
 
+    assert ImageQualityInconclusive.code == "IMAGE_QUALITY_INCONCLUSIVE"
+    assert ImageQualityInconclusive.status_code == 422
+    assert ImageQualityInconclusive.retryable is False
+
 
 def test_typed_errors_default_message_is_redaction_safe() -> None:
     # Defaults must never embed env-var names, signed URLs, or provider text.
@@ -57,6 +62,12 @@ def test_typed_errors_default_message_is_redaction_safe() -> None:
         assert "openai" not in msg.lower()
         assert "api_key" not in msg.lower()
         assert "bearer" not in msg.lower()
+
+    # ImageQualityInconclusive needs its keyword-only `reason`.
+    iq_msg = ImageQualityInconclusive(reason="too_blurry").default_message.lower()
+    assert "supabase" not in iq_msg
+    assert "openai" not in iq_msg
+    assert "pillow" not in iq_msg
 
 
 def test_analysis_error_handler_returns_safe_envelope(

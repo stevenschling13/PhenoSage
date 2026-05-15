@@ -75,6 +75,53 @@ class InvalidStoragePath(AnalysisError):
     default_message = "Invalid storage path."
 
 
+ImageQualityReason = str
+"""One of the values in :data:`IMAGE_QUALITY_REASONS`.
+
+Kept as a plain ``str`` alias (rather than a ``Literal``) so the runtime
+validator in :class:`ImageQualityInconclusive` is the single source of truth.
+The web proxy logs this value verbatim — extending the tuple is additive,
+renaming an existing entry is a breaking change.
+"""
+
+IMAGE_QUALITY_REASONS: tuple[str, ...] = (
+    "image_decode_failed",
+    "image_too_large",
+    "image_too_small",
+    "too_dark",
+    "too_bright",
+    "too_blurry",
+)
+
+
+class ImageQualityInconclusive(AnalysisError):
+    """The supplied image is unfit for vision analysis.
+
+    Raised by the pre-vision quality gate (`app.services.image_quality`) so
+    the user-facing result becomes an explicit *inconclusive* envelope —
+    never a low-confidence diagnosis. See `.github/copilot-instructions.md`
+    §9 (Plant-Health Output Discipline).
+
+    The ``reason`` is one of :data:`IMAGE_QUALITY_REASONS` and is forwarded
+    to the structured log; the default message stays generic so we never
+    leak pixel-level metrics or storage paths.
+    """
+
+    code = "IMAGE_QUALITY_INCONCLUSIVE"
+    status_code = 422
+    retryable = False
+    default_message = (
+        "The image quality is too low for a confident analysis. "
+        "Please retake the photo and try again."
+    )
+
+    def __init__(self, *, reason: ImageQualityReason, message: str | None = None) -> None:
+        if reason not in IMAGE_QUALITY_REASONS:
+            raise ValueError(f"Unknown image-quality reason: {reason!r}")
+        self.reason = reason
+        super().__init__(message)
+
+
 class ConfigurationError(AnalysisError):
     """Required configuration (env, credentials) is missing or invalid.
 
@@ -89,8 +136,11 @@ class ConfigurationError(AnalysisError):
 
 
 __all__ = [
+    "IMAGE_QUALITY_REASONS",
     "AnalysisError",
     "ConfigurationError",
+    "ImageQualityInconclusive",
+    "ImageQualityReason",
     "InvalidStoragePath",
     "ModelBadResponse",
     "ModelRateLimited",

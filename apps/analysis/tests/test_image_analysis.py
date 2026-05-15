@@ -1,14 +1,36 @@
 from __future__ import annotations
 
+import io
+import itertools
 import json
+import random
 import sys
 from types import SimpleNamespace
 
 import pytest
+from PIL import Image
 
 from app.config import settings
 from app.models.analysis import AnalyzeRequest
 from app.services import image_analysis
+
+
+def _valid_png_bytes() -> bytes:
+    """A 256×256 mid-luminance noisy PNG that passes ``assess_image_quality``.
+
+    Used by tests that exercise the full ``run_analysis`` happy path; the
+    pre-vision quality gate would reject the previous ``b"image-bytes"``
+    stubs used here.
+    """
+    rng = random.Random(1)
+    img = Image.new("L", (256, 256))
+    px = img.load()
+    assert px is not None
+    for y, x in itertools.product(range(256), range(256)):
+        px[x, y] = rng.randint(60, 180)
+    buf = io.BytesIO()
+    img.save(buf, format="PNG")
+    return buf.getvalue()
 
 
 def _request() -> AnalyzeRequest:
@@ -37,6 +59,81 @@ async def test_run_analysis_returns_inconclusive_fallback_when_storage_is_unconf
     assert "Inconclusive fallback result" in response.summary
     assert response.compared_to_image_id == "previous-image"
     assert response.findings[0].title == "Fallback analysis only"
+    assert response.findings[0].confidence_score == 0.0
+
+
+@pytest.mark.asyncio
+async def test_run_analysis_returns_inconclusive_when_image_quality_gate_fails(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A blank/garbage image must short-circuit before the model is called.
+
+    Pins Rule 9 (Plant-Health Output Discipline): the user-visible result
+    becomes an explicit *inconclusive* envelope instead of a low-confidence
+    diagnosis from the vision model.
+    """
+    monkeypatch.setattr(settings, "openai_api_key", "sk-test")
+
+    async def fake_fetch(_path: str) -> tuple[bytes, str]:
+        # Bytes that Pillow cannot decode → image_decode_failed reason
+        # → ImageQualityInconclusive → inconclusive fallback envelope.
+        return b"not-an-image", "image/jpeg"
+
+    monkeypatch.setattr(image_analysis, "_fetch_storage_image", fake_fetch)
+
+    # Belt-and-braces: prove the model branch is never reached.
+    async def explode(*_a: object, **_kw: object) -> object:
+        raise AssertionError("vision model must not be called on bad images")
+
+    monkeypatch.setattr(image_analysis, "_run_model_analysis", explode)
+
+    response = await image_analysis.run_analysis(_request())
+
+    assert response.analysis_mode == "fallback"
+    assert response.is_fallback is True
+    assert response.fallback_reason == "IMAGE_QUALITY_INCONCLUSIVE"
+    assert response.overall_health_score == 0.0
+    assert response.findings[0].title == "Fallback analysis only"
+
+
+@pytest.mark.asyncio
+async def test_run_analysis_logs_image_quality_reason_on_gate_failure(
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """The granular image-quality reason must appear in the fallback log.
+
+    Logging only exc.code ("IMAGE_QUALITY_INCONCLUSIVE") is too coarse for
+    ops triage; the specific reason (e.g. "image_decode_failed") should be
+    present so engineers can distinguish actionable causes like `too_dark` vs
+    `too_blurry` without having to pull raw images.
+    """
+    import json as _json
+
+    monkeypatch.setattr(settings, "openai_api_key", "sk-test")
+
+    async def fake_fetch(_path: str) -> tuple[bytes, str]:
+        return b"not-an-image", "image/jpeg"
+
+    monkeypatch.setattr(image_analysis, "_fetch_storage_image", fake_fetch)
+
+    with caplog.at_level("WARNING"):
+        await image_analysis.run_analysis(_request())
+
+    # log_event serialises all fields as a JSON string in the log message.
+    fallback_payloads = []
+    for record in caplog.records:
+        try:
+            payload = _json.loads(record.getMessage())
+        except (_json.JSONDecodeError, TypeError):
+            continue
+        if payload.get("message") == "analysis fallback triggered":
+            fallback_payloads.append(payload)
+
+    assert fallback_payloads, "expected an 'analysis fallback triggered' log entry"
+    assert fallback_payloads[0].get("image_quality_reason") == "image_decode_failed", (
+        "fallback log must include image_quality_reason for ops triage"
+    )
 
 
 @pytest.mark.asyncio
@@ -60,6 +157,7 @@ async def test_run_model_analysis_parses_structured_model_output(
                                         {
                                             "category": "nutrient_deficiency",
                                             "severity": "medium",
+                                            "confidence_score": 0.78,
                                             "title": "Magnesium deficiency",
                                             "description": "Interveinal chlorosis.",
                                             "recommendation": "Add Cal-Mag.",
@@ -94,6 +192,7 @@ async def test_run_model_analysis_parses_structured_model_output(
     assert response.overall_health_score == 74.0
     assert response.summary == "Mild deficiency detected."
     assert response.findings[0].title == "Magnesium deficiency"
+    assert response.findings[0].confidence_score == 0.78
     assert response.findings[0].recommendation == "Add Cal-Mag."
     assert response.compared_to_image_id == "previous-image"
 
@@ -143,6 +242,7 @@ async def test_run_model_analysis_uses_low_confidence_defaults_for_incomplete_ou
         "Image reviewed successfully, but the returned summary was incomplete."
     )
     assert response.findings[0].title == "No issues confidently identified"
+    assert response.findings[0].confidence_score == 0.15
     assert response.overall_health_score == 100.0
 
 
@@ -257,7 +357,7 @@ async def test_run_analysis_happy_path_logs_completion(
 
     async def fake_fetch(storage_path: str) -> tuple[bytes, str]:
         assert storage_path == "plants/plant-1/image.jpg"
-        return b"image-bytes", "image/jpeg"
+        return _valid_png_bytes(), "image/png"
 
     monkeypatch.setattr(image_analysis, "_fetch_storage_image", fake_fetch)
 

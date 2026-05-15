@@ -419,6 +419,7 @@ describe("plants server helpers", () => {
     const findings = makeSelectOrderResult([
       {
         category: "nutrient_deficiency",
+        confidence_score: 0.73,
         created_at: "2026-05-02T00:01:00Z",
         description: "Interveinal chlorosis.",
         grow_id: "grow-1",
@@ -446,6 +447,7 @@ describe("plants server helpers", () => {
       findings: [
         {
           category: "nutrient_deficiency",
+          confidenceScore: 0.73,
           description: "Interveinal chlorosis.",
           recommendation: "Add Cal-Mag.",
           severity: "medium",
@@ -486,6 +488,7 @@ describe("plants server helpers", () => {
       plant_findings: [
         {
           category: "positive",
+          confidence_score: 0.94,
           created_at: "2026-05-04T00:01:00Z",
           description: "Strong color.",
           grow_id: "grow-1",
@@ -498,6 +501,7 @@ describe("plants server helpers", () => {
         },
         {
           category: "general",
+          confidence_score: null,
           created_at: "2026-05-04T00:02:00Z",
           description: "Plant-level note.",
           grow_id: "grow-1",
@@ -549,6 +553,7 @@ describe("plants server helpers", () => {
         findings: [
           {
             category: "positive",
+            confidenceScore: 0.94,
             description: "Strong color.",
             recommendation: "Keep the current environment steady.",
             severity: "info",
@@ -561,6 +566,7 @@ describe("plants server helpers", () => {
       findings: [
         {
           category: "positive",
+          confidenceScore: 0.94,
           description: "Strong color.",
           recommendation: "Keep the current environment steady.",
           severity: "info",
@@ -598,6 +604,7 @@ describe("plants server helpers", () => {
       plant_findings: [
         {
           category: "positive",
+          confidence_score: 0.81,
           created_at: "2026-05-04T00:01:00Z",
           description: "Strong color.",
           grow_id: "grow-1",
@@ -767,6 +774,7 @@ describe("plants server helpers", () => {
       findings: [
         {
           category: "positive",
+          confidenceScore: 0.92,
           description: "New growth is upright.",
           recommendation: "Maintain current environment.",
           severity: "info",
@@ -876,6 +884,7 @@ describe("plants server helpers", () => {
     expect(insert).toHaveBeenCalledWith([
       expect.objectContaining({
         category: "positive",
+        confidence_score: 0.92,
         image_id: "image-current",
         recommendation: "Maintain current environment.",
         title: "Improved posture",

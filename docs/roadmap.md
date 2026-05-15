@@ -50,7 +50,7 @@
 - [x] Finding resolution tracking (mark as resolved)
 - [x] Grow event log (water, feed, top, LST, etc.)
 - [x] Plant observation form (height, notes)
-- [~] Proactive daily summary (Vercel Cron → AI → in-app notification) — server-side data pipeline, `notifications` table, and `/api/internal/cron/daily-summary` shipped (#156); Tier 1 inbox UI shipped in #159; per-user timezone for `occurred_on` is the next sub-task.
+- [x] Proactive daily summary (Vercel Cron → AI → in-app notification) — server-side pipeline, inbox UI, per-user timezone for `occurred_on`, and email delivery are shipped.
 - [x] Task generation from findings
 - [x] Grow stage progression tracking
 - [x] Multiple grows with easy switching
@@ -61,13 +61,13 @@
 ### Analysis Service
 
 - [ ] Refined prompts with few-shot examples
-- [ ] Strain-aware analysis context
-- [ ] Confidence scores per finding
-- [ ] Image quality validation (reject blurry/dark images)
+- [x] Strain-aware analysis context
+- [x] Confidence scores per finding
+- [x] Image quality validation (reject blurry/dark images)
 
 ### Infrastructure
 
-- [ ] Email notifications (Resend or SendGrid)
+- [x] Email notifications (Resend or SendGrid)
 - [ ] Supabase Realtime for live findings updates
 - [ ] Error monitoring (Sentry)
 - [ ] Performance monitoring

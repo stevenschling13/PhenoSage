@@ -41,7 +41,14 @@ def test_system_prompt_documents_required_top_level_keys() -> None:
 
 
 def test_system_prompt_documents_required_finding_keys() -> None:
-    for key in ("category", "severity", "title", "description", "recommendation"):
+    for key in (
+        "category",
+        "severity",
+        "confidence_score",
+        "title",
+        "description",
+        "recommendation",
+    ):
         assert key in SYSTEM_PROMPT
 
 
@@ -53,8 +60,14 @@ def test_build_analysis_prompt_minimum_grow_context() -> None:
         "Provide a thorough professional analysis in the specified JSON format."
     )
     # No optional field labels should leak when their values are absent.
-    for label in ("Strain:", "Growth stage:", "Growing medium:", "Light type:",
-                  "Days since start:", "Grower notes:"):
+    for label in (
+        "Strain / cultivar:",
+        "Growth stage:",
+        "Growing medium:",
+        "Light type:",
+        "Days since start:",
+        "Grower notes:",
+    ):
         assert label not in prompt
 
 
@@ -69,7 +82,11 @@ def test_build_analysis_prompt_includes_every_supplied_field() -> None:
         notes="Yellowing on lower fan leaves.",
     )
     prompt = build_analysis_prompt(ctx)
-    assert "Strain: Blue Dream" in prompt
+    assert "Strain / cultivar: Blue Dream" in prompt
+    assert (
+        "Use strain context as a weak prior only; visible symptoms in the image "
+        "take precedence over cultivar expectations."
+    ) in prompt
     assert "Growth stage: vegetative" in prompt
     assert "Growing medium: coco" in prompt
     assert "Light type: led" in prompt

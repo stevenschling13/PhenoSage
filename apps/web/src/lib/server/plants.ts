@@ -44,6 +44,7 @@ type PlantFindingRow = {
   image_id: string | null;
   category: AnalysisFinding["category"];
   severity: AnalysisFinding["severity"];
+  confidence_score: number | null;
   title: string;
   description: string;
   recommendation: string | null;
@@ -104,6 +105,24 @@ function mapAnalysisFromRow(
   }
 
   return analysis;
+}
+
+function mapFindingFromRow(row: PlantFindingRow): AnalysisFinding {
+  const finding: AnalysisFinding = {
+    category: row.category,
+    severity: row.severity,
+    title: row.title,
+    description: row.description,
+  };
+
+  if (row.recommendation) {
+    finding.recommendation = row.recommendation;
+  }
+  if (row.confidence_score !== null) {
+    finding.confidenceScore = row.confidence_score;
+  }
+
+  return finding;
 }
 
 export async function preparePlantImageUpload(params: {
@@ -232,18 +251,9 @@ export async function getLatestPlantAnalysis(
     return mapAnalysisFromRow(persisted, []);
   }
 
-  const findings = ((findingRows ?? []) as PlantFindingRow[]).map((row) => {
-    const finding: AnalysisFinding = {
-      category: row.category,
-      severity: row.severity,
-      title: row.title,
-      description: row.description,
-    };
-    if (row.recommendation) {
-      finding.recommendation = row.recommendation;
-    }
-    return finding;
-  });
+  const findings = ((findingRows ?? []) as PlantFindingRow[]).map(
+    mapFindingFromRow,
+  );
 
   return mapAnalysisFromRow(persisted, findings);
 }
@@ -331,16 +341,7 @@ export async function getPlantTimeline(plantId: string) {
       continue;
     }
     const current = findingsByImage.get(row.image_id) ?? [];
-    const finding: AnalysisFinding = {
-      category: row.category,
-      severity: row.severity,
-      title: row.title,
-      description: row.description,
-    };
-    if (row.recommendation) {
-      finding.recommendation = row.recommendation;
-    }
-    current.push(finding);
+    current.push(mapFindingFromRow(row));
     findingsByImage.set(row.image_id, current);
   }
 
@@ -500,6 +501,7 @@ export async function runAndPersistPlantAnalysis(params: {
           image_id: currentImage.id,
           category: finding.category,
           severity: finding.severity,
+          confidence_score: finding.confidenceScore ?? null,
           title: finding.title,
           description: finding.description,
           recommendation: finding.recommendation ?? null,
