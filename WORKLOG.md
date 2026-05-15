@@ -4,6 +4,34 @@ Handoff log between sessions. Keep entries short. Newest at top.
 
 ---
 
+## 2026-05-15 — Tier 3/4 handoff standard tightened (Copilot)
+
+**Landed on `copilot/review-pr-159-and-plan-tier-2` (commit `57b259e`)**
+
+- Standardised the next-agent process for Tier 3 / Tier 4 so the handoff is
+  explicitly research-first: reputable primary sources, recency anchored to at
+  least 2026-05-15, optimization opportunities captured before coding, and
+  boundary-specific error-handling tools chosen up front.
+- Updated the reusable guidance in:
+  - `docs/playbooks/tier-implementation-playbook.md`
+  - `docs/playbooks/repo-aware-ai-coding-playbook.md`
+  - the suggested Tier 3 prompt block in this file
+- Validation in this sandbox:
+  - `pnpm install --frozen-lockfile`
+  - `pnpm run validate`
+  - `pnpm turbo run type-check lint test`
+  - `pnpm run security:routes`
+
+**In flight**
+
+- Tier 2 sweep PR remains the merge target; use the strengthened prompt / playbook
+  language for the first bounded Tier 3 or Tier 4 follow-up after merge.
+
+**Dead ends**
+
+- `pnpm` was not initially on `PATH`; enabled it with Corepack before running the
+  validation chain.
+
 ## 2026-05-15 — Tier 2 closure briefing + next-agent prompt handoff (Copilot)
 
 **Landed on `copilot/review-pr-159-and-plan-tier-2` (commit `bee041f`)**
