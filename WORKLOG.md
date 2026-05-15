@@ -4,6 +4,56 @@ Handoff log between sessions. Keep entries short. Newest at top.
 
 ---
 
+## 2026-05-15 — Notifications M2 server pipeline + post-wave drift cleanup (Claude Opus 4.7 / Copilot)
+
+**Landed on `main` via PRs #152-#157 (HEAD `c495316`)**
+
+Closed the type/scanner drift left over from the #137-#150 wave, fixed
+two infra bring-up paper-cuts, and shipped the server side of the M2
+"Proactive daily summary" milestone item.
+
+- **#152 — type + scanner drift**: added `GrowTask` / `TaskPriority` /
+  `TaskStatus` and `FindingSource` (`'ai' | 'user_reported'`) to
+  `packages/shared/src/types.ts` to mirror migrations 008 + 010.
+  `scripts/check-route-security.mjs` now detects re-exported handlers
+  (`export { GET } from ...`); `/api/healthz` was previously skipped.
+  Pinned by a new contract test that asserts `healthz.GET === health.GET`.
+- **#153 — migration 003 fix**: qualified `storage.objects.name` inside
+  the `plant-images: owner upload` policy. The previous `name` reference
+  was ambiguous between `storage.objects.name` and `plants.name`, which
+  aborted `supabase db push` on a fresh project (`42702`). Production
+  was already applied with the corrected SQL via MCP.
+- **#154 — migration 012_function_hardening**: closes Supabase advisor
+  function-search-path warnings.
+- **#155 — migration 013_pgvector_extensions_schema**: moves the
+  `vector` extension out of `public` into an `extensions` schema, the
+  idiomatic Supabase pattern. Auth-toggle docs updated alongside.
+- **#156 — Notifications M2 (server side)**: migrations 014 + 015
+  (notifications table, enums, RLS, partial UNIQUE scoped to
+  `daily_summary`); `apps/web/src/lib/server/daily-digest.ts`
+  (snapshot fan-out, prompt builder, Gemini renderer, priority mapper);
+  `/api/internal/cron/daily-summary` handler with `CRON_SECRET` gate,
+  batched fan-out (5 at a time), 45 s time budget, and
+  `upsert(ignoreDuplicates: true)`. 583/583 web tests (+24). Dashboard
+  badge / panel UI ships in a follow-up PR.
+- **#157 — Railway start command**: wrapped the start command in a shell
+  so `$PORT` expands at runtime instead of being passed as a literal.
+
+**Test count**: 583/583 web pass, lint+type-check clean. CI green.
+
+**Doc sync**: CHANGELOG, WORKLOG, roadmap, supabase-guide, product-spec
+updated to reflect this wave (this entry).
+
+**Next session**:
+
+- M2 dashboard badge + panel + "mark as read" action for the new
+  `notifications` feed (data is now flowing from cron).
+- Per-user timezone support for `notifications.occurred_on` (currently
+  UTC-day).
+- Email delivery (Resend / SendGrid) for daily summaries.
+
+---
+
 ## 2026-05-15 — Chat agentic tools wave + grow lifecycle + prod hardening (Claude Opus 4.7)
 
 **Landed on `main` via PRs #137-#150 (HEAD `84ef964`)**

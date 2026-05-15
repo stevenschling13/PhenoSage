@@ -5,6 +5,52 @@ All notable changes to PhenoSage are documented here. Format follows
 [SemVer](https://semver.org/) once we cut 1.0; until then, changes are grouped
 by date under `## [Unreleased]`.
 
+## [Unreleased] — 2026-05-15 notifications M2 + post-wave drift cleanup
+
+### Added
+
+- **Notifications (Milestone 2 — server side)** (#156): new `notifications`
+  table with `notification_kind` / `notification_priority` enums, RLS
+  (self-only SELECT, immutable-columns trigger on UPDATE, service-role-only
+  INSERT), and a partial `UNIQUE (user_id, kind, occurred_on)` scoped to
+  `daily_summary` (migrations `014_notifications.sql` +
+  `015_fix_notifications_unique_index.sql`). `apps/web/src/lib/server/daily-digest.ts`
+  fans out per-user snapshots over `plant_findings` / `plant_images` /
+  `plant_observations` / `grow_tasks`, calls Gemini through the existing
+  `getAIClient()`, and writes one notification per user per day via
+  `/api/internal/cron/daily-summary`. The cron is gated by `CRON_SECRET`,
+  uses `upsert(ignoreDuplicates: true)`, runs in batches of 5 with a
+  45 s time budget, and per-user failures are logged but do not abort the
+  run. Dashboard badge / panel UI ships in a follow-up PR.
+- **Shared types** (#152): `GrowTask`, `TaskPriority`, `TaskStatus`, and
+  `FindingSource` (`'ai' | 'user_reported'`) added to
+  `packages/shared/src/types.ts` so the chat tools and migration 008/010
+  contracts are now type-checked end-to-end.
+- **Route security audit** (#152): `scripts/check-route-security.mjs` now
+  detects re-exported HTTP handlers (`export { GET } from ...`); previously
+  `api/healthz` slipped through. `/api/healthz` is registered as an
+  intentional public route and pinned by a new contract test.
+- **Migration 012_function_hardening** (#154) — closes Supabase advisor
+  function-search-path warnings.
+- **Migration 013_pgvector_extensions_schema** (#155) — moves the
+  `vector` extension from `public` to a dedicated `extensions` schema
+  (idiomatic Supabase pattern; keeps extension types/operators out of the
+  PostgREST surface). Includes auth-toggle documentation update.
+
+### Fixed
+
+- **Migration 003** (#153): qualified `storage.objects.name` inside the
+  `plant-images: owner upload` storage policy to resolve a `42702`
+  ambiguous-column error that was blocking fresh project bring-up via
+  `supabase db push`. Production was already applied with the corrected
+  SQL via MCP, so the repo edit syncs the file back to what the remote
+  actually executed.
+- **Railway start command** (#157): `apps/analysis/railway.toml` start
+  command is now wrapped in a shell so `$PORT` expands at runtime rather
+  than being passed to uvicorn as a literal string.
+
+---
+
 ## [Unreleased] — 2026-05-15 agentic chat + grow lifecycle wave
 
 ### Added
