@@ -176,4 +176,4 @@ def test_image_quality_inconclusive_default_is_redaction_safe() -> None:
 
 def test_image_quality_inconclusive_rejects_unknown_reason() -> None:
     with pytest.raises(ValueError):
-        ImageQualityInconclusive(reason="nope")  # type: ignore[arg-type]
+        raise ImageQualityInconclusive(reason="nope")  # type: ignore[arg-type]
