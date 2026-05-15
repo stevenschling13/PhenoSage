@@ -1,0 +1,155 @@
+name: Database migrations
+
+# Applies pending Supabase migrations to the linked project. Two paths:
+#
+#   * dry_run = true (default)      → `supabase db diff` shows what
+#                                     WOULD apply. No writes.
+#   * dry_run = false               → `supabase db push` applies the
+#                                     pending migrations forward.
+#
+# Operator-triggered only. There is no `push:` trigger here on purpose
+# — auto-applying a migration on every merge to main means a bad
+# migration lands without a review moment, with no rollback (Postgres
+# DDL inside `supabase db push` runs in a transaction per file but
+# successful files don't roll back). Keeping this as `workflow_dispatch`
+# preserves the explicit go-ahead step that the rollback runbook and
+# deployment docs already assume, while removing the friction of needing
+# a local Supabase CLI + secrets — anyone with workflow_dispatch
+# permission can apply with one click.
+#
+# Required repository secrets:
+#   * SUPABASE_ACCESS_TOKEN   — personal / CI token from Supabase
+#                                Dashboard → Account → Access Tokens.
+#   * SUPABASE_PROJECT_REF    — production project ref (the bit before
+#                                `.supabase.co` in the DB host).
+#   * SUPABASE_DB_PASSWORD    — DB password (required by
+#                                `supabase db push`; the CLI prompts
+#                                for it interactively otherwise).
+
+on:
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: "Dry-run only — show pending migrations, do not apply"
+        required: false
+        type: boolean
+        default: true
+      project_ref:
+        description: "Override Supabase project ref (defaults to SUPABASE_PROJECT_REF secret)"
+        required: false
+        type: string
+        default: ""
+
+permissions:
+  contents: read
+  issues: write
+
+concurrency:
+  group: db-migrations-${{ github.event.inputs.project_ref || 'default' }}
+  cancel-in-progress: false
+
+jobs:
+  migrate:
+    name: Apply Supabase migrations
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    environment: production
+    env:
+      SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
+      SUPABASE_DB_PASSWORD: ${{ secrets.SUPABASE_DB_PASSWORD }}
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Resolve project ref
+        id: project
+        shell: bash
+        run: |
+          REF="${{ github.event.inputs.project_ref }}"
+          if [ -z "$REF" ]; then
+            REF="${{ secrets.SUPABASE_PROJECT_REF }}"
+          fi
+          if [ -z "$REF" ]; then
+            echo "::error::SUPABASE_PROJECT_REF secret missing and no project_ref input provided"
+            exit 1
+          fi
+          # Mask the ref in logs since it is effectively the DB host.
+          echo "::add-mask::$REF"
+          echo "ref=$REF" >> "$GITHUB_OUTPUT"
+
+      - name: Install Supabase CLI
+        uses: supabase/setup-cli@v1
+        with:
+          version: latest
+
+      - name: Link to project
+        run: supabase link --project-ref "${{ steps.project.outputs.ref }}"
+
+      - name: Diff pending migrations (always runs)
+        id: diff
+        shell: bash
+        run: |
+          # `supabase db diff --linked` compares the remote schema
+          # against the local migrations directory and prints what
+          # WOULD change. Non-zero exit only on tool error, not on
+          # "migrations are pending" — so we always print and continue.
+          set -o pipefail
+          supabase db diff --linked --schema public,storage \
+            | tee /tmp/migration-diff.txt
+          echo "diff-path=/tmp/migration-diff.txt" >> "$GITHUB_OUTPUT"
+
+      - name: Apply migrations
+        if: github.event.inputs.dry_run != 'true'
+        run: |
+          echo "::notice::Applying pending migrations to $(supabase status --output json | jq -r '.PROJECT_REF // \"linked project\"')"
+          supabase db push --linked
+
+      - name: Verify migration list after apply
+        if: github.event.inputs.dry_run != 'true'
+        run: supabase migration list --linked
+
+      - name: Summary
+        if: always()
+        shell: bash
+        run: |
+          {
+            echo "## Supabase migrations"
+            echo ""
+            echo "* **Mode:** ${{ github.event.inputs.dry_run == 'true' && 'dry-run (no writes)' || 'apply (writes)' }}"
+            echo "* **Project ref:** \`${{ steps.project.outputs.ref }}\`"
+            echo "* **Triggered by:** @${{ github.actor }}"
+            echo ""
+            if [ -s /tmp/migration-diff.txt ]; then
+              echo "<details><summary>Diff output</summary>"
+              echo ""
+              echo '```sql'
+              cat /tmp/migration-diff.txt
+              echo '```'
+              echo "</details>"
+            else
+              echo "_No diff output captured._"
+            fi
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Open issue on apply failure
+        if: failure() && github.event.inputs.dry_run != 'true'
+        uses: actions/github-script@v9
+        with:
+          script: |
+            const runUrl = `${context.serverUrl}/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId}`;
+            await github.rest.issues.create({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              title: `Supabase migration apply failed`,
+              body: [
+                `**Triggered by:** @${context.actor}`,
+                `**Workflow run:** ${runUrl}`,
+                "",
+                "The migration apply step exited non-zero. The schema is in an indeterminate state — some files may have applied, later ones may not. Inspect the run logs to identify the last applied migration, then either:",
+                "",
+                "1. Fix-forward by committing a new corrective migration and re-running this workflow, or",
+                "2. Follow `docs/runbooks/rollback.md` to revert.",
+                "",
+                "Do not amend an existing migration file — the migration history is append-only by contract."
+              ].join("\n"),
+              labels: ["bug", "production", "database"]
+            });

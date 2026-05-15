@@ -225,12 +225,26 @@ promotion gate.
 ## Supabase Setup
 
 1. Create a new Supabase project
-2. Run migrations:
+2. Run migrations. Two paths:
+
+   **From GitHub Actions (recommended for production).** The
+   [`Database migrations`](../.github/workflows/db-migrations.yml)
+   workflow applies pending migrations via `workflow_dispatch` so any
+   maintainer can ship them with one click without installing the
+   Supabase CLI locally. It defaults to dry-run; flip the `dry_run`
+   input to `false` to actually apply. Requires three repo secrets:
+   `SUPABASE_ACCESS_TOKEN`, `SUPABASE_PROJECT_REF`, and
+   `SUPABASE_DB_PASSWORD`. Failures open a tracking issue
+   automatically.
+
+   **From a workstation (initial bring-up or recovery).**
+
    ```bash
    supabase login
    supabase link --project-ref <your-project-ref>
    supabase db push
    ```
+
 3. In Supabase Storage → create bucket `plant-images` (private)
 4. Enable Email Auth (or your preferred provider) in Supabase Auth settings
 5. Copy the project URL and keys to Vercel environment variables
