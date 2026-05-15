@@ -167,6 +167,13 @@ export async function createGrowAction(
     if (error || !data) {
       logServerEvent("error", "create grow insert failed", {
         error: error?.message ?? "no row returned",
+        errorCode: error?.code ?? null,
+        hasDescription: description.length > 0,
+        hasTargetHarvestDate: targetHarvestDate.length > 0,
+        lightType,
+        medium,
+        nameLength: name.length,
+        stage,
         userId: user.id,
       });
       return {
@@ -188,6 +195,12 @@ export async function createGrowAction(
     if (isNextFrameworkError(err)) throw err;
     logServerEvent("error", "create grow action threw", {
       error: err instanceof Error ? err.message : String(err),
+      hasDescription: description.length > 0,
+      hasTargetHarvestDate: targetHarvestDate.length > 0,
+      lightType,
+      medium,
+      nameLength: name.length,
+      stage,
       userId: user.id,
     });
     return {

@@ -23,7 +23,7 @@ export default function NewGrowPage() {
           { href: "/grows", label: "Grows" },
           { label: "New grow" },
         ]}
-        description="Set up the grow record — name, stage, medium, light — then we'll take you straight to adding the first plant."
+        description="Set up the grow record — name, stage, medium, light — then we'll drop you on the grow's page so you can confirm details and add the first plant."
         eyebrow={<Badge tone="accent">Create grow</Badge>}
         title="New grow"
       />
