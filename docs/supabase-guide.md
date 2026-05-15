@@ -583,10 +583,10 @@ This powers the **"Ask about any past grow"** feature planned for Milestone 3.
 
 ### Enabling pgvector
 
-Migration `003_production_optimizations.sql` enables the extension and adds an `embedding` column to `plant_findings`:
+Migration `003_production_optimizations.sql` originally enabled the extension in `public`. Migration `013_pgvector_extensions_schema.sql` then moves it into a dedicated `extensions` schema (the idiomatic Supabase pattern — keeps extension types/operators out of the user-facing schema and out of PostgREST's generated API surface):
 
 ```sql
--- Enabled in 003_production_optimizations.sql
+-- 003_production_optimizations.sql (initial enable)
 CREATE EXTENSION IF NOT EXISTS vector;
 
 ALTER TABLE plant_findings
@@ -596,7 +596,13 @@ CREATE INDEX idx_plant_findings_embedding
   ON plant_findings
   USING ivfflat (embedding vector_cosine_ops)
   WITH (lists = 100);
+
+-- 013_pgvector_extensions_schema.sql (relocate)
+CREATE SCHEMA IF NOT EXISTS extensions;
+ALTER EXTENSION vector SET SCHEMA extensions;
 ```
+
+Queries that use the `vector` type or the `<=>` cosine-distance operator should rely on `search_path` including `extensions`, or qualify the type/operator explicitly (e.g., `extensions.vector`). Migration 013 takes care of the relocation; no application change is required for the existing `plant_findings.embedding` column.
 
 ### Generating embeddings
 

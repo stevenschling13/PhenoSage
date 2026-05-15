@@ -99,13 +99,18 @@ Users upload photos of their plants. The system:
 | `profiles`           | User display names, avatars                |
 | `grows`              | Grow rooms/tents — the top-level container |
 | `grow_members`       | RBAC: owner / collaborator / viewer        |
+| `grow_tasks`         | Generated/manual tasks per grow (M2)       |
 | `plants`             | Individual plants within a grow            |
 | `plant_images`       | Photo uploads with storage paths           |
 | `plant_observations` | Manual height/notes logs                   |
-| `plant_findings`     | AI-generated or manual diagnostic findings |
+| `plant_findings`     | AI-generated or user-reported findings     |
+| `plant_analyses`     | Persisted AI analysis runs                 |
+| `analysis_jobs`      | Async analysis job tracking                |
 | `grow_events`        | Water, feed, topping, etc.                 |
 | `chat_threads`       | Conversation threads                       |
 | `chat_messages`      | Individual messages (user + assistant)     |
+| `chat_attachments`   | Image attachments on chat messages         |
+| `notifications`      | Per-user feed (daily summary, alerts)      |
 
 ---
 
