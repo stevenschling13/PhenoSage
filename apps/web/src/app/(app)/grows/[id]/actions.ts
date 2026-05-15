@@ -5,6 +5,7 @@ import type { GrowMedium, GrowStage, LightType } from "@phenosage/shared";
 import { createSupabaseServerClient, getServerUser } from "@/lib/server/auth";
 import { isNextFrameworkError } from "@/lib/server/auth-errors";
 import { logServerEvent } from "@/lib/server/request-id";
+import { MAX_DESCRIPTION_LENGTH, MAX_FUTURE_START_MS } from "../constants";
 
 // Stage / medium / light vocabularies are duplicated from
 // new/actions.ts on purpose: keeping the two action files independent
@@ -38,11 +39,6 @@ const validLightTypes = new Set<LightType>([
   "mixed",
   "other",
 ]);
-
-const MAX_DESCRIPTION_LENGTH = 2_000;
-// Past start dates are fine (data-entry catch-up), future capped at
-// one day to lock out year-9999 fat-fingers — same rule as create.
-const MAX_FUTURE_START_MS = 24 * 60 * 60 * 1000;
 
 function asTrimmedString(value: FormDataEntryValue | null) {
   return typeof value === "string" ? value.trim() : "";

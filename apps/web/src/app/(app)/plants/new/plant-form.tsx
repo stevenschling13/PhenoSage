@@ -1,10 +1,10 @@
 "use client";
 
-import { useState, useTransition } from "react";
+import { useState } from "react";
 import Link from "next/link";
-import { useRouter } from "next/navigation";
 import { Button, buttonStyles } from "@/components/ui/button";
 import { FormErrorSummary } from "@/components/form-error-summary";
+import { useActionWithRecovery } from "@/lib/client/action-runner";
 type GrowRecord = { id: string; name: string; stage: string | null };
 import {
   createPlantAction,
@@ -51,11 +51,21 @@ export function PlantForm({
   defaultGrowId: string;
   grows: GrowRecord[];
 }) {
-  const router = useRouter();
-  const [state, setState] = useState<CreatePlantActionResult>(
+  // useActionWithRecovery handles transient throws (network blip,
+  // ChunkLoadError) with one automatic retry, surfaces validation
+  // errors unchanged, and exposes `state.recoveryUrl` so a router.push
+  // failure can't strand the user on a stale form. /grows is the
+  // fallback because every successful plant create either lands on
+  // the new plant page (single create) or back on the grows list
+  // (bulk create) — /grows is always a safe escape hatch.
+  const {
+    state,
+    isPending,
+    run: runCreatePlant,
+  } = useActionWithRecovery<CreatePlantActionResult>(
     createPlantActionInitialState,
+    { fallbackUrl: "/grows" },
   );
-  const [isPending, startTransition] = useTransition();
   const [growId, setGrowId] = useState(defaultGrowId);
   const [name, setName] = useState("");
   const [strain, setStrain] = useState("");
@@ -81,24 +91,16 @@ export function PlantForm({
     : "";
 
   async function handleAction(formData: FormData) {
-    startTransition(async () => {
-      try {
-        const result = await createPlantAction(formData);
-        setState(result);
-        if (result.status === "success" && result.redirectTo) {
-          router.push(result.redirectTo);
-        }
-      } catch (err) {
-        // Safety net so an unexpected throw can never crash into the
-        // (app)/error.tsx boundary.
-        console.error("createPlantAction failed unexpectedly", err);
-        setState({
-          message:
-            "Something went wrong saving the plant. Please try again in a moment.",
-          status: "error",
-        });
+    try {
+      await runCreatePlant(() => createPlantAction(formData));
+    } catch (err) {
+      // The runner has already updated component state with an
+      // error-shaped result + recoveryUrl. Re-throws here are expected
+      // when retries are exhausted — log for diagnostics, don't crash.
+      if (typeof console !== "undefined") {
+        console.error("createPlantAction failed after retries", err);
       }
-    });
+    }
   }
 
   return (

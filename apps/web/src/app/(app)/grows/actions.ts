@@ -7,6 +7,7 @@ import { createSupabaseServerClient, getServerUser } from "@/lib/server/auth";
 import { isNextFrameworkError } from "@/lib/server/auth-errors";
 import { rateLimit } from "@/lib/server/rate-limit";
 import { logServerEvent, REQUEST_ID_HEADER } from "@/lib/server/request-id";
+import { MAX_DESCRIPTION_LENGTH, MAX_FUTURE_START_MS } from "./constants";
 
 const validStages = new Set<GrowStage>([
   "germination",
@@ -37,16 +38,6 @@ const validLightTypes = new Set<LightType>([
   "mixed",
   "other",
 ]);
-
-// Mirrors the chat tool's MAX_NOTES_LENGTH so both create paths agree
-// on prose size. The DB column is unbounded `text`; cap here to keep
-// list views renderable and lock out paste-bomb fat-fingers.
-const MAX_DESCRIPTION_LENGTH = 2_000;
-
-// Mirrors the chat tool's isoDateNotFarFuture refinement: past start
-// dates are allowed (data-entry catching up is the common case), but
-// the future side is clamped to avoid year-9999 fat-finger inputs.
-const MAX_FUTURE_START_MS = 24 * 60 * 60 * 1000;
 
 // Per-attempt deadline on the Supabase insert. Vercel's serverless
 // timeout is 60s on the hobby plan / 300s on pro, but a user staring at
