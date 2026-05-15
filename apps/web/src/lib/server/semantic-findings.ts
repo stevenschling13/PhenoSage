@@ -1,4 +1,5 @@
 import "server-only";
+import { z } from "zod";
 import type { createSupabaseServerClient } from "./auth";
 import { generateFindingEmbeddings } from "./embeddings";
 import { logServerEvent } from "./request-id";
@@ -11,6 +12,13 @@ const SEARCH_TIMEOUT_MS = 5_000;
 type SupabaseUserClient = Awaited<
   ReturnType<typeof createSupabaseServerClient>
 >;
+type ToolResult = { ok: true; data: unknown } | { ok: false; error: string };
+
+const SearchSimilarFindingsArgs = z.object({
+  growId: z.string().min(1),
+  query: z.string().min(3).max(1_000),
+  limit: z.number().optional(),
+});
 
 export type SimilarFinding = {
   id: string;
@@ -121,4 +129,38 @@ export async function findSimilarGrowFindings(params: {
       similarity: row.similarity,
     })),
   };
+}
+
+export async function executeSearchSimilarFindingsTool(
+  rawArgs: unknown,
+  ctx: {
+    supabase: SupabaseUserClient;
+    requestId: string;
+    userId: string | null;
+  },
+): Promise<ToolResult> {
+  const args = SearchSimilarFindingsArgs.parse(rawArgs);
+  const searchParams: Parameters<typeof findSimilarGrowFindings>[0] = {
+    supabase: ctx.supabase,
+    growId: args.growId,
+    query: args.query,
+    requestId: ctx.requestId,
+  };
+  if (args.limit !== undefined) searchParams.limit = args.limit;
+
+  const found = await findSimilarGrowFindings(searchParams);
+  if (!found.ok) {
+    logServerEvent("warn", "chat semantic finding search unavailable", {
+      requestId: ctx.requestId,
+      userId: ctx.userId,
+      growId: args.growId,
+      code: found.code,
+    });
+    return {
+      ok: false,
+      error:
+        "semantic finding search is temporarily unavailable; use recent findings or timeline context instead",
+    };
+  }
+  return { ok: true, data: found.data };
 }

@@ -3,6 +3,7 @@ import { createHash } from "node:crypto";
 import type OpenAI from "openai";
 import { getAIClient } from "./ai-client";
 import { getCircuitBreaker, CircuitOpenError } from "./circuit-breaker";
+import { getDbClient } from "./db";
 import { logServerEvent } from "./request-id";
 
 const EMBEDDING_MODEL = "gemini-embedding-2";
@@ -286,4 +287,35 @@ export async function persistFindingEmbeddings(
     failed,
     ...(failed > 0 ? { code: "update_failed" } : {}),
   };
+}
+
+export async function persistSingleFindingEmbeddingBestEffort(
+  finding: FindingEmbeddingInput,
+  opts: { requestId: string; userId: string | null },
+): Promise<void> {
+  try {
+    const embeddingResult = await persistFindingEmbeddings(
+      getDbClient(),
+      [finding],
+      { requestId: opts.requestId },
+    );
+    if (!embeddingResult.ok) {
+      logServerEvent("warn", "chat finding embedding skipped", {
+        requestId: opts.requestId,
+        userId: opts.userId,
+        findingId: finding.id,
+        code: embeddingResult.code,
+      });
+    }
+  } catch (embeddingErr) {
+    logServerEvent("warn", "chat finding embedding threw", {
+      requestId: opts.requestId,
+      userId: opts.userId,
+      findingId: finding.id,
+      error:
+        embeddingErr instanceof Error
+          ? embeddingErr.message
+          : String(embeddingErr),
+    });
+  }
 }

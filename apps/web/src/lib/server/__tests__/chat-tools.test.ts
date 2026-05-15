@@ -5,9 +5,8 @@ const logServerEvent = vi.fn();
 const getPlantTimeline = vi.fn();
 const runAndPersistPlantAnalysis = vi.fn();
 const rateLimit = vi.fn();
-const getDbClient = vi.fn();
-const persistFindingEmbeddings = vi.fn();
-const findSimilarGrowFindings = vi.fn();
+const persistSingleFindingEmbeddingBestEffort = vi.fn();
+const executeSearchSimilarFindingsTool = vi.fn();
 
 vi.mock("../auth", () => ({
   createSupabaseServerClient: (...args: unknown[]) =>
@@ -52,16 +51,13 @@ vi.mock("../chat-tool-policies", () => ({
     };
   },
 }));
-vi.mock("../db", () => ({
-  getDbClient: (...args: unknown[]) => getDbClient(...args),
-}));
 vi.mock("../embeddings", () => ({
-  persistFindingEmbeddings: (...args: unknown[]) =>
-    persistFindingEmbeddings(...args),
+  persistSingleFindingEmbeddingBestEffort: (...args: unknown[]) =>
+    persistSingleFindingEmbeddingBestEffort(...args),
 }));
 vi.mock("../semantic-findings", () => ({
-  findSimilarGrowFindings: (...args: unknown[]) =>
-    findSimilarGrowFindings(...args),
+  executeSearchSimilarFindingsTool: (...args: unknown[]) =>
+    executeSearchSimilarFindingsTool(...args),
 }));
 
 // Default behavior for the mocked rateLimit: always permit. Tests that
@@ -1780,17 +1776,9 @@ describe("chat-tools — update_plant", () => {
 describe("chat-tools — record_image_finding", () => {
   beforeEach(() => {
     createSupabaseServerClient.mockReset();
-    getDbClient.mockReset();
     logServerEvent.mockReset();
-    persistFindingEmbeddings.mockReset();
-    getDbClient.mockReturnValue({ from: vi.fn() });
-    persistFindingEmbeddings.mockResolvedValue({
-      failed: 0,
-      generated: 1,
-      ok: true,
-      skipped: 0,
-      updated: 1,
-    });
+    persistSingleFindingEmbeddingBestEffort.mockReset();
+    persistSingleFindingEmbeddingBestEffort.mockResolvedValue(undefined);
   });
   afterEach(() => {
     vi.restoreAllMocks();
@@ -1852,28 +1840,18 @@ describe("chat-tools — record_image_finding", () => {
         source: "user_reported",
       }),
     );
-    expect(persistFindingEmbeddings).toHaveBeenCalledWith(
-      { from: expect.any(Function) },
-      [
-        expect.objectContaining({
-          id: "f-1",
-          category: "disease",
-          title: "Suspected septoria",
-        }),
-      ],
-      { requestId: "req-123" },
+    expect(persistSingleFindingEmbeddingBestEffort).toHaveBeenCalledWith(
+      expect.objectContaining({
+        id: "f-1",
+        category: "disease",
+        title: "Suspected septoria",
+      }),
+      { requestId: "req-123", userId: "user-1" },
     );
   });
 
   it("returns the finding even when semantic embedding persistence fails", async () => {
-    persistFindingEmbeddings.mockResolvedValue({
-      code: "configuration_error",
-      failed: 1,
-      generated: 0,
-      ok: false,
-      skipped: 0,
-      updated: 0,
-    });
+    persistSingleFindingEmbeddingBestEffort.mockResolvedValue(undefined);
     const { client } = makeInsertMock({
       data: {
         id: "f-3",
@@ -1904,10 +1882,9 @@ describe("chat-tools — record_image_finding", () => {
       ok: true,
       data: expect.objectContaining({ id: "f-3" }),
     });
-    expect(logServerEvent).toHaveBeenCalledWith(
-      "warn",
-      "chat finding embedding skipped",
-      expect.objectContaining({ code: "configuration_error" }),
+    expect(persistSingleFindingEmbeddingBestEffort).toHaveBeenCalledWith(
+      expect.objectContaining({ id: "f-3" }),
+      { requestId: "req-123", userId: "user-1" },
     );
   });
 
@@ -2027,14 +2004,14 @@ describe("chat-tools — record_image_finding", () => {
 describe("chat-tools — search_similar_findings", () => {
   beforeEach(() => {
     createSupabaseServerClient.mockReset();
-    findSimilarGrowFindings.mockReset();
+    executeSearchSimilarFindingsTool.mockReset();
     logServerEvent.mockReset();
   });
 
   it("returns semantic matches for the active grow", async () => {
     const client = { rpc: vi.fn() };
     createSupabaseServerClient.mockResolvedValue(client);
-    findSimilarGrowFindings.mockResolvedValue({
+    executeSearchSimilarFindingsTool.mockResolvedValue({
       ok: true,
       data: [
         {
@@ -2067,20 +2044,26 @@ describe("chat-tools — search_similar_findings", () => {
       ok: true,
       data: [expect.objectContaining({ id: "finding-1", similarity: 0.86 })],
     });
-    expect(findSimilarGrowFindings).toHaveBeenCalledWith({
-      supabase: client,
-      growId: "grow-1",
-      query: "yellowing lower leaves",
-      limit: 3,
-      requestId: "req-123",
-    });
+    expect(executeSearchSimilarFindingsTool).toHaveBeenCalledWith(
+      {
+        growId: "grow-1",
+        query: "yellowing lower leaves",
+        limit: 3,
+      },
+      {
+        supabase: client,
+        requestId: "req-123",
+        userId: "user-1",
+      },
+    );
   });
 
   it("returns friendly copy when semantic search is unavailable", async () => {
     createSupabaseServerClient.mockResolvedValue({ rpc: vi.fn() });
-    findSimilarGrowFindings.mockResolvedValue({
+    executeSearchSimilarFindingsTool.mockResolvedValue({
       ok: false,
-      code: "embedding_unavailable",
+      error:
+        "semantic finding search is temporarily unavailable; use recent findings or timeline context instead",
     });
 
     const result = await executeChatTool(
