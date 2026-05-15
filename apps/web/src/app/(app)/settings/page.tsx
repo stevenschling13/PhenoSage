@@ -1,10 +1,5 @@
 import type { Metadata } from "next";
-import {
-  BellIcon,
-  CheckCircleIcon,
-  ShieldIcon,
-  SparkIcon,
-} from "@/components/icons";
+import { CheckCircleIcon, ShieldIcon, SparkIcon } from "@/components/icons";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import {
@@ -15,14 +10,28 @@ import {
   CardTitle,
 } from "@/components/ui/card";
 import { PageHeader } from "@/components/ui/page-header";
+import { createSupabaseServerClient } from "@/lib/server/auth";
 import { getCurrentProfile } from "@/lib/server/profile";
+import {
+  DEFAULT_USER_PREFERENCES,
+  loadUserPreferences,
+} from "@/lib/server/user-preferences";
 import { signOutAction } from "@/app/auth/actions";
 import { SettingsProfileForm } from "./settings-profile-form";
+import { SettingsEmailForm } from "./settings-email-form";
+import { SettingsTimezoneForm } from "./settings-timezone-form";
 
 export const metadata: Metadata = { title: "Settings" };
 
 export default async function SettingsPage() {
   const profile = await getCurrentProfile();
+  // Use the user-scoped (RLS) client so the read is allowed only when
+  // there's an authenticated session — `loadUserPreferences` returns
+  // the UTC default if no row exists yet.
+  const supabase = await createSupabaseServerClient();
+  const preferences = profile
+    ? await loadUserPreferences(supabase, profile.id)
+    : { ...DEFAULT_USER_PREFERENCES };
 
   return (
     <main className="app-page">
@@ -56,52 +65,33 @@ export default async function SettingsPage() {
 
           <Card>
             <CardHeader>
-              <CardTitle>Notification defaults</CardTitle>
+              <CardTitle>Timezone</CardTitle>
               <CardDescription>
-                These toggles reserve space for future daily summaries, issue
-                alerts, and reminder preferences.
+                Drives when “today” starts for the daily summary you receive in
+                the inbox.
               </CardDescription>
             </CardHeader>
-            <CardContent className="space-y-3">
-              {[
-                {
-                  copy: "Daily workspace summary at the start of the cultivation day",
-                  icon: BellIcon,
-                  label: "Daily summary",
-                },
-                {
-                  copy: "High-severity finding alerts when plant analysis flags meaningful risk",
-                  icon: SparkIcon,
-                  label: "Finding alerts",
-                },
-                {
-                  copy: "Follow-up reminders for recurring issues and scheduled milestones",
-                  icon: CheckCircleIcon,
-                  label: "Action reminders",
-                },
-              ].map((item) => {
-                const Icon = item.icon;
+            <CardContent>
+              <SettingsTimezoneForm initialTimezone={preferences.timezone} />
+            </CardContent>
+          </Card>
 
-                return (
-                  <div
-                    key={item.label}
-                    className="flex items-center justify-between gap-4 rounded-[1.2rem] border border-border/70 bg-background-subtle/70 px-4 py-4"
-                  >
-                    <div className="flex items-start gap-3">
-                      <Icon className="mt-0.5 h-4 w-4 text-accent" />
-                      <div className="space-y-1">
-                        <p className="text-sm font-semibold text-foreground">
-                          {item.label}
-                        </p>
-                        <p className="text-sm leading-6 text-muted-foreground">
-                          {item.copy}
-                        </p>
-                      </div>
-                    </div>
-                    <Badge tone="default">Unavailable</Badge>
-                  </div>
-                );
-              })}
+          <Card>
+            <CardHeader>
+              <CardTitle>Email notifications</CardTitle>
+              <CardDescription>
+                Daily summaries and finding alerts are also delivered to your
+                account email. In-app notifications stay on regardless.
+              </CardDescription>
+            </CardHeader>
+            <CardContent>
+              <SettingsEmailForm
+                initialEmailDailySummary={preferences.emailDailySummary}
+                initialEmailFindingAlerts={preferences.emailFindingAlerts}
+                initialEmailAlertSeverityFloor={
+                  preferences.emailAlertSeverityFloor
+                }
+              />
             </CardContent>
           </Card>
         </div>

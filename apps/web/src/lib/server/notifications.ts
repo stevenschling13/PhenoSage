@@ -4,7 +4,9 @@ import type { FindingSeverity } from "@phenosage/shared";
 
 import { createSupabaseServerClient, getServerUser } from "./auth";
 import { getDbClient } from "./db";
+import { dispatchFindingAlertEmail } from "./email-dispatch";
 import { logServerEvent } from "./request-id";
+import { loadUserPreferences, type UserPreferences } from "./user-preferences";
 
 // ────────────────────────────────────────────────────────────────────────────
 // Types
@@ -372,11 +374,20 @@ function buildAlertBody(input: FindingAlertInput): string {
  * see migration 014 access model).
  *
  * Idempotency: migration 016 adds a partial UNIQUE on
- * (user_id, kind, payload->>'findingId') WHERE kind='finding_alert',
- * so `ignoreDuplicates: true` makes a re-run a no-op rather than
- * throwing. This is critical because `runAndPersistPlantAnalysis` is
- * called both on photo upload AND from the chat tool
- * `trigger_plant_analysis`, and the same finding can be regenerated.
+ * `(user_id, (payload->>'findingId'))` with predicate
+ * `WHERE kind = 'finding_alert' AND (payload->>'findingId') IS NOT NULL`
+ * — `kind` lives in the partial index *predicate*, not in the index
+ * key. Because PostgREST's `on_conflict` parameter only accepts plain
+ * column names and cannot resolve to an expression-index target, this
+ * function performs an app-level SELECT-then-INSERT: we look up which
+ * candidate findingIds already have an alert and INSERT only the rest.
+ * The partial UNIQUE remains as a race backstop — a concurrent emit
+ * that slips through raises SQLSTATE 23505, which we log at `info`
+ * and treat as a benign no-op (the user already has the alert).
+ *
+ * This matters because `runAndPersistPlantAnalysis` is called both on
+ * photo upload AND from the chat tool `trigger_plant_analysis`, and
+ * the same finding can be regenerated.
  *
  * Failure isolation: a row-level insert failure is logged but does
  * NOT propagate — the analysis itself has already succeeded and the
@@ -510,5 +521,70 @@ export async function emitFindingAlerts(params: {
     attempted: rows.length,
     inserted,
   });
+
+  // Best-effort transactional email per newly-inserted alert. We
+  // load the user's preferences once (cheap — single row), then
+  // dispatch in parallel. Email failures are logged inside the
+  // dispatcher and do NOT propagate; the in-app notification is the
+  // system-of-record. We only email for newly-inserted rows so the
+  // dedupe path (existing alert) doesn't re-spam the user.
+  if (inserted > 0) {
+    // Supabase preserves row order on `insert(...).select(...)`, so
+    // map back to the original alertable input by index — that's how
+    // we recover the title/description/recommendation context the
+    // email template needs.
+    const newRows = toInsert
+      .map((r, idx) => ({ ...r, id: (data?.[idx] as { id?: string })?.id }))
+      .filter((r): r is typeof r & { id: string } => typeof r.id === "string");
+
+    let preferences: UserPreferences | null = null;
+    try {
+      preferences = await loadUserPreferences(db, params.userId);
+    } catch (err) {
+      logServerEvent("warn", "finding alerts: load preferences failed", {
+        requestId: params.requestId,
+        userId: params.userId,
+        error: err instanceof Error ? err.message : String(err),
+      });
+    }
+    if (preferences && preferences.emailFindingAlerts) {
+      const appUrl =
+        process.env["NEXT_PUBLIC_APP_URL"] ?? "http://localhost:3000";
+      const findingsById = new Map(alertable.map((f) => [f.findingId, f]));
+      const userPrefs = preferences;
+      await Promise.all(
+        newRows.map(async (row) => {
+          const payload = row.payload as { findingId?: string };
+          const fid = payload.findingId;
+          if (!fid) return;
+          const original = findingsById.get(fid);
+          if (!original) return;
+          await dispatchFindingAlertEmail({
+            supabase: db,
+            userId: params.userId,
+            notificationId: row.id,
+            preferences: userPrefs,
+            finding: {
+              findingId: original.findingId,
+              plantId: original.plantId,
+              growId: original.growId,
+              severity: original.severity,
+              title: original.title,
+              body: row.body,
+            },
+            appUrl,
+          }).catch((err) => {
+            logServerEvent("warn", "finding alerts: email dispatch threw", {
+              requestId: params.requestId,
+              userId: params.userId,
+              findingId: original.findingId,
+              error: err instanceof Error ? err.message : String(err),
+            });
+          });
+        }),
+      );
+    }
+  }
+
   return inserted;
 }

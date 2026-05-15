@@ -45,6 +45,54 @@ const mocks = vi.hoisted(() => {
     renderDigest: vi.fn<() => Promise<{ title: string; body: string }>>(),
     digestPriority: vi.fn<() => "info" | "warning" | "critical">(),
     logServerEvent: vi.fn(),
+    loadUserPreferencesBulk: vi.fn<
+      (
+        _db: unknown,
+        _userIds: string[],
+      ) => Promise<
+        Map<
+          string,
+          {
+            timezone: string;
+            emailDailySummary: boolean;
+            emailFindingAlerts: boolean;
+            emailAlertSeverityFloor: "critical";
+          }
+        >
+      >
+    >(async (_db, _userIds) => {
+      const map = new Map<
+        string,
+        {
+          timezone: string;
+          emailDailySummary: boolean;
+          emailFindingAlerts: boolean;
+          emailAlertSeverityFloor: "critical";
+        }
+      >();
+      for (const id of _userIds)
+        map.set(id, {
+          timezone: "UTC",
+          emailDailySummary: true,
+          emailFindingAlerts: true,
+          emailAlertSeverityFloor: "critical",
+        });
+      return map;
+    }),
+    dispatchDailySummaryEmail: vi.fn<
+      (..._args: unknown[]) => Promise<
+        | { sent: true; providerId: string }
+        | {
+            sent: false;
+            reason:
+              | "opt_out"
+              | "below_floor"
+              | "no_email"
+              | "disabled"
+              | "failed";
+          }
+      >
+    >(async () => ({ sent: false, reason: "disabled" })),
   };
 });
 
@@ -60,6 +108,18 @@ vi.mock("@/lib/server/daily-digest", () => ({
 }));
 vi.mock("@/lib/server/request-id", () => ({
   logServerEvent: mocks.logServerEvent,
+}));
+vi.mock("@/lib/server/user-preferences", () => ({
+  loadUserPreferencesBulk: mocks.loadUserPreferencesBulk,
+  DEFAULT_USER_PREFERENCES: {
+    timezone: "UTC",
+    emailDailySummary: true,
+    emailFindingAlerts: true,
+    emailAlertSeverityFloor: "critical",
+  },
+}));
+vi.mock("@/lib/server/email-dispatch", () => ({
+  dispatchDailySummaryEmail: mocks.dispatchDailySummaryEmail,
 }));
 
 import { GET } from "../route";
@@ -102,6 +162,9 @@ describe("GET /api/internal/cron/daily-summary", () => {
     });
     mocks.digestPriority.mockReset().mockReturnValue("info");
     mocks.logServerEvent.mockReset();
+    mocks.dispatchDailySummaryEmail
+      .mockReset()
+      .mockResolvedValue({ sent: false, reason: "disabled" });
   });
   afterEach(() => {
     process.env = ORIGINAL_ENV;
@@ -210,6 +273,58 @@ describe("GET /api/internal/cron/daily-summary", () => {
     expect((upsertedRow["occurred_on"] as string).length).toBe(10);
   });
 
+  it("computes occurred_on in the user's preferred timezone", async () => {
+    process.env["CRON_SECRET"] = "secret";
+    mocks.listUsersWithActiveGrows.mockResolvedValueOnce(["u-tz"]);
+    mocks.buildDigestSnapshot.mockResolvedValueOnce({
+      userId: "u-tz",
+      grows: [],
+      newFindings: [],
+      newImages: 1,
+      newObservations: 0,
+      newTasks: 0,
+      resolvedFindings: 0,
+    });
+    mocks.hasMeaningfulActivity.mockReturnValueOnce(true);
+    // Pacific is UTC-7/8; if the cron fires near UTC midnight, the
+    // user's local date should be the *previous* calendar day. We
+    // assert by comparing to the same Intl computation rather than
+    // hard-coding a date so this remains deterministic across days.
+    mocks.loadUserPreferencesBulk.mockImplementationOnce(async () => {
+      const map = new Map<
+        string,
+        {
+          timezone: string;
+          emailDailySummary: boolean;
+          emailFindingAlerts: boolean;
+          emailAlertSeverityFloor: "critical";
+        }
+      >();
+      map.set("u-tz", {
+        timezone: "America/Los_Angeles",
+        emailDailySummary: true,
+        emailFindingAlerts: true,
+        emailAlertSeverityFloor: "critical",
+      });
+      return map;
+    });
+
+    const before = new Date();
+    const res = await GET(makeRequest("Bearer secret"));
+    expect(res.status).toBe(200);
+    const upsertedRow = mocks.upsert.mock.calls[0]?.[0] as Record<
+      string,
+      unknown
+    >;
+    const expected = new Intl.DateTimeFormat("en-CA", {
+      timeZone: "America/Los_Angeles",
+      year: "numeric",
+      month: "2-digit",
+      day: "2-digit",
+    }).format(before);
+    expect(upsertedRow["occurred_on"]).toBe(expected);
+  });
+
   // ─── failure isolation ──────────────────────────────────────────────
 
   it("counts a same-day duplicate (ignored upsert) as a skip, not an error", async () => {
@@ -260,5 +375,75 @@ describe("GET /api/internal/cron/daily-summary", () => {
     expect(res.status).toBe(500);
     const body = await res.json();
     expect(body.error).toBe("Supabase not configured");
+  });
+
+  // ─── email dispatch (Tier 2.2) ──────────────────────────────────────
+
+  it("invokes the email dispatcher for each newly inserted notification and counts emailed", async () => {
+    process.env["CRON_SECRET"] = "secret";
+    mocks.listUsersWithActiveGrows.mockResolvedValueOnce(["u1", "u2"]);
+    mocks.hasMeaningfulActivity.mockReturnValue(true);
+    mocks.upsertSelect
+      .mockResolvedValueOnce({ data: [{ id: "notif-1" }], error: null })
+      .mockResolvedValueOnce({ data: [{ id: "notif-2" }], error: null });
+    mocks.dispatchDailySummaryEmail
+      .mockResolvedValueOnce({ sent: true, providerId: "msg_1" })
+      .mockResolvedValueOnce({ sent: false, reason: "opt_out" });
+
+    const res = await GET(makeRequest("Bearer secret"));
+    const body = await res.json();
+    expect(body.wrote).toBe(2);
+    expect(body.emailed).toBe(1);
+    expect(mocks.dispatchDailySummaryEmail).toHaveBeenCalledTimes(2);
+    // Each call must carry the inserted notification id + per-user prefs.
+    const firstCallArg = mocks.dispatchDailySummaryEmail.mock.calls[0]?.[0] as
+      | {
+          userId: string;
+          notificationId: string;
+          occurredOn: string;
+          preferences: { emailDailySummary: boolean };
+        }
+      | undefined;
+    expect(firstCallArg).toMatchObject({
+      userId: "u1",
+      notificationId: "notif-1",
+      occurredOn: expect.any(String),
+    });
+    expect(firstCallArg?.preferences.emailDailySummary).toBe(true);
+  });
+
+  it("does NOT invoke the email dispatcher when the upsert was a duplicate (skipped)", async () => {
+    process.env["CRON_SECRET"] = "secret";
+    mocks.listUsersWithActiveGrows.mockResolvedValueOnce(["u1"]);
+    mocks.hasMeaningfulActivity.mockReturnValue(true);
+    // ignoreDuplicates: same-day re-run returns empty data.
+    mocks.upsertSelect.mockResolvedValueOnce({ data: [], error: null });
+
+    const res = await GET(makeRequest("Bearer secret"));
+    const body = await res.json();
+    expect(body.wrote).toBe(0);
+    expect(body.skipped).toBe(1);
+    expect(body.emailed).toBe(0);
+    expect(mocks.dispatchDailySummaryEmail).not.toHaveBeenCalled();
+  });
+
+  it("an email dispatch throwing does NOT break the run (logs + continues)", async () => {
+    process.env["CRON_SECRET"] = "secret";
+    mocks.listUsersWithActiveGrows.mockResolvedValueOnce(["u1"]);
+    mocks.hasMeaningfulActivity.mockReturnValue(true);
+    mocks.dispatchDailySummaryEmail.mockRejectedValueOnce(
+      new Error("network blip"),
+    );
+
+    const res = await GET(makeRequest("Bearer secret"));
+    const body = await res.json();
+    expect(body.wrote).toBe(1);
+    expect(body.emailed).toBe(0);
+    expect(body.errored).toBe(0);
+    expect(mocks.logServerEvent).toHaveBeenCalledWith(
+      "error",
+      expect.stringContaining("email dispatch threw"),
+      expect.objectContaining({ userId: "u1" }),
+    );
   });
 });

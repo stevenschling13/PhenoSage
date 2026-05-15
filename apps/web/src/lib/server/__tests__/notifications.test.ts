@@ -18,11 +18,48 @@ vi.mock("../request-id", () => ({
   logServerEvent,
 }));
 
+// New since Tier 2.2: emitFindingAlerts now reads user preferences and
+// dispatches email-of-record after a successful insert. Default both
+// to no-ops so the legacy assertions keep their narrow focus on the
+// notifications-row writes; the dispatcher itself is covered by
+// email-dispatch.test.ts.
+const loadUserPreferences = vi.fn(async () => ({
+  timezone: "UTC",
+  emailDailySummary: true,
+  emailFindingAlerts: false, // disabled by default → dispatch no-op
+  emailAlertSeverityFloor: "critical" as const,
+}));
+vi.mock("../user-preferences", () => ({
+  loadUserPreferences,
+  // Re-export the constant the production module uses.
+  DEFAULT_USER_PREFERENCES: {
+    timezone: "UTC",
+    emailDailySummary: true,
+    emailFindingAlerts: true,
+    emailAlertSeverityFloor: "critical",
+  },
+}));
+
+const dispatchFindingAlertEmail = vi.fn<
+  (..._args: unknown[]) => Promise<{
+    sent: false;
+    reason: "opt_out" | "below_floor" | "no_email" | "disabled" | "failed";
+  }>
+>(async () => ({
+  sent: false as const,
+  reason: "opt_out" as const,
+}));
+vi.mock("../email-dispatch", () => ({
+  dispatchFindingAlertEmail,
+}));
+
 beforeEach(() => {
   createSupabaseServerClient.mockReset();
   getServerUser.mockReset();
   getDbClient.mockReset();
   logServerEvent.mockReset();
+  loadUserPreferences.mockClear();
+  dispatchFindingAlertEmail.mockClear();
 });
 
 // ────────────────────────────────────────────────────────────────────────────
@@ -365,6 +402,122 @@ describe("emitFindingAlerts", () => {
     expect(logServerEvent).toHaveBeenCalledWith(
       "error",
       expect.stringContaining("insert failed"),
+      expect.any(Object),
+    );
+  });
+
+  // ─── Email dispatch (Tier 2.2) ────────────────────────────────────
+
+  it("dispatches a finding-alert email per newly-inserted row when prefs allow", async () => {
+    const db = buildDb({
+      existingPayloads: [],
+      insertReturn: {
+        data: [{ id: "notif-new" }],
+        error: null,
+      },
+    });
+    getDbClient.mockReturnValue(db);
+    loadUserPreferences.mockResolvedValueOnce({
+      timezone: "UTC",
+      emailDailySummary: true,
+      emailFindingAlerts: true,
+      emailAlertSeverityFloor: "critical" as const,
+    });
+    const { emitFindingAlerts } = await import("../notifications");
+    const inserted = await emitFindingAlerts({
+      userId: "user-1",
+      requestId: "req-1",
+      findings: [
+        {
+          findingId: "f-crit",
+          plantId: "p1",
+          growId: "g1",
+          severity: "critical",
+          title: "Critical PM",
+          description: "Powdery mildew detected.",
+          recommendation: "Increase airflow.",
+        },
+      ],
+    });
+    expect(inserted).toBe(1);
+    expect(loadUserPreferences).toHaveBeenCalledTimes(1);
+    expect(dispatchFindingAlertEmail).toHaveBeenCalledTimes(1);
+    const arg = dispatchFindingAlertEmail.mock.calls[0]?.[0] as
+      | {
+          userId: string;
+          notificationId: string;
+          finding: { findingId: string; severity: string; title: string };
+        }
+      | undefined;
+    expect(arg).toMatchObject({
+      userId: "user-1",
+      notificationId: "notif-new",
+      finding: expect.objectContaining({
+        findingId: "f-crit",
+        severity: "critical",
+        title: "Critical PM",
+      }),
+    });
+  });
+
+  it("does NOT load prefs or dispatch when nothing was inserted", async () => {
+    const db = buildDb({
+      existingPayloads: [{ payload: { findingId: "f-existing" } }],
+      insertReturn: { data: [], error: null },
+    });
+    getDbClient.mockReturnValue(db);
+    const { emitFindingAlerts } = await import("../notifications");
+    const inserted = await emitFindingAlerts({
+      userId: "user-1",
+      requestId: "req-1",
+      findings: [
+        {
+          findingId: "f-existing",
+          plantId: "p1",
+          growId: "g1",
+          severity: "high",
+          title: "Already alerted",
+          description: "Older signal.",
+        },
+      ],
+    });
+    expect(inserted).toBe(0);
+    expect(loadUserPreferences).not.toHaveBeenCalled();
+    expect(dispatchFindingAlertEmail).not.toHaveBeenCalled();
+  });
+
+  it("a thrown email dispatch is caught and logged (does not affect insert count)", async () => {
+    const db = buildDb({
+      insertReturn: { data: [{ id: "notif-x" }], error: null },
+    });
+    getDbClient.mockReturnValue(db);
+    loadUserPreferences.mockResolvedValueOnce({
+      timezone: "UTC",
+      emailDailySummary: true,
+      emailFindingAlerts: true,
+      emailAlertSeverityFloor: "critical" as const,
+    });
+    dispatchFindingAlertEmail.mockRejectedValueOnce(new Error("network blip"));
+
+    const { emitFindingAlerts } = await import("../notifications");
+    const inserted = await emitFindingAlerts({
+      userId: "user-1",
+      requestId: "req-1",
+      findings: [
+        {
+          findingId: "f-crit",
+          plantId: "p1",
+          growId: "g1",
+          severity: "critical",
+          title: "Critical PM",
+          description: "Detected.",
+        },
+      ],
+    });
+    expect(inserted).toBe(1);
+    expect(logServerEvent).toHaveBeenCalledWith(
+      "warn",
+      expect.stringContaining("email dispatch threw"),
       expect.any(Object),
     );
   });

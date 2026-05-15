@@ -4,6 +4,62 @@ Handoff log between sessions. Keep entries short. Newest at top.
 
 ---
 
+## 2026-05-15 — Tier 2.1: per-user timezone for daily-summary + JSDoc cleanup (Copilot)
+
+**In-flight on `copilot/assess-tier-1-and-plan-tier-2`**
+
+First step of the Tier 2 plan (see PR description). Ships per-user
+timezone support for the daily-summary cron and clears the only
+unresolved Copilot review thread on PR #159 (JSDoc drift on
+`emitFindingAlerts`).
+
+- **Migration `017_user_preferences.sql`**: new `user_preferences`
+  table (PK = `auth.users.id`), `timezone text not null default 'UTC'`,
+  RLS (owner read + self upsert/update), BEFORE-trigger validates
+  against `pg_timezone_names` (CHECK can't subquery), `updated_at`
+  trigger.
+- **`apps/web/src/lib/server/timezone.ts`**: `isValidTimezone` (uses
+  `Intl.DateTimeFormat`) and `formatOccurredOnInZone` (uses `en-CA`
+  to get YYYY-MM-DD without manual zero-pad). No new dep. **Optimization
+  pass (2026-05-15 evening)**: added a per-process positive cache so the
+  daily-summary cron stops constructing two `Intl.DateTimeFormat` per
+  user (constructor is ~10–100× slower than `.format()`); validation
+  and formatting now share one cache hit per IANA zone seen this
+  process. Bounded by the IANA zone universe (~600). Test count went
+  to 620/620 (+2 cache-coverage tests).
+- **`apps/web/src/lib/server/user-preferences.ts`**: `loadUserPreferences`
+  (single, RLS-scoped) and `loadUserPreferencesBulk` (cron path,
+  service-role; backfills missing users to UTC default; query error
+  degrades all to UTC rather than aborting the cron).
+- **Cron `route.ts`**: bulk-loads preferences once, computes
+  `occurred_on` per user via `formatOccurredOnInZone(startedAt, tz)`.
+  Response payload retains UTC `occurredOn` for operator dashboards.
+- **Settings page**: new "Timezone" card with a `<select>` of
+  `Intl.supportedValuesOf("timeZone")` wired to `updateTimezoneAction`.
+  Action edge-validates with `isValidTimezone`, maps SQLSTATE 22023 (the
+  trigger) to "we don't recognise that timezone" copy, falls back to
+  generic copy for everything else (no raw provider text).
+- **JSDoc fix** on `notifications.ts:emitFindingAlerts`: the migration
+  016 index has `kind` in the _predicate_, not the _key_; dedupe is
+  app-level SELECT-then-INSERT with 23505 as a race backstop, not
+  `ignoreDuplicates: true`.
+
+**Test count**: 620/620 web pass (was 593, +27 across timezone /
+user-preferences / settings action / cron route + cache coverage).
+`pnpm run validate`, `pnpm run security:routes`, type-check, lint,
+CodeQL all clean.
+
+**Next session**:
+
+- T2.2: Email delivery for `daily_summary` and critical
+  `finding_alert` via Resend.
+- T2.3: Strain-aware analysis context + per-finding confidence scores
+  (contract-changing — needs `contract-guardian`).
+- T2.4: Image quality validation in `apps/analysis` (blur / luminance
+  pre-check, return inconclusive on bad input).
+
+---
+
 ## 2026-05-15 — Notifications M2 server pipeline + post-wave drift cleanup (Claude Opus 4.7 / Copilot)
 
 **Landed on `main` via PRs #152-#157 (HEAD `c495316`)**
