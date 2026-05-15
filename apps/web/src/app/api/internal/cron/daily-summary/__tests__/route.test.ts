@@ -3,7 +3,10 @@ import { NextRequest } from "next/server";
 
 // Type the mocks as `vi.fn()` without inferring from defaults so each
 // test can pass its own shape via mockResolvedValueOnce / mockReturnValueOnce.
-type InsertResult = { error: { code?: string; message: string } | null };
+type UpsertResult = {
+  data: { id: string }[] | null;
+  error: { code?: string; message: string } | null;
+};
 type DigestSnapshot = {
   userId: string;
   grows: { id: string; name: string; stage: string | null }[];
@@ -21,12 +24,17 @@ type DigestSnapshot = {
 };
 
 const mocks = vi.hoisted(() => {
-  const insert = vi.fn<(_row: unknown) => Promise<InsertResult>>();
-  const from = vi.fn(() => ({ insert }));
+  const upsertSelect = vi.fn<() => Promise<UpsertResult>>();
+  // Explicitly type row/opts so mock.calls[0][0] is `unknown` (not an empty tuple).
+  const upsert = vi.fn((_row: unknown, _opts?: unknown) => ({
+    select: upsertSelect,
+  }));
+  const from = vi.fn(() => ({ upsert }));
   const dbClient = { from };
 
   return {
-    insert,
+    upsertSelect,
+    upsert,
     from,
     dbClient,
     getDbClient: vi.fn(() => dbClient),
@@ -69,7 +77,10 @@ function makeRequest(authHeader?: string): NextRequest {
 describe("GET /api/internal/cron/daily-summary", () => {
   beforeEach(() => {
     process.env = { ...ORIGINAL_ENV };
-    mocks.insert.mockReset().mockResolvedValue({ error: null });
+    mocks.upsertSelect
+      .mockReset()
+      .mockResolvedValue({ data: [{ id: "new-row" }], error: null });
+    mocks.upsert.mockClear();
     mocks.from.mockClear();
     mocks.getDbClient.mockReset().mockReturnValue(mocks.dbClient);
     mocks.listUsersWithActiveGrows.mockReset().mockResolvedValue([]);
@@ -139,7 +150,7 @@ describe("GET /api/internal/cron/daily-summary", () => {
       skipped: 0,
       errored: 0,
     });
-    expect(mocks.insert).not.toHaveBeenCalled();
+    expect(mocks.upsert).not.toHaveBeenCalled();
   });
 
   it("skips users with no meaningful activity (no AI call, no DB write)", async () => {
@@ -153,7 +164,7 @@ describe("GET /api/internal/cron/daily-summary", () => {
     expect(body.skipped).toBe(2);
     expect(body.wrote).toBe(0);
     expect(mocks.renderDigest).not.toHaveBeenCalled();
-    expect(mocks.insert).not.toHaveBeenCalled();
+    expect(mocks.upsert).not.toHaveBeenCalled();
   });
 
   it("writes a daily_summary row per user with activity", async () => {
@@ -183,31 +194,30 @@ describe("GET /api/internal/cron/daily-summary", () => {
       skipped: 0,
       errored: 0,
     });
-    expect(mocks.insert).toHaveBeenCalledTimes(1);
-    const insertedRow = mocks.insert.mock.calls[0]?.[0] as Record<
+    expect(mocks.upsert).toHaveBeenCalledTimes(1);
+    const upsertedRow = mocks.upsert.mock.calls[0]?.[0] as Record<
       string,
       unknown
     >;
-    expect(insertedRow).toMatchObject({
+    expect(upsertedRow).toMatchObject({
       user_id: "u1",
       kind: "daily_summary",
       priority: "info",
       title: "Today's grow summary",
     });
     // YYYY-MM-DD
-    expect(typeof insertedRow["occurred_on"]).toBe("string");
-    expect((insertedRow["occurred_on"] as string).length).toBe(10);
+    expect(typeof upsertedRow["occurred_on"]).toBe("string");
+    expect((upsertedRow["occurred_on"] as string).length).toBe(10);
   });
 
   // ─── failure isolation ──────────────────────────────────────────────
 
-  it("counts a same-day duplicate (23505) as a skip, not an error", async () => {
+  it("counts a same-day duplicate (ignored upsert) as a skip, not an error", async () => {
     process.env["CRON_SECRET"] = "secret";
     mocks.listUsersWithActiveGrows.mockResolvedValueOnce(["u1"]);
     mocks.hasMeaningfulActivity.mockReturnValueOnce(true);
-    mocks.insert.mockResolvedValueOnce({
-      error: { code: "23505", message: "duplicate key value" },
-    });
+    // ignoreDuplicates=true: PostgREST returns empty data (no error) on conflict.
+    mocks.upsertSelect.mockResolvedValueOnce({ data: [], error: null });
 
     const res = await GET(makeRequest("Bearer secret"));
     const body = await res.json();

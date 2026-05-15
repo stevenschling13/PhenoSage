@@ -33,7 +33,9 @@ export interface DailyDigestSnapshot {
 // if read receipts get richer.
 const ACTIVITY_WINDOW_MS = 24 * 60 * 60 * 1000;
 
-const TARGET_USERS_LIMIT = 500; // safety cap so a runaway cron can't bill out.
+// Safety cap so a runaway cron can't bill out. Sized for the route's 60s
+// maxDuration with a CONCURRENCY=5 fan-out: 100 users × ~1.5s/user ÷ 5 ≈ 30s.
+const TARGET_USERS_LIMIT = 100;
 
 // Tokens-per-digest cap. Gemini Pro models routinely fit a 4-grow
 // digest in 500-700 tokens; 1.2k gives generous headroom without
@@ -54,9 +56,11 @@ export async function listUsersWithActiveGrows(
     .order("updated_at", { ascending: false })
     .limit(limit);
 
+  // Inner-join to grows so members of archived grows are excluded.
   const members = await supabase
     .from("grow_members")
-    .select("user_id")
+    .select("user_id, grows!inner(id)")
+    .eq("grows.is_archived", false)
     .limit(limit);
 
   if (owners.error) {
@@ -87,19 +91,57 @@ export async function buildDigestSnapshot(
 ): Promise<DailyDigestSnapshot> {
   const sinceIso = new Date(now.getTime() - ACTIVITY_WINDOW_MS).toISOString();
 
-  const growsResult = await supabase
-    .from("grows")
-    .select("id,name,stage")
-    .eq("owner_id", userId)
-    .eq("is_archived", false);
+  // Fetch owned grows and the user's grow memberships in parallel so
+  // collaborator-only users (no owned grows) still receive a digest.
+  const [ownedGrowsResult, membershipResult] = await Promise.all([
+    supabase
+      .from("grows")
+      .select("id,name,stage")
+      .eq("owner_id", userId)
+      .eq("is_archived", false),
+    supabase.from("grow_members").select("grow_id").eq("user_id", userId),
+  ]);
 
-  if (growsResult.error) {
-    logServerEvent("error", "daily digest: grows query failed", {
-      error: growsResult.error.message,
+  if (ownedGrowsResult.error) {
+    logServerEvent("error", "daily digest: owned grows query failed", {
+      error: ownedGrowsResult.error.message,
       userId,
     });
   }
-  const grows = (growsResult.data ?? []) as DailyDigestSnapshot["grows"];
+  if (membershipResult.error) {
+    logServerEvent("error", "daily digest: grow memberships query failed", {
+      error: membershipResult.error.message,
+      userId,
+    });
+  }
+
+  type GrowRow = { id: string; name: string; stage: string | null };
+  const ownedGrows = (ownedGrowsResult.data ?? []) as GrowRow[];
+  const ownedIdSet = new Set(ownedGrows.map((g) => g.id));
+
+  // Grow IDs the user is a member of but does not own.
+  const memberOnlyGrowIds = (membershipResult.data ?? [])
+    .map((r) => r.grow_id as string)
+    .filter((id): id is string => Boolean(id) && !ownedIdSet.has(id));
+
+  // Fetch member-only grows (name/stage) when there are any.
+  let memberGrows: GrowRow[] = [];
+  if (memberOnlyGrowIds.length > 0) {
+    const memberGrowsResult = await supabase
+      .from("grows")
+      .select("id,name,stage")
+      .in("id", memberOnlyGrowIds)
+      .eq("is_archived", false);
+    if (memberGrowsResult.error) {
+      logServerEvent("error", "daily digest: member grows query failed", {
+        error: memberGrowsResult.error.message,
+        userId,
+      });
+    }
+    memberGrows = (memberGrowsResult.data ?? []) as GrowRow[];
+  }
+
+  const grows: DailyDigestSnapshot["grows"] = [...ownedGrows, ...memberGrows];
   const growIds = grows.map((g) => g.id);
 
   if (growIds.length === 0) {
@@ -129,7 +171,7 @@ export async function buildDigestSnapshot(
     supabase
       .from("plant_observations")
       .select("id", { count: "exact", head: true })
-      .in("plant_id", await listPlantIdsFor(supabase, growIds))
+      .in("grow_id", growIds)
       .gte("observed_at", sinceIso),
     supabase
       .from("grow_tasks")
@@ -168,18 +210,6 @@ type DigestFindingRow = {
   grow_id: string;
   plant_id: string;
 };
-
-async function listPlantIdsFor(
-  supabase: SupabaseClient,
-  growIds: string[],
-): Promise<string[]> {
-  if (growIds.length === 0) return [];
-  const { data } = await supabase
-    .from("plants")
-    .select("id")
-    .in("grow_id", growIds);
-  return (data ?? []).map((row: { id: string }) => row.id);
-}
 
 // True when there's nothing worth notifying about. The cron skips
 // these users entirely — no DB write, no AI call.

@@ -298,6 +298,7 @@ describe("buildDigestSnapshot", () => {
   it("returns empty snapshot when user owns no active grows", async () => {
     const supabase = makeSupabaseMock({
       grows: [{ data: [], error: null }],
+      grow_members: [{ data: [], error: null }],
     });
     const result = await buildDigestSnapshot(supabase as never, "u1");
     expect(result).toEqual({
@@ -316,7 +317,7 @@ describe("buildDigestSnapshot", () => {
       grows: [
         { data: [{ id: "g1", name: "Tent", stage: "flower" }], error: null },
       ],
-      plants: [{ data: [{ id: "p1" }], error: null }],
+      grow_members: [{ data: [], error: null }],
       plant_findings: [
         // 1st call: list new findings
         {
@@ -353,5 +354,30 @@ describe("buildDigestSnapshot", () => {
     expect(result.newObservations).toBe(1);
     expect(result.newTasks).toBe(3);
     expect(result.resolvedFindings).toBe(2);
+  });
+
+  it("includes grows the user is a collaborator on (no owned grows)", async () => {
+    const supabase = makeSupabaseMock({
+      grows: [
+        { data: [], error: null }, // no owned grows
+        {
+          data: [{ id: "g2", name: "Collab Tent", stage: "vegetative" }],
+          error: null,
+        }, // member-only grow
+      ],
+      grow_members: [{ data: [{ grow_id: "g2" }], error: null }],
+      plant_findings: [
+        { data: [], error: null },
+        { data: null, error: null, count: 0 },
+      ],
+      plant_images: [{ data: null, error: null, count: 2 }],
+      plant_observations: [{ data: null, error: null, count: 0 }],
+      grow_tasks: [{ data: null, error: null, count: 0 }],
+    });
+    const result = await buildDigestSnapshot(supabase as never, "u-collab");
+    expect(result.grows).toEqual([
+      { id: "g2", name: "Collab Tent", stage: "vegetative" },
+    ]);
+    expect(result.newImages).toBe(2);
   });
 });
