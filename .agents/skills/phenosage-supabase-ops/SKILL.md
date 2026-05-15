@@ -23,7 +23,7 @@ Everything an agent needs to operate the PhenoSage Supabase project, tailored to
   "mcpServers": {
     "supabase": {
       "type": "http",
-      "url": "https://mcp.supabase.com/mcp?project_ref=yjemotnclrnlxgcfntaf"
+      "url": "https://mcp.supabase.com/mcp?project_ref=yjemotnclrnlxgcfntaf&features=database,debugging,development,docs,functions,branching,storage"
     }
   }
 }
@@ -35,11 +35,25 @@ Everything an agent needs to operate the PhenoSage Supabase project, tailored to
 2. Check `.mcp.json` exists and has the correct `project_ref`.
 3. If tools aren't visible: trigger the MCP OAuth 2.1 flow in the agent, complete it in the browser, reload the session.
 
-**Least-privilege optimization:** Supabase's hosted MCP URL supports extra query params such as `read_only=true` and `features=...`. Keep the checked-in URL writable only when schema/data operations are expected; for audit-only sessions prefer:
+**Full project ownership:** This repo intentionally does **not** set `read_only=true`. The checked-in URL is project-scoped to `yjemotnclrnlxgcfntaf` and explicitly enables every project-level feature group, including `storage`, which Supabase disables by default to reduce tool count.
 
 ```text
-https://mcp.supabase.com/mcp?project_ref=yjemotnclrnlxgcfntaf&read_only=true&features=database,docs
+https://mcp.supabase.com/mcp?project_ref=yjemotnclrnlxgcfntaf&features=database,debugging,development,docs,functions,branching,storage
 ```
+
+Do not add `read_only=true` for this PhenoSage ops agent unless the user explicitly asks for an audit-only session. With `project_ref` set, Supabase hides account-level tools (`list_projects`, `create_project`, etc.); this is intentional because this agent owns the PhenoSage project, not the whole Supabase organization.
+
+**Enabled project-level MCP actions (from Supabase MCP feature groups):**
+
+| Group         | Read actions                                                                           | Write / mutating actions                                                          |
+| ------------- | -------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------- |
+| `database`    | `list_tables`, `list_extensions`, `list_migrations`, `execute_sql` for regular queries | `apply_migration`; `execute_sql` can mutate data when `read_only=true` is absent  |
+| `debugging`   | `get_logs`, `get_advisors`                                                             | —                                                                                 |
+| `development` | `get_project_url`, `get_publishable_keys`, `generate_typescript_types`                 | —                                                                                 |
+| `docs`        | `search_docs`                                                                          | —                                                                                 |
+| `functions`   | `list_edge_functions`, `get_edge_function`                                             | `deploy_edge_function`                                                            |
+| `branching`   | `list_branches`                                                                        | `create_branch`, `delete_branch`, `merge_branch`, `reset_branch`, `rebase_branch` |
+| `storage`     | `list_storage_buckets`, `get_storage_config`                                           | `update_storage_config`                                                           |
 
 **Dashboard:** `https://supabase.com/dashboard/project/yjemotnclrnlxgcfntaf`
 
