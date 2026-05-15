@@ -104,6 +104,11 @@ export type FindingCategory =
   | "general"
   | "positive";
 
+// Mirrors the `source` text+check column added in migration 010_user_findings.
+// 'ai' = analysis service write (service role); 'user_reported' = user-side
+// insert via the chat `record_image_finding` tool or future manual flows.
+export type FindingSource = "ai" | "user_reported";
+
 export interface PlantFinding {
   id: string;
   plantId: string;
@@ -114,6 +119,7 @@ export interface PlantFinding {
   title: string;
   description: string;
   recommendation?: string;
+  source: FindingSource;
   resolvedAt?: string;
   createdAt: string;
 }
@@ -195,4 +201,28 @@ export interface GrowEvent {
   notes?: string;
   occurredAt: string; // ISO timestamp
   createdAt: string;
+}
+
+// GrowTask — mirrors migration 008_grow_tasks.
+// Tasks may be auto-spawned by the AFTER INSERT trigger on plant_findings
+// (high/critical severity → urgent/high priority task), or created manually
+// by the chat `create_grow_task` tool / future user-facing forms.
+export type TaskPriority = "low" | "medium" | "high" | "urgent";
+export type TaskStatus = "open" | "in_progress" | "done" | "dismissed";
+
+export interface GrowTask {
+  id: string;
+  growId: string;
+  plantId?: string;
+  // 1:1 link to the plant_findings row that spawned this task. NULL when
+  // the task was created manually.
+  findingId?: string;
+  title: string;
+  description?: string;
+  priority: TaskPriority;
+  status: TaskStatus;
+  dueAt?: string; // ISO timestamp
+  createdAt: string;
+  updatedAt: string;
+  completedAt?: string;
 }

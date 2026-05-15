@@ -26,6 +26,7 @@ const API_ROOT = join(ROOT, "apps", "web", "src", "app", "api");
 const PUBLIC_ROUTES = new Set([
   // path relative to apps/web/src/app/api, with leading slash
   "/health",
+  "/healthz",
   "/ready",
   // Chat diagnostic — returns only build SHA + Gemini-key-alias presence
   // booleans + env-name inventory (no values). Intentionally unauthenticated
@@ -53,6 +54,12 @@ function* walk(dir) {
 
 const HTTP_METHOD_RE =
   /\bexport\s+(?:async\s+)?function\s+(GET|POST|PUT|PATCH|DELETE)\b/g;
+// Also catch re-exports like `export { GET } from "../health/route"` — these
+// expose an HTTP handler at the alias path but the previous regex missed
+// them, letting public routes (e.g. /api/healthz) slip past the auth audit.
+const HTTP_REEXPORT_RE =
+  /\bexport\s*\{\s*([^}]+)\s*\}\s*from\s+["'][^"']+["']/g;
+const HTTP_METHOD_NAMES = new Set(["GET", "POST", "PUT", "PATCH", "DELETE"]);
 const AUTH_IMPORT_RE = /from\s+["']@\/lib\/server\/auth["']/;
 const COMPONENTS_IMPORT_RE = /from\s+["']@\/components\//;
 const CRON_SECRET_RE =
@@ -71,6 +78,19 @@ for (const file of walk(API_ROOT)) {
   }
 
   const methods = [...text.matchAll(HTTP_METHOD_RE)].map((m) => m[1]);
+  for (const reexport of text.matchAll(HTTP_REEXPORT_RE)) {
+    const names = reexport[1]
+      .split(",")
+      .map((s) =>
+        s
+          .trim()
+          .split(/\s+as\s+/i)
+          .pop()
+          .trim(),
+      )
+      .filter((n) => HTTP_METHOD_NAMES.has(n));
+    methods.push(...names);
+  }
   if (methods.length === 0) continue;
 
   const isPublic = PUBLIC_ROUTES.has(apiPath);
