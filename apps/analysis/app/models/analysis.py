@@ -92,6 +92,7 @@ class AnalyzeRequest(BaseModel):
 class AnalysisFinding(BaseModel):
     category: FindingCategory
     severity: FindingSeverity
+    confidence_score: float | None = Field(default=None, ge=0, le=1)
     title: str
     description: str
     recommendation: str | None = None

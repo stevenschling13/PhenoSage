@@ -116,6 +116,7 @@ export interface PlantFinding {
   imageId?: string;
   category: FindingCategory;
   severity: FindingSeverity;
+  confidenceScore?: number;
   title: string;
   description: string;
   recommendation?: string;
@@ -150,6 +151,7 @@ export interface ChatMessage {
 export interface AnalysisFinding {
   category: FindingCategory;
   severity: FindingSeverity;
+  confidenceScore?: number;
   title: string;
   description: string;
   recommendation?: string;

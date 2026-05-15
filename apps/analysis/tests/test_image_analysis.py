@@ -59,6 +59,7 @@ async def test_run_analysis_returns_inconclusive_fallback_when_storage_is_unconf
     assert "Inconclusive fallback result" in response.summary
     assert response.compared_to_image_id == "previous-image"
     assert response.findings[0].title == "Fallback analysis only"
+    assert response.findings[0].confidence_score == 0.0
 
 
 @pytest.mark.asyncio
@@ -116,6 +117,7 @@ async def test_run_model_analysis_parses_structured_model_output(
                                         {
                                             "category": "nutrient_deficiency",
                                             "severity": "medium",
+                                            "confidence_score": 0.78,
                                             "title": "Magnesium deficiency",
                                             "description": "Interveinal chlorosis.",
                                             "recommendation": "Add Cal-Mag.",
@@ -150,6 +152,7 @@ async def test_run_model_analysis_parses_structured_model_output(
     assert response.overall_health_score == 74.0
     assert response.summary == "Mild deficiency detected."
     assert response.findings[0].title == "Magnesium deficiency"
+    assert response.findings[0].confidence_score == 0.78
     assert response.findings[0].recommendation == "Add Cal-Mag."
     assert response.compared_to_image_id == "previous-image"
 
@@ -199,6 +202,7 @@ async def test_run_model_analysis_uses_low_confidence_defaults_for_incomplete_ou
         "Image reviewed successfully, but the returned summary was incomplete."
     )
     assert response.findings[0].title == "No issues confidently identified"
+    assert response.findings[0].confidence_score == 0.15
     assert response.overall_health_score == 100.0
 
 

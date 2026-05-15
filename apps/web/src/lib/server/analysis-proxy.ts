@@ -45,7 +45,7 @@ type RawAnalysisResponse = {
   overall_health_score?: number;
   overallHealthScore?: number;
   summary: string;
-  findings: AnalysisResponse["findings"];
+  findings: RawAnalysisFinding[];
   compared_to_image_id?: string | null;
   comparedToImageId?: string | null;
   comparison_summary?: string | null;
@@ -62,6 +62,16 @@ type RawAnalysisResponse = {
   fallbackReason?: string | null;
   request_id?: string;
   requestId?: string;
+};
+
+type RawAnalysisFinding = {
+  category: AnalysisResponse["findings"][number]["category"];
+  severity: AnalysisResponse["findings"][number]["severity"];
+  confidence_score?: number | null;
+  confidenceScore?: number | null;
+  title: string;
+  description: string;
+  recommendation?: string | null;
 };
 
 const DEFAULT_TIMEOUT_MS = 30_000;
@@ -230,7 +240,7 @@ export function normalizeAnalysisResponse(
     overallHealthScore:
       payload.overallHealthScore ?? payload.overall_health_score ?? 0,
     summary: payload.summary,
-    findings: payload.findings,
+    findings: payload.findings.map(normalizeFinding),
     analyzedAt:
       payload.analyzedAt ?? payload.analyzed_at ?? new Date().toISOString(),
     modelVersion: payload.modelVersion ?? payload.model_version ?? "unknown",
@@ -266,6 +276,29 @@ export function normalizeAnalysisResponse(
   const requestId = payload.requestId ?? payload.request_id ?? null;
   if (requestId) {
     normalized.requestId = requestId;
+  }
+
+  return normalized;
+}
+
+function normalizeFinding(
+  finding: RawAnalysisFinding,
+): AnalysisResponse["findings"][number] {
+  const normalized: AnalysisResponse["findings"][number] = {
+    category: finding.category,
+    severity: finding.severity,
+    title: finding.title,
+    description: finding.description,
+  };
+
+  const recommendation = finding.recommendation ?? null;
+  if (recommendation) {
+    normalized.recommendation = recommendation;
+  }
+
+  const confidenceScore = finding.confidenceScore ?? finding.confidence_score;
+  if (typeof confidenceScore === "number") {
+    normalized.confidenceScore = confidenceScore;
   }
 
   return normalized;

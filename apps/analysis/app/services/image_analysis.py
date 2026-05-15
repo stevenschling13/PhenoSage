@@ -99,6 +99,7 @@ def _build_fallback_response(
     finding = AnalysisFinding(
         category=FindingCategory.general,
         severity=FindingSeverity.info,
+        confidence_score=0.0,
         title="Fallback analysis only",
         description=(
             "PhenoSage could not verify the image with the primary model path. "
@@ -216,6 +217,7 @@ async def _run_model_analysis(
             AnalysisFinding(
                 category=FindingCategory.general,
                 severity=FindingSeverity.info,
+                confidence_score=0.15,
                 title="No issues confidently identified",
                 description=(
                     "The model did not return structured findings. Treat the result as "

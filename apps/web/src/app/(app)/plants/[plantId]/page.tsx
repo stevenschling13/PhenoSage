@@ -502,6 +502,12 @@ export default async function PlantPage({ params }: Props) {
                         <span className="text-xs uppercase tracking-[0.14em] text-muted-foreground">
                           {finding.category.replaceAll("_", " ")}
                         </span>
+                        {finding.confidenceScore !== undefined ? (
+                          <span className="text-xs uppercase tracking-[0.14em] text-muted-foreground">
+                            {Math.round(finding.confidenceScore * 100)}%
+                            confidence
+                          </span>
+                        ) : null}
                       </div>
                       <p className="mt-3 text-sm font-semibold text-foreground">
                         {finding.title}

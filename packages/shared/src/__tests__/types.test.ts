@@ -79,6 +79,7 @@ describe("shared contract types", () => {
       growId: "g1",
       category: categories[0]!,
       severity: severities[4]!,
+      confidenceScore: 0.91,
       title: "N deficiency",
       description: "Yellowing lower leaves",
       source: "ai",
@@ -130,6 +131,7 @@ describe("shared contract types", () => {
       findings: [
         {
           category: "environmental",
+          confidenceScore: 0.84,
           severity: "low",
           title: "Light stress",
           description: "Slight bleaching on tops",
@@ -139,6 +141,7 @@ describe("shared contract types", () => {
       modelVersion: "phenosage-v1",
     };
     expect(response.findings).toHaveLength(1);
+    expect(response.findings[0]?.confidenceScore).toBe(0.84);
     expect(response.overallHealthScore).toBeGreaterThanOrEqual(0);
     expect(response.overallHealthScore).toBeLessThanOrEqual(100);
   });

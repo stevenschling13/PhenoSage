@@ -132,6 +132,39 @@ describe("analysis-proxy", () => {
     expect(Object.keys(sent.grow_context)).toEqual(["grow_id"]);
   });
 
+  it("normalizes snake_case finding confidence from the analysis service", async () => {
+    mockOk({
+      plant_id: "p1",
+      image_id: "i1",
+      overall_health_score: 88,
+      summary: "Healthy overall.",
+      findings: [
+        {
+          category: "positive",
+          severity: "info",
+          confidence_score: 0.87,
+          title: "Healthy posture",
+          description: "Leaves are praying upward.",
+          recommendation: "Hold the current environment steady.",
+        },
+      ],
+      analyzed_at: "2026-04-01T00:00:00Z",
+      model_version: "v1",
+    });
+
+    const result = await analyzeImage({
+      plantId: "p1",
+      imageId: "i1",
+      storagePath: "plants/p1/i1.jpg",
+      growContext: { growId: "g1" },
+    });
+
+    expect(result.findings[0]).toMatchObject({
+      confidenceScore: 0.87,
+      recommendation: "Hold the current environment steady.",
+    });
+  });
+
   it("throws an UpstreamError with the upstream status when the upstream errors", async () => {
     fetchSpy.mockResolvedValue(new Response("boom", { status: 502 }));
     await expect(callAnalysisService({ endpoint: "/broken" })).rejects.toThrow(
