@@ -1050,15 +1050,23 @@ export async function executeChatTool(
             // (async-job follow-up: see analysis_jobs table from
             // migration 005 — a worker that drains the queue is not
             // wired up yet, so the sync path stays default.)
+            //
+            // The timer is captured in a let-binding and cleared in
+            // `finally` so a fast-path success doesn't leave the
+            // event loop holding a 45s timeout — important when
+            // multiple tool calls fan out in one chat turn.
+            let timeoutId: ReturnType<typeof setTimeout> | undefined;
             const result = await Promise.race([
               runAndPersistPlantAnalysis(analyzeParams),
-              new Promise<never>((_, reject) =>
-                setTimeout(
+              new Promise<never>((_, reject) => {
+                timeoutId = setTimeout(
                   () => reject(new Error("analysis timed out after 45s")),
                   ANALYSIS_TOOL_TIMEOUT_MS,
-                ),
-              ),
-            ]);
+                );
+              }),
+            ]).finally(() => {
+              if (timeoutId !== undefined) clearTimeout(timeoutId);
+            });
             if (!result) {
               return {
                 ok: false,
