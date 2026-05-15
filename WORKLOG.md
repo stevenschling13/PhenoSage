@@ -4,6 +4,50 @@ Handoff log between sessions. Keep entries short. Newest at top.
 
 ---
 
+## 2026-05-15 — Tier 2 merge handoff / wrap-up (Copilot)
+
+**Landed on `copilot/review-pr-159-and-plan-tier-2` (commit `f69003a`)**
+
+Final pass to make the Tier 2 PR merge-ready and give the next agent a clean
+Tier 3 handoff.
+
+- **Tier 2 sweep status** — complete on this branch:
+  - **T2.1** per-user timezone for daily summary / notification dedupe
+  - **T2.2** Resend-backed email delivery for `daily_summary` and
+    `finding_alert`
+  - **T2.3** strain-aware analysis context + per-finding confidence scores
+  - **T2.4** pre-vision image-quality gate
+- **T2.4 last-mile hardening** — Pillow `DecompressionBombError` now maps to
+  stable reason `image_too_large`, and the fallback log includes
+  `image_quality_reason` for ops triage instead of collapsing to an untyped
+  500 / generic fallback.
+- **Validation** — all green in this sandbox after bootstrapping the toolchain:
+  - `pnpm install --frozen-lockfile`
+  - `pnpm run validate`
+  - `pnpm turbo run type-check lint test`
+  - `pnpm run security:routes`
+  - `cd apps/analysis && ruff check . && mypy app/ && pytest --cov=app`
+- **Merge assessment** — no further Tier 2 optimization is merge-blocking.
+  Any future tuning should be field-data follow-up work (for example image
+  quality thresholds), not more scope in this PR.
+
+**Dead end / env note**
+
+- `pnpm run build` remains blocked in this sandbox by `next/font` reaching
+  `fonts.googleapis.com` for Fraunces / JetBrains Mono. This is an environment
+  network limitation, not a known code regression on the branch.
+
+**Next session**:
+
+- Treat this PR as the end of the Tier 2 sweep and start a fresh Tier 3 branch.
+- Tier 3 roadmap entry points: pgvector semantic search, "ask about any past
+  grow" memory, automated grow advisor, phenotype tracking, harvest prediction.
+- Milestone 2 still has unrelated roadmap items open (for example health trend
+  graph, collaborators, export history, few-shot prompt refinement, realtime,
+  monitoring), but they are outside this Tier 2 PR handoff.
+
+---
+
 ## 2026-05-15 — Tier 2.3: strain-aware prompt + per-finding confidence (Copilot)
 
 **Landed on `copilot/review-pr-159-and-plan-tier-2` (commit `b86dd76`)**
@@ -49,7 +93,7 @@ it in the plant detail findings rail.
 
 ## 2026-05-15 — Tier 2.4: pre-vision image-quality gate in apps/analysis (Copilot)
 
-**In-flight on `copilot/review-pr-159-and-plan-tier-2`**
+**Landed on `copilot/review-pr-159-and-plan-tier-2` (commit `f69003a`)**
 
 Picks up T2.4 from the Tier Implementation Playbook hand-off in PR #161.
 Adds an explicit _inconclusive_ path for unanalysable images so the
@@ -65,39 +109,38 @@ satisfies Rule 9 (Plant-Health Output Discipline).
 - **`app/errors.py`**: new `ImageQualityInconclusive(AnalysisError)` —
   code `IMAGE_QUALITY_INCONCLUSIVE`, status 422, retryable=False; `reason`
   is keyword-only and validated against `IMAGE_QUALITY_REASONS`
-  (`image_decode_failed | image_too_small | too_dark | too_bright |
-too_blurry`). Default message generic — never embeds pixel metrics.
+  (`image_decode_failed | image_too_large | image_too_small | too_dark |
+too_bright | too_blurry`). Default message generic — never embeds pixel
+  metrics.
 - **`app/services/image_quality.py`**: pure `assess_image_quality(bytes)`
-  pipeline — decode → minimum 64 px on each side → luminance window
-  [15, 235] → edge-variance ≥ 50. Luminance check precedes blur check on
-  purpose: a black image is "too dark", not "too blurry" (more actionable
-  copy). Thresholds are module-level constants for one-place tuning.
-- **`app/services/image_analysis.py`**: single-line wire-up between
-  fetch and model. Existing `except AnalysisError` branch routes the new
-  exception to the inconclusive fallback envelope automatically — no
-  changes to the router, the response model, the web proxy, or shared
-  contracts.
-- **Tests**: `tests/test_image_quality.py` (+13 cases — happy path / RGB
-  JPEG / decode-fail / empty bytes / too-small / under-exposed /
-  over-exposed / blurred / uniform-grey / dark-wins-over-blurry / contract
-  surface / unknown-reason guard); `tests/test_errors.py` (+1 case,
-  extended redaction-safety check); `tests/test_image_analysis.py` (+1
-  integration case proving `_run_model_analysis` is not called when the
-  gate fails, plus updated happy-path fixture to return a real PNG that
-  passes the gate).
+  pipeline — decode → decompression-bomb guard → minimum 64 px on each side →
+  luminance window [15, 235] → edge-variance ≥ 50. Luminance check precedes
+  blur check on purpose: a black image is "too dark", not "too blurry" (more
+  actionable copy). Thresholds are module-level constants for one-place
+  tuning.
+- **`app/services/image_analysis.py`**: single-line wire-up between fetch and
+  model. Existing `except AnalysisError` branch routes the new exception to the
+  inconclusive fallback envelope automatically — no changes to the router, the
+  response model, the web proxy, or shared contracts. Fallback telemetry now
+  logs `image_quality_reason` for ops triage.
+- **Tests**: `tests/test_image_quality.py` (+14 cases — happy path / RGB JPEG /
+  decode-fail / decompression-bomb / empty bytes / too-small /
+  under-exposed / over-exposed / blurred / uniform-grey /
+  dark-wins-over-blurry / contract surface / unknown-reason guard);
+  `tests/test_errors.py` (+1 case, extended redaction-safety check);
+  `tests/test_image_analysis.py` (+2 integration cases proving
+  `_run_model_analysis` is not called when the gate fails, the fallback log
+  carries `image_quality_reason`, plus updated happy-path fixture to return a
+  real PNG that passes the gate).
 
-**Test count**: pytest 100/100 (was 86, +14). `ruff check .`, `mypy app/`,
+**Test count**: pytest 102/102 (was 86, +16). `ruff check .`, `mypy app/`,
 `pnpm run validate`, `pnpm run security:routes`, CodeQL all clean.
 Pillow added as the only new dep — pinned to 12.2.0.
 
 **Next session**:
 
-- T2.3: Strain-aware analysis context + per-finding confidence scores
-  (contract-changing — needs `contract-guardian`). Touches
-  `packages/shared/src/types.ts`, `apps/analysis/app/models/**`,
-  `apps/analysis/app/routers/analyze.py`, the web proxy, the findings UI,
-  and a new migration (additive `strain_profile_id` or structured
-  reference table). Likely to burst the 1,500-line cap; plan for a split.
+- No Tier 2 follow-up required on this branch; see the Tier 2 wrap-up entry
+  above for merge / Tier 3 handoff.
 
 ---
 

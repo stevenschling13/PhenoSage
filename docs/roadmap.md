@@ -50,7 +50,7 @@
 - [x] Finding resolution tracking (mark as resolved)
 - [x] Grow event log (water, feed, top, LST, etc.)
 - [x] Plant observation form (height, notes)
-- [~] Proactive daily summary (Vercel Cron → AI → in-app notification) — server-side data pipeline, `notifications` table, and `/api/internal/cron/daily-summary` shipped (#156); Tier 1 inbox UI shipped in #159; per-user timezone for `occurred_on` is the next sub-task.
+- [x] Proactive daily summary (Vercel Cron → AI → in-app notification) — server-side pipeline, inbox UI, per-user timezone for `occurred_on`, and email delivery are shipped.
 - [x] Task generation from findings
 - [x] Grow stage progression tracking
 - [x] Multiple grows with easy switching
