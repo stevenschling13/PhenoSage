@@ -118,6 +118,17 @@ function getEmbeddingClient(): OpenAI | null {
   }
 }
 
+function providerRequestIdFrom(value: unknown): string | undefined {
+  if (!value || typeof value !== "object") return undefined;
+  if ("_request_id" in value && typeof value._request_id === "string") {
+    return value._request_id;
+  }
+  if ("request_id" in value && typeof value.request_id === "string") {
+    return value.request_id;
+  }
+  return undefined;
+}
+
 function isEmbeddingVector(value: unknown): value is number[] {
   return (
     Array.isArray(value) &&
@@ -134,10 +145,19 @@ export async function generateFindingEmbeddings(
     return { ok: true, embeddings: [], providerRequestId: null };
   }
 
-  const client = getEmbeddingClient();
-  if (!client) {
-    logServerEvent("warn", "finding embeddings skipped: Gemini key missing", {
+  let client: OpenAI | null;
+  try {
+    client = getEmbeddingClient();
+    if (!client) {
+      logServerEvent("warn", "finding embeddings skipped: Gemini key missing", {
+        requestId: opts.requestId,
+      });
+      return { ok: false, code: "configuration_error" };
+    }
+  } catch (err) {
+    logServerEvent("warn", "finding embeddings client init failed", {
       requestId: opts.requestId,
+      error: err instanceof Error ? err.message : String(err),
     });
     return { ok: false, code: "configuration_error" };
   }
@@ -193,10 +213,7 @@ export async function generateFindingEmbeddings(
       return { ok: false, code: "circuit_open" };
     }
 
-    const providerRequestId =
-      err instanceof Error && "request_id" in err
-        ? String(err.request_id)
-        : undefined;
+    const providerRequestId = providerRequestIdFrom(err);
     logServerEvent("warn", "finding embeddings unavailable", {
       requestId: opts.requestId,
       providerRequestId,

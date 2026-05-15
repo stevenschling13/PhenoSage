@@ -997,11 +997,19 @@ export async function executeChatTool(
               /permission denied|row-level security/i.test(
                 error?.message ?? "",
               );
+            logServerEvent("warn", "chat record_image_finding failed", {
+              requestId: ctx.requestId,
+              userId: ctx.userId,
+              growId: args.growId,
+              plantId: args.plantId,
+              code: error?.code,
+              error: error?.message ?? "no row returned",
+            });
             return {
               ok: false,
               error: denied
                 ? "you do not have permission to record findings on this grow (owner or collaborator only)"
-                : `could not record finding: ${error?.message ?? "no row returned"}`,
+                : "could not record finding right now; please try again later",
             };
           }
           await persistSingleFindingEmbeddingBestEffort(

@@ -85,6 +85,45 @@ describe("finding embeddings", () => {
     );
   });
 
+  it("returns a configuration error when embedding client setup fails", async () => {
+    getAIClient.mockImplementation(() => {
+      throw new Error("client init failed");
+    });
+
+    await expect(
+      generateFindingEmbeddings(["one"], { requestId: "req-1" }),
+    ).resolves.toEqual({ ok: false, code: "configuration_error" });
+    expect(logServerEvent).toHaveBeenCalledWith(
+      "warn",
+      "finding embeddings client init failed",
+      expect.objectContaining({
+        requestId: "req-1",
+        error: "client init failed",
+      }),
+    );
+  });
+
+  it("logs provider _request_id when embedding generation fails", async () => {
+    const providerError = Object.assign(new Error("provider unavailable"), {
+      _request_id: "provider-req-err",
+    });
+    const withResponse = vi.fn().mockRejectedValue(providerError);
+    const create = vi.fn(() => ({ withResponse }));
+    getAIClient.mockReturnValue({ embeddings: { create } });
+
+    await expect(
+      generateFindingEmbeddings(["one"], { requestId: "req-1" }),
+    ).resolves.toEqual({ ok: false, code: "embedding_unavailable" });
+    expect(logServerEvent).toHaveBeenCalledWith(
+      "warn",
+      "finding embeddings unavailable",
+      expect.objectContaining({
+        requestId: "req-1",
+        providerRequestId: "provider-req-err",
+      }),
+    );
+  });
+
   it("skips persistence when the stored hash already matches", async () => {
     const text = buildFindingEmbeddingText({
       category: "general",

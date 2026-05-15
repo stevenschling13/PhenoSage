@@ -93,42 +93,51 @@ export async function findSimilarGrowFindings(params: {
       ? Math.max(0, Math.min(1, params.threshold))
       : DEFAULT_THRESHOLD;
 
-  const { data, error } = await params.supabase
-    .rpc("match_similar_grow_findings", {
-      p_exclude_finding_ids: params.excludeFindingIds ?? [],
-      p_grow_id: params.growId,
-      p_match_count: limit,
-      p_match_threshold: threshold,
-      p_query_embedding: vectorLiteral(embeddingResult.embeddings[0] ?? []),
-    })
-    .abortSignal(AbortSignal.timeout(SEARCH_TIMEOUT_MS));
+  try {
+    const { data, error } = await params.supabase
+      .rpc("match_similar_grow_findings", {
+        p_exclude_finding_ids: params.excludeFindingIds ?? [],
+        p_grow_id: params.growId,
+        p_match_count: limit,
+        p_match_threshold: threshold,
+        p_query_embedding: vectorLiteral(embeddingResult.embeddings[0] ?? []),
+      })
+      .abortSignal(AbortSignal.timeout(SEARCH_TIMEOUT_MS));
 
-  if (error) {
-    logServerEvent("warn", "semantic finding search failed", {
+    if (error) {
+      logServerEvent("warn", "semantic finding search failed", {
+        requestId: params.requestId,
+        growId: params.growId,
+        error: error.message,
+      });
+      return { ok: false, code: "semantic_search_unavailable" };
+    }
+
+    const rows = (data ?? []) as SimilarFindingRpcRow[];
+    return {
+      ok: true,
+      data: rows.map((row) => ({
+        id: row.id,
+        plantId: row.plant_id,
+        plantName: row.plant_name,
+        category: row.category,
+        severity: row.severity,
+        title: row.title,
+        description: row.description,
+        recommendation: row.recommendation,
+        source: row.source,
+        createdAt: row.created_at,
+        similarity: row.similarity,
+      })),
+    };
+  } catch (err) {
+    logServerEvent("warn", "semantic finding search threw", {
       requestId: params.requestId,
       growId: params.growId,
-      error: error.message,
+      error: err instanceof Error ? err.message : String(err),
     });
     return { ok: false, code: "semantic_search_unavailable" };
   }
-
-  const rows = (data ?? []) as SimilarFindingRpcRow[];
-  return {
-    ok: true,
-    data: rows.map((row) => ({
-      id: row.id,
-      plantId: row.plant_id,
-      plantName: row.plant_name,
-      category: row.category,
-      severity: row.severity,
-      title: row.title,
-      description: row.description,
-      recommendation: row.recommendation,
-      source: row.source,
-      createdAt: row.created_at,
-      similarity: row.similarity,
-    })),
-  };
 }
 
 export async function executeSearchSimilarFindingsTool(

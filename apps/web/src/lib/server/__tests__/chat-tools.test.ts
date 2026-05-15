@@ -1980,6 +1980,40 @@ describe("chat-tools — record_image_finding", () => {
     if (!result.ok) expect(result.error).toMatch(/owner or collaborator only/i);
   });
 
+  it("hides raw insert errors and logs them server-side", async () => {
+    const { client } = makeInsertMock({
+      data: null,
+      error: { code: "57014", message: "statement timeout at SQL text" },
+    });
+    createSupabaseServerClient.mockResolvedValue(client);
+
+    const result = await executeChatTool(
+      "record_image_finding",
+      {
+        plantId: "p-1",
+        growId: "g-1",
+        category: "disease",
+        severity: "high",
+        title: "X",
+      },
+      CTX_AUTHED,
+    );
+
+    expect(result).toEqual({
+      ok: false,
+      error: "could not record finding right now; please try again later",
+    });
+    expect(logServerEvent).toHaveBeenCalledWith(
+      "warn",
+      "chat record_image_finding failed",
+      expect.objectContaining({
+        requestId: "req-123",
+        code: "57014",
+        error: "statement timeout at SQL text",
+      }),
+    );
+  });
+
   it("rejects when the user is not authenticated", async () => {
     const { client, insert } = makeInsertMock({ data: null, error: null });
     createSupabaseServerClient.mockResolvedValue(client);

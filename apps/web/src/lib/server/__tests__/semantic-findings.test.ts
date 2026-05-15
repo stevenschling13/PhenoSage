@@ -25,6 +25,12 @@ function makeRpcClient(result: {
   return { abortSignal, client: { rpc }, rpc };
 }
 
+function makeThrowingRpcClient(error: Error) {
+  const abortSignal = vi.fn().mockRejectedValue(error);
+  const rpc = vi.fn(() => ({ abortSignal }));
+  return { abortSignal, client: { rpc }, rpc };
+}
+
 describe("semantic findings search", () => {
   beforeEach(() => {
     generateFindingEmbeddings.mockReset();
@@ -123,5 +129,29 @@ describe("semantic findings search", () => {
         requestId: "req-1",
       }),
     ).resolves.toEqual({ ok: false, code: "semantic_search_unavailable" });
+  });
+
+  it("hides thrown RPC timeout errors from callers", async () => {
+    const { client, abortSignal } = makeThrowingRpcClient(
+      new Error("AbortError: operation timed out"),
+    );
+
+    await expect(
+      findSimilarGrowFindings({
+        supabase: client as unknown as SearchClient,
+        growId: "grow-1",
+        query: "yellowing lower leaves",
+        requestId: "req-1",
+      }),
+    ).resolves.toEqual({ ok: false, code: "semantic_search_unavailable" });
+    expect(abortSignal).toHaveBeenCalledWith(expect.any(AbortSignal));
+    expect(logServerEvent).toHaveBeenCalledWith(
+      "warn",
+      "semantic finding search threw",
+      expect.objectContaining({
+        requestId: "req-1",
+        growId: "grow-1",
+      }),
+    );
   });
 });
