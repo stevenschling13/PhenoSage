@@ -5,7 +5,60 @@ All notable changes to PhenoSage are documented here. Format follows
 [SemVer](https://semver.org/) once we cut 1.0; until then, changes are grouped
 by date under `## [Unreleased]`.
 
-## [Unreleased] — 2026-04-18 production-hardening pass
+## [Unreleased] — 2026-05-15 agentic chat + grow lifecycle wave
+
+### Added
+
+- **Chat agentic tools** (`apps/web/src/lib/server/chat-tools.ts`): the
+  assistant gained a full write+read tool surface — `create_grow`,
+  `create_plants`, `create_grow_task` (#139); `update_grow`,
+  `update_plant` (#140); `record_image_finding` with user-source RLS
+  (#141); `get_plant_timeline`, `trigger_plant_analysis` (#142);
+  fuzzy `find_grow`, `find_plant` entity resolvers (#143);
+  `compare_plants`, `get_grow_summary` plus a refreshed cannabis-
+  cultivator system prompt (#144). Earlier waves added
+  `log_grow_event` / `log_plant_observation` (#132),
+  `mark_finding_resolved` / `update_grow_stage` (#133), and the
+  auto-action pipeline that spawns `grow_tasks` from chat (#134).
+- **Grow lifecycle**: bulk plant create with auto-numbered names
+  (#138); detail page, archive flow, and migration `011_grows_integrity`
+  (partial UNIQUE on `(owner_id, lower(name)) WHERE NOT is_archived`)
+  (#147); edit, stage-advance, and hard-delete actions on the grow
+  detail page (#150).
+- **Database migrations** beyond the 001-002 baseline: `003`
+  production index pass, `004` `plant_analyses`, `005` `analysis_jobs`,
+  `006` `chat_attachments`, `007` `plant_findings.resolved_at`, `008`
+  `grow_tasks`, `009` chat/findings indexes, `010` user-source findings,
+  `011` grows integrity (above).
+- **Ops**: one-click Supabase migration apply via `workflow_dispatch`
+  in `db-migrations.yml` (#148); project-scoped Supabase MCP config in
+  `.mcp.json` (#149).
+
+### Changed
+
+- `useActionRecovery` hook extracted so server-action redirect-bug
+  pattern (try/catch + `isNextFrameworkError` re-throw + return
+  `redirectTo` + client `router.push`) is reusable across forms (#145).
+- Chat copy + system prompt rewritten for serious cannabis cultivators
+  (#119, #144); chat threading + in-app grow picker (#120).
+
+### Fixed
+
+- `createGrowAction` redirect-from-await bug — landings now go to
+  `/grows` instead of throwing a framework error (#145).
+- Grow + settings server actions hardened against unhandled exceptions
+  (#135).
+
+### Security
+
+- Analysis service `storage_path` validated to prevent SSRF (CodeQL
+  alert #164) (#146).
+- `record_image_finding` uses a dedicated `source = 'user'` RLS path
+  so chat-recorded findings don't impersonate AI-generated ones (#141).
+
+---
+
+## [Released] — 2026-04-18 production-hardening pass
 
 ### Added
 
@@ -39,7 +92,7 @@ by date under `## [Unreleased]`.
 
 ### Changed
 
-- Engines bumped: Node `>=22`, pnpm `>=9`.
+- Engines bumped: Node `>=20`, pnpm `>=9`.
 - `apps/web/tsconfig.json` and `packages/shared/tsconfig.json` extend
   `tsconfig.base.json`.
 - `next.config.mjs` headers now include CSP, COOP, CORP.

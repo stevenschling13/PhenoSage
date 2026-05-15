@@ -4,9 +4,38 @@ Handoff log between sessions. Keep entries short. Newest at top.
 
 ---
 
-# WORKLOG
+## 2026-05-15 — Chat agentic tools wave + grow lifecycle + prod hardening (Claude Opus 4.7)
 
-Handoff log between sessions. Keep entries short. Newest at top.
+**Landed on `main` via PRs #137-#150 (HEAD `84ef964`)**
+
+Two-month wave bringing the chat assistant from passive Q&A to a full
+agentic copilot, plus completing the grow lifecycle and closing several
+prod-hardening gaps.
+
+- **Chat tools (read+write+entity-resolution)**: `create_grow` /
+  `create_plants` / `create_grow_task` (#139), `update_grow` /
+  `update_plant` (#140), `record_image_finding` with user-source RLS
+  (#141), `get_plant_timeline` / `trigger_plant_analysis` (#142),
+  `find_grow` / `find_plant` fuzzy resolvers (#143), `compare_plants` /
+  `get_grow_summary` + system prompt refresh (#144). All tools covered
+  by `chat-tools.test.ts`.
+- **Grow lifecycle**: bulk plant create with auto-numbered names (#138),
+  createGrow redirect-bug fix + reusable `useActionRecovery` hook (#145),
+  detail page + archive flow + integrity migration 011 (partial UNIQUE
+  on `(owner_id, lower(name)) WHERE NOT is_archived`) (#147), edit /
+  stage advance / hard-delete on detail page (#150).
+- **Prod hardening**: SSRF guard on analysis service `storage_path`
+  (CodeQL #164) (#146), one-click Supabase migration apply via
+  `workflow_dispatch` (#148), project-scoped Supabase MCP config (#149).
+- **Migration drift repair**: production was missing history rows for
+  003-010 (some DDL applied, some not). Applied + recorded all 11
+  migrations against `yjemotnclrnlxgcfntaf`. Schema now matches repo.
+
+**Test count**: 561/561 web pass, lint+type-check clean. CI green.
+
+**Next session**: shared TS types lag migrations 008/010 (no `GrowTask`,
+`PlantFinding.source` missing); `check-route-security.mjs` doesn't
+detect re-exported HTTP handlers (`api/healthz` slips through).
 
 ---
 
