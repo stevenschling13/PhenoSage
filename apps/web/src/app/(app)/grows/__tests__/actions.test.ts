@@ -1,10 +1,11 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const mocks = vi.hoisted(() => {
-  // The action chains .insert(...).select("id").single().
+  // The action chains .insert(...).select("id").abortSignal(...).single().
   // Build a thenable-style chain by default that yields { data: { id }, error: null }.
   const single = vi.fn();
-  const select = vi.fn(() => ({ single }));
+  const abortSignal = vi.fn(() => ({ single }));
+  const select = vi.fn(() => ({ abortSignal }));
   const insert = vi.fn(() => ({ select }));
   const from = vi.fn(() => ({ insert }));
   const supabaseStub = { from };
@@ -12,16 +13,28 @@ const mocks = vi.hoisted(() => {
   const getServerUser = vi.fn(async () => ({ id: "user-1" }));
   const revalidatePath = vi.fn();
   const logServerEvent = vi.fn();
+  const headersGet = vi.fn((_name: string): string | null => null);
+  const headers = vi.fn(async () => ({ get: headersGet }));
+  // Rate limit defaults to ok=true; individual tests can override.
+  const rateLimit = vi.fn(async () => ({
+    ok: true,
+    remaining: 99,
+    resetAt: Date.now() + 60_000,
+  }));
   return {
-    single,
-    select,
-    insert,
-    from,
-    supabaseStub,
+    abortSignal,
     createSupabaseServerClient,
+    from,
     getServerUser,
-    revalidatePath,
+    headers,
+    headersGet,
+    insert,
     logServerEvent,
+    rateLimit,
+    revalidatePath,
+    select,
+    single,
+    supabaseStub,
   };
 });
 
@@ -34,7 +47,16 @@ vi.mock("next/cache", () => ({
   revalidatePath: mocks.revalidatePath,
 }));
 
+vi.mock("next/headers", () => ({
+  headers: mocks.headers,
+}));
+
+vi.mock("@/lib/server/rate-limit", () => ({
+  rateLimit: mocks.rateLimit,
+}));
+
 vi.mock("@/lib/server/request-id", () => ({
+  REQUEST_ID_HEADER: "x-request-id",
   logServerEvent: mocks.logServerEvent,
 }));
 
@@ -58,6 +80,7 @@ function buildFormData(overrides: Record<string, string> = {}): FormData {
 describe("createGrowAction", () => {
   beforeEach(() => {
     mocks.single.mockReset();
+    mocks.abortSignal.mockClear();
     mocks.select.mockClear();
     mocks.insert.mockClear();
     mocks.from.mockClear();
@@ -67,6 +90,17 @@ describe("createGrowAction", () => {
     mocks.getServerUser.mockReset().mockResolvedValue({ id: "user-1" });
     mocks.revalidatePath.mockReset();
     mocks.logServerEvent.mockReset();
+    mocks.headersGet.mockReset().mockReturnValue(null);
+    mocks.headers
+      .mockReset()
+      .mockResolvedValue({ get: mocks.headersGet } as never);
+    // Default: every rateLimit() call passes. Tests that exercise the
+    // limit override this per call.
+    mocks.rateLimit.mockReset().mockResolvedValue({
+      ok: true,
+      remaining: 99,
+      resetAt: Date.now() + 60_000,
+    });
   });
 
   it("returns success and redirects to the new grow's detail page", async () => {
@@ -153,7 +187,10 @@ describe("createGrowAction", () => {
     });
     const result = await createGrowAction(buildFormData());
     expect(result.status).toBe("error");
-    expect(result.message).toMatch(/couldn't save the grow/i);
+    // 42501 → RLS / permission denied. The message is intentionally
+    // specific so the user knows to sign in again rather than retrying
+    // blindly. See POSTGRES_ERROR_COPY in actions.ts for full mapping.
+    expect(result.message).toMatch(/permission|sign in again/i);
   });
 
   it("returns a structured error (not throw) when supabase client itself throws", async () => {
@@ -195,5 +232,140 @@ describe("createGrowAction", () => {
     mocks.single.mockResolvedValue({ data: null, error: null });
     const result = await createGrowAction(buildFormData());
     expect(result.status).toBe("error");
+  });
+
+  it("blocks duplicate submissions with a friendly idempotency message when the 2s window is exhausted", async () => {
+    // First rateLimit() call (idempotency window) returns blocked.
+    mocks.rateLimit.mockResolvedValueOnce({
+      ok: false,
+      remaining: 0,
+      resetAt: Date.now() + 2_000,
+    });
+    const result = await createGrowAction(buildFormData());
+    expect(result.status).toBe("error");
+    expect(result.message).toMatch(/already saving/i);
+    // Insert never even runs — no DB cycles wasted on duplicates.
+    expect(mocks.insert).not.toHaveBeenCalled();
+    // First failed call is logged with the idempotency reason for triage.
+    expect(mocks.logServerEvent).toHaveBeenCalledWith(
+      "warn",
+      expect.stringMatching(/idempotency/i),
+      expect.objectContaining({ userId: "user-1" }),
+    );
+  });
+
+  it("blocks runaway create-grow spam with the 60s abuse cap", async () => {
+    // First rateLimit() call (idempotency) passes; second (abuse cap) blocks.
+    mocks.rateLimit
+      .mockResolvedValueOnce({
+        ok: true,
+        remaining: 0,
+        resetAt: Date.now() + 2_000,
+      })
+      .mockResolvedValueOnce({
+        ok: false,
+        remaining: 0,
+        resetAt: Date.now() + 60_000,
+      });
+    const result = await createGrowAction(buildFormData());
+    expect(result.status).toBe("error");
+    expect(result.message).toMatch(/slow down|too many|lot of/i);
+    expect(mocks.insert).not.toHaveBeenCalled();
+  });
+
+  it("maps Postgres 42501 (RLS denied) to a sign-in-again message without leaking provider text", async () => {
+    mocks.single.mockResolvedValue({
+      data: null,
+      error: { message: "permission denied for table grows", code: "42501" },
+    });
+    const result = await createGrowAction(buildFormData());
+    expect(result.status).toBe("error");
+    expect(result.message).toMatch(/permission|sign in again/i);
+    expect(result.message).not.toContain("permission denied for table");
+  });
+
+  it("maps Postgres 23514 (check constraint) to a friendly invalid-value message", async () => {
+    mocks.single.mockResolvedValue({
+      data: null,
+      error: {
+        message: 'new row for relation "grows" violates check constraint',
+        code: "23514",
+      },
+    });
+    const result = await createGrowAction(buildFormData());
+    expect(result.status).toBe("error");
+    expect(result.message).toMatch(/isn't valid|valid for this field/i);
+    expect(result.message).not.toContain("check constraint");
+  });
+
+  it("maps Postgres 23502 (not-null) to a 'required field is missing' message — schema-drift backstop", async () => {
+    mocks.single.mockResolvedValue({
+      data: null,
+      error: {
+        message: 'null value in column "name" violates not-null constraint',
+        code: "23502",
+      },
+    });
+    const result = await createGrowAction(buildFormData());
+    expect(result.status).toBe("error");
+    expect(result.message).toMatch(/required field/i);
+    expect(result.message).not.toContain("null value");
+  });
+
+  it("maps Postgres 40P01 (deadlock) to a retryable 'try again' message", async () => {
+    mocks.single.mockResolvedValue({
+      data: null,
+      error: { message: "deadlock detected", code: "40P01" },
+    });
+    const result = await createGrowAction(buildFormData());
+    expect(result.status).toBe("error");
+    expect(result.message).toMatch(/busy|try again/i);
+  });
+
+  it("maps Postgres 08006 (connection failure) to a 'database unreachable' message", async () => {
+    mocks.single.mockResolvedValue({
+      data: null,
+      error: {
+        message: "connection failure: connection refused",
+        code: "08006",
+      },
+    });
+    const result = await createGrowAction(buildFormData());
+    expect(result.status).toBe("error");
+    expect(result.message).toMatch(/couldn't reach the database|try again/i);
+  });
+
+  it("surfaces a 'took longer than expected' message when the supabase call aborts (timeout path)", async () => {
+    // Simulate AbortSignal.timeout firing — supabase-js converts this to
+    // a thrown DOMException with name "TimeoutError".
+    const timeoutErr = Object.assign(new Error("The operation was aborted"), {
+      name: "TimeoutError",
+    });
+    mocks.single.mockRejectedValue(timeoutErr);
+    const result = await createGrowAction(buildFormData());
+    expect(result.status).toBe("error");
+    expect(result.message).toMatch(/took longer|input is preserved/i);
+    // The structured log captures isTimeout for triage dashboards.
+    expect(mocks.logServerEvent).toHaveBeenCalledWith(
+      "error",
+      expect.stringMatching(/threw/i),
+      expect.objectContaining({ isTimeout: true, errorName: "TimeoutError" }),
+    );
+  });
+
+  it("propagates the incoming x-request-id header into structured failure logs for cross-system correlation", async () => {
+    mocks.headersGet.mockImplementation((name: string) =>
+      name === "x-request-id" ? "req-abc-123" : null,
+    );
+    mocks.single.mockResolvedValue({
+      data: null,
+      error: { message: "duplicate key value", code: "23505" },
+    });
+    await createGrowAction(buildFormData());
+    expect(mocks.logServerEvent).toHaveBeenCalledWith(
+      "error",
+      expect.any(String),
+      expect.objectContaining({ requestId: "req-abc-123" }),
+    );
   });
 });

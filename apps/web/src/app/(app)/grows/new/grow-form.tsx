@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import { Button, buttonStyles } from "@/components/ui/button";
 import { FormErrorSummary } from "@/components/form-error-summary";
@@ -143,6 +143,27 @@ export function GrowForm({ initialStartDate }: { initialStartDate: string }) {
   const [medium, setMedium] = useState<Preset["medium"]>("soil");
   const [lightType, setLightType] = useState<Preset["lightType"]>("led");
   const [startDate, setStartDate] = useState(initialStartDate);
+  // The server renders `initialStartDate` from a UTC slice of `new Date()`,
+  // which can be one day ahead of the user's local clock for negative-UTC
+  // timezones late in the day. We hydrate with the SSR value to avoid a
+  // hydration mismatch, then on mount swap in a locally-computed today —
+  // but only if the user hasn't already edited the field. After the first
+  // user edit `startDateAutoSyncedRef` flips and we never override their
+  // input. This is a one-shot post-hydration sync to a browser-only value
+  // (the user's local date), which is the canonical legitimate use of
+  // setState-in-effect; the lint rule's general "avoid cascading renders"
+  // guidance doesn't apply because the effect runs once and is gated.
+  const startDateAutoSyncedRef = useRef(false);
+  useEffect(() => {
+    if (startDateAutoSyncedRef.current) return;
+    startDateAutoSyncedRef.current = true;
+    const now = new Date();
+    const localToday = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}-${String(now.getDate()).padStart(2, "0")}`;
+    if (localToday !== initialStartDate) {
+      // eslint-disable-next-line react-hooks/set-state-in-effect -- one-shot post-hydration sync to local timezone; see comment above.
+      setStartDate(localToday);
+    }
+  }, [initialStartDate]);
   const [targetHarvestDate, setTargetHarvestDate] = useState("");
   const [activePresetLabel, setActivePresetLabel] = useState<string | null>(
     null,
@@ -430,7 +451,10 @@ export function GrowForm({ initialStartDate }: { initialStartDate: string }) {
             className={inputClassName}
             id="start-date"
             name="startDate"
-            onChange={(event) => setStartDate(event.target.value)}
+            onChange={(event) => {
+              startDateAutoSyncedRef.current = true;
+              setStartDate(event.target.value);
+            }}
             required
             type="date"
             value={startDate}
