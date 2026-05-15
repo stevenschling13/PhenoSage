@@ -166,7 +166,12 @@ create policy "plant-images: owner upload"
       select 1 from plants p
       join grows g on g.id = p.grow_id
       where g.owner_id = auth.uid()
-        and p.id::text = (storage.foldername(name))[1]
+        -- Qualified `storage.objects.name` because `plants.name` is in
+        -- scope inside this subquery, and bare `name` is ambiguous.
+        -- Without the schema-qualified form, `supabase db push` errors
+        -- with 42702 on a fresh project. Production was applied with
+        -- the fix already; this brings the repo back in sync.
+        and p.id::text = (storage.foldername(storage.objects.name))[1]
     )
   );
 
