@@ -32,6 +32,12 @@ When handing work to another agent, give it a prompt with:
 - **One target outcome** only (one roadmap box / one bug / one contract edit)
 - **Boundary callout** (web, analysis, migration, shared contract, route)
 - **Explicit out-of-scope list** so it does not widen the PR
+- **Research requirement**: use reputable primary sources current to the
+  session date (for the current Tier 3 / Tier 4 handoff baseline, at
+  least through 2026-05-15) for best practices, optimization ideas, and
+  any external dependency / provider behaviour
+- **Error-handling requirement**: name the error-handling tools /
+  affordances the plan will use for each touched boundary
 - **Validation commands** it must run before finishing
 - **Stop condition** ("if this becomes a breaking contract or exceeds a bounded
   PR, stop and surface it")

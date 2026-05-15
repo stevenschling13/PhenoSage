@@ -41,10 +41,13 @@ sticky context.
 What to look up, in this order:
 
 1. **Provider / library current best practices, dated within the last
-   12 months.** Use `web_search` (it is acceptable to ask for a "as of
-   YYYY-MM" answer to bias toward recency) and at least one
-   `web_fetch` against the canonical docs URL or npm registry for the
-   package version.
+   12 months and grounded in reputable sources.** Use `web_search`
+   (it is acceptable to ask for an "as of YYYY-MM-DD" answer to bias
+   toward recency; for the current Tier 3 / Tier 4 handoff baseline,
+   research should be current through at least **2026-05-15**) and at
+   least one `web_fetch` against canonical docs, the vendor changelog,
+   npm/PyPI registry metadata, or other primary-source documentation for
+   the package version.
 2. **Native idempotency, retry, and rate-limit affordances** of the
    provider. Prefer native over reinventing — Resend ships
    `idempotencyKey`, Supabase ships `.abortSignal()`, OpenAI/Gemini
@@ -68,13 +71,24 @@ What to look up, in this order:
    - SQLSTATE→friendly copy mapping in
      `apps/web/src/app/(app)/grows/actions.ts:104-160` (the canonical
      pattern; mirror it, don't fork it)
+6. **Optimization opportunities surfaced by the research pass.** Capture
+   any best-practice guidance that suggests a cheaper or safer
+   implementation (native batching, memoisation, provider-side
+   idempotency, retry caps, queueing, circuit breaking, etc.) so the
+   implementation and the later optimization pass start from evidence,
+   not hunches.
 
 ---
 
 ## 2. Pick the error-handling tools (mandatory, before any code)
 
 Every Tier item must declare the error-handling stack it'll use **in
-the PR description**, before writing code. Default stack:
+the PR description**, before writing code. This selection must be
+informed by the research pass above: search reputable primary sources
+(official docs, changelogs, SDK references, maintained issue trackers)
+for the best-fitting error-handling affordances for each subsystem you
+touch, then prefer the existing repo stack unless the research shows a
+clear gap. Default stack:
 
 | Concern                       | Tool                                                          |
 | ----------------------------- | ------------------------------------------------------------- |

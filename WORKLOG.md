@@ -50,9 +50,13 @@ start Tier 3 without re-auditing Tier 2.
 > `/home/runner/work/PhenoSage/PhenoSage/WORKLOG.md`. Then frame the task using
 > `/home/runner/work/PhenoSage/PhenoSage/docs/playbooks/repo-aware-ai-coding-playbook.md`
 > and `/home/runner/work/PhenoSage/PhenoSage/docs/playbooks/tier-implementation-playbook.md`.
-> Keep the change to one concern, list the exact files you plan to touch, say
-> whether the contract impact is none/additive/breaking, and stop if the work
-> would spill beyond a bounded PR. Run `pnpm run validate`, `pnpm turbo run
+> Operate like a professional software engineer: do a research-first pass using
+> reputable primary sources current through at least 2026-05-15, look for best
+> practices plus obvious optimization opportunities, and explicitly choose the
+> error-handling tools / affordances that fit each boundary you touch before
+> writing code. Keep the change to one concern, list the exact files you plan to
+> touch, say whether the contract impact is none/additive/breaking, and stop if
+> the work would spill beyond a bounded PR. Run `pnpm run validate`, `pnpm turbo run
 type-check lint test`, `pnpm run security:routes`, and analysis validators if
 > `apps/analysis/**` changes. Update `WORKLOG.md` with what landed, dead ends,
 > and the next session block before finishing.
