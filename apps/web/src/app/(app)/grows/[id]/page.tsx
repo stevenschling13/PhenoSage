@@ -1,3 +1,4 @@
+import type { GrowStage } from "@phenosage/shared";
 import type { Metadata } from "next";
 import Link from "next/link";
 import { notFound } from "next/navigation";
@@ -13,8 +14,11 @@ import {
 } from "@/components/ui/card";
 import { EmptyState } from "@/components/ui/empty-state";
 import { PageHeader } from "@/components/ui/page-header";
+import { getServerUser } from "@/lib/server/auth";
 import { fetchGrowDetail } from "@/lib/server/workspace-records";
 import { ArchiveButton } from "./archive-button";
+import { DeleteGrowButton } from "./delete-button";
+import { StageStepper } from "./stage-stepper";
 
 export const metadata: Metadata = { title: "Grow detail" };
 
@@ -58,11 +62,15 @@ function titleCase(value: string | null | undefined): string {
 //   * Footer with the Archive / Restore action.
 export default async function GrowDetailPage({ params, searchParams }: Props) {
   const { id } = await params;
-  const detail = await fetchGrowDetail(id);
+  const [user, detail] = await Promise.all([
+    getServerUser(),
+    fetchGrowDetail(id),
+  ]);
   if (!detail) {
     notFound();
   }
   const { grow, plants } = detail;
+  const isOwner = Boolean(user && user.id === grow.ownerId);
 
   const resolvedSearchParams = searchParams ? await searchParams : undefined;
   const justCreated = firstParam(resolvedSearchParams?.just_created) === "1";
@@ -81,6 +89,14 @@ export default async function GrowDetailPage({ params, searchParams }: Props) {
             >
               Back to registry
             </Link>
+            {isOwner ? (
+              <Link
+                className={buttonStyles({ size: "md", variant: "surface" })}
+                href={`/grows/${grow.id}/edit`}
+              >
+                Edit grow
+              </Link>
+            ) : null}
             <Link
               className={buttonStyles({ size: "md" })}
               href={`/plants/new?growId=${grow.id}`}
@@ -244,9 +260,37 @@ export default async function GrowDetailPage({ params, searchParams }: Props) {
                   : "Archiving keeps history but hides the grow from active workflows. You can restore it anytime."}
               </p>
             </div>
+            {isOwner && !grow.isArchived ? (
+              <div className="mt-5 border-t border-border/60 pt-4">
+                <p className="mb-2 text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+                  Stage
+                </p>
+                <StageStepper
+                  currentStage={grow.stage as GrowStage | null}
+                  growId={grow.id}
+                />
+              </div>
+            ) : null}
           </CardContent>
         </Card>
       </section>
+
+      {isOwner ? (
+        <section>
+          <Card className="border-danger/40">
+            <CardHeader>
+              <CardTitle>Danger zone</CardTitle>
+              <CardDescription>
+                Permanent deletion. Prefer archive for anything you might want
+                back.
+              </CardDescription>
+            </CardHeader>
+            <CardContent>
+              <DeleteGrowButton growId={grow.id} growName={grow.name} />
+            </CardContent>
+          </Card>
+        </section>
+      ) : null}
 
       <section className="grid gap-6 lg:grid-cols-2">
         <Card>
