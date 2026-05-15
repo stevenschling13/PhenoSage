@@ -2,8 +2,11 @@ import "server-only";
 import { z } from "zod";
 import { createSupabaseServerClient } from "./auth";
 import { checkPerToolRateLimit } from "./chat-tool-policies";
+import { getDbClient } from "./db";
+import { persistFindingEmbeddings } from "./embeddings";
 import { getPlantTimeline, runAndPersistPlantAnalysis } from "./plants";
 import { logServerEvent } from "./request-id";
+import { findSimilarGrowFindings } from "./semantic-findings";
 
 // Tool definitions live in chat-tool-definitions.ts (pure data) so this
 // module — executor + schemas + handlers — stays focused on behavior.
@@ -33,6 +36,11 @@ const FindingsArgs = z.object({
   plantId: z.string().min(1).optional(),
   limit: z.number().optional(),
   sinceDays: z.number().optional(),
+});
+const SearchSimilarFindingsArgs = z.object({
+  growId: z.string().min(1),
+  query: z.string().min(3).max(1_000),
+  limit: z.number().optional(),
 });
 const ObservationsArgs = z.object({
   growId: z.string().min(1).optional(),
@@ -1002,7 +1010,68 @@ export async function executeChatTool(
                 : `could not record finding: ${error?.message ?? "no row returned"}`,
             };
           }
+          try {
+            const serviceDb = getDbClient();
+            const embeddingResult = await persistFindingEmbeddings(
+              serviceDb,
+              [
+                {
+                  id: data.id,
+                  category: data.category,
+                  severity: data.severity,
+                  title: data.title,
+                  description: data.description,
+                  recommendation: data.recommendation,
+                },
+              ],
+              { requestId: ctx.requestId },
+            );
+            if (!embeddingResult.ok) {
+              logServerEvent("warn", "chat finding embedding skipped", {
+                requestId: ctx.requestId,
+                userId: ctx.userId,
+                findingId: data.id,
+                code: embeddingResult.code,
+              });
+            }
+          } catch (embeddingErr) {
+            logServerEvent("warn", "chat finding embedding threw", {
+              requestId: ctx.requestId,
+              userId: ctx.userId,
+              findingId: data.id,
+              error:
+                embeddingErr instanceof Error
+                  ? embeddingErr.message
+                  : String(embeddingErr),
+            });
+          }
           return { ok: true, data };
+        }
+
+        case "search_similar_findings": {
+          const args = SearchSimilarFindingsArgs.parse(rawArgs);
+          const searchParams: Parameters<typeof findSimilarGrowFindings>[0] = {
+            supabase,
+            growId: args.growId,
+            query: args.query,
+            requestId: ctx.requestId,
+          };
+          if (args.limit !== undefined) searchParams.limit = args.limit;
+          const found = await findSimilarGrowFindings(searchParams);
+          if (!found.ok) {
+            logServerEvent("warn", "chat semantic finding search unavailable", {
+              requestId: ctx.requestId,
+              userId: ctx.userId,
+              growId: args.growId,
+              code: found.code,
+            });
+            return {
+              ok: false,
+              error:
+                "semantic finding search is temporarily unavailable; use recent findings or timeline context instead",
+            };
+          }
+          return { ok: true, data: found.data };
         }
 
         case "get_plant_timeline": {

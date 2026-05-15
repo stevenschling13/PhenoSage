@@ -596,6 +596,35 @@ export const CHAT_TOOL_DEFINITIONS = [
   {
     type: "function" as const,
     function: {
+      name: "search_similar_findings",
+      description:
+        "Search semantically similar historical plant_findings within the active grow. Use when the user asks whether a symptom, deficiency, pest, disease, or recommendation resembles something seen before in this same grow. Server-only retrieval; do not use for cross-grow memory.",
+      parameters: {
+        type: "object",
+        properties: {
+          growId: {
+            type: "string",
+            description: "Active grow ID to search within. Required.",
+          },
+          query: {
+            type: "string",
+            description:
+              "Natural-language symptom or finding description to compare against past findings in this grow.",
+          },
+          limit: {
+            type: "number",
+            description:
+              "Maximum matches to return. Defaults to 5, capped at 10.",
+          },
+        },
+        required: ["growId", "query"],
+        additionalProperties: false,
+      },
+    },
+  },
+  {
+    type: "function" as const,
+    function: {
       name: "record_image_finding",
       description:
         "File a structured plant_findings row when the user describes a plant-health issue they've observed — typically tied to a photo they just uploaded. Use this for definite diagnoses ('there's brown spots on Plant 4's middle fans, looks like septoria'), not for casual notes (use log_plant_observation for that). The row is tagged source='user_reported' to distinguish it from AI-generated findings, and the existing auto-task trigger will create an open grow_task automatically if severity is high or critical. Owner + collaborator only. Returns the new finding id.",

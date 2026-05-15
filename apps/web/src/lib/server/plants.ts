@@ -4,6 +4,7 @@ import { analyzeImage, type AnalyzeGrowContext } from "./analysis-proxy";
 import { createSupabaseServerClient } from "./auth";
 import { getAuthorizedPlantContext } from "./plant-access";
 import { getDbClient } from "./db";
+import { persistFindingEmbeddings } from "./embeddings";
 import { logServerEvent } from "./request-id";
 import { getStorageClient } from "./storage";
 
@@ -529,6 +530,38 @@ export async function runAndPersistPlantAnalysis(params: {
     };
     const inserted = (insertedFindings ?? []) as InsertedFinding[];
     if (inserted.length > 0) {
+      try {
+        const embeddingResult = await persistFindingEmbeddings(
+          db,
+          inserted.map((f) => ({
+            id: f.id,
+            severity: f.severity,
+            title: f.title,
+            description: f.description,
+            recommendation: f.recommendation,
+            category: f.category,
+          })),
+          { requestId: params.requestId },
+        );
+        if (!embeddingResult.ok) {
+          logServerEvent("warn", "plant analysis: finding embeddings skipped", {
+            requestId: params.requestId,
+            plantId: context.plantId,
+            code: embeddingResult.code,
+            failed: embeddingResult.failed,
+          });
+        }
+      } catch (embeddingErr) {
+        logServerEvent("warn", "plant analysis: finding embeddings threw", {
+          requestId: params.requestId,
+          plantId: context.plantId,
+          error:
+            embeddingErr instanceof Error
+              ? embeddingErr.message
+              : String(embeddingErr),
+        });
+      }
+
       try {
         const { emitFindingAlerts } = await import("./notifications");
         await emitFindingAlerts({

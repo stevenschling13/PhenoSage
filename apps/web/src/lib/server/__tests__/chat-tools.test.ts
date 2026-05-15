@@ -5,6 +5,9 @@ const logServerEvent = vi.fn();
 const getPlantTimeline = vi.fn();
 const runAndPersistPlantAnalysis = vi.fn();
 const rateLimit = vi.fn();
+const getDbClient = vi.fn();
+const persistFindingEmbeddings = vi.fn();
+const findSimilarGrowFindings = vi.fn();
 
 vi.mock("../auth", () => ({
   createSupabaseServerClient: (...args: unknown[]) =>
@@ -34,6 +37,7 @@ vi.mock("../chat-tool-policies", () => ({
       "create_plants",
       "create_grow",
       "record_image_finding",
+      "search_similar_findings",
     ]);
     if (!policied.has(name)) return { ok: true };
     const r = await rateLimit({
@@ -47,6 +51,17 @@ vi.mock("../chat-tool-policies", () => ({
       error: `rate limit: too many ${name} calls in a row; retry in ~1s`,
     };
   },
+}));
+vi.mock("../db", () => ({
+  getDbClient: (...args: unknown[]) => getDbClient(...args),
+}));
+vi.mock("../embeddings", () => ({
+  persistFindingEmbeddings: (...args: unknown[]) =>
+    persistFindingEmbeddings(...args),
+}));
+vi.mock("../semantic-findings", () => ({
+  findSimilarGrowFindings: (...args: unknown[]) =>
+    findSimilarGrowFindings(...args),
 }));
 
 // Default behavior for the mocked rateLimit: always permit. Tests that
@@ -214,6 +229,7 @@ describe("chat-tools — write tool definitions", () => {
     const names = CHAT_TOOL_DEFINITIONS.map((t) => t.function.name).sort();
     expect(names).toContain("log_grow_event");
     expect(names).toContain("log_plant_observation");
+    expect(names).toContain("search_similar_findings");
   });
 
   it("log_grow_event declares required growId + eventType only", () => {
@@ -1764,7 +1780,17 @@ describe("chat-tools — update_plant", () => {
 describe("chat-tools — record_image_finding", () => {
   beforeEach(() => {
     createSupabaseServerClient.mockReset();
+    getDbClient.mockReset();
     logServerEvent.mockReset();
+    persistFindingEmbeddings.mockReset();
+    getDbClient.mockReturnValue({ from: vi.fn() });
+    persistFindingEmbeddings.mockResolvedValue({
+      failed: 0,
+      generated: 1,
+      ok: true,
+      skipped: 0,
+      updated: 1,
+    });
   });
   afterEach(() => {
     vi.restoreAllMocks();
@@ -1825,6 +1851,63 @@ describe("chat-tools — record_image_finding", () => {
         recommendation: "Defoliate affected leaves and apply copper",
         source: "user_reported",
       }),
+    );
+    expect(persistFindingEmbeddings).toHaveBeenCalledWith(
+      { from: expect.any(Function) },
+      [
+        expect.objectContaining({
+          id: "f-1",
+          category: "disease",
+          title: "Suspected septoria",
+        }),
+      ],
+      { requestId: "req-123" },
+    );
+  });
+
+  it("returns the finding even when semantic embedding persistence fails", async () => {
+    persistFindingEmbeddings.mockResolvedValue({
+      code: "configuration_error",
+      failed: 1,
+      generated: 0,
+      ok: false,
+      skipped: 0,
+      updated: 0,
+    });
+    const { client } = makeInsertMock({
+      data: {
+        id: "f-3",
+        category: "general",
+        description: "",
+        recommendation: null,
+        severity: "info",
+        source: "user_reported",
+        title: "Observation",
+      },
+      error: null,
+    });
+    createSupabaseServerClient.mockResolvedValue(client);
+
+    const result = await executeChatTool(
+      "record_image_finding",
+      {
+        plantId: "p-1",
+        growId: "g-1",
+        category: "general",
+        severity: "info",
+        title: "Observation",
+      },
+      CTX_AUTHED,
+    );
+
+    expect(result).toEqual({
+      ok: true,
+      data: expect.objectContaining({ id: "f-3" }),
+    });
+    expect(logServerEvent).toHaveBeenCalledWith(
+      "warn",
+      "chat finding embedding skipped",
+      expect.objectContaining({ code: "configuration_error" }),
     );
   });
 
@@ -1938,6 +2021,82 @@ describe("chat-tools — record_image_finding", () => {
 
     expect(result).toEqual({ error: "not authenticated", ok: false });
     expect(insert).not.toHaveBeenCalled();
+  });
+});
+
+describe("chat-tools — search_similar_findings", () => {
+  beforeEach(() => {
+    createSupabaseServerClient.mockReset();
+    findSimilarGrowFindings.mockReset();
+    logServerEvent.mockReset();
+  });
+
+  it("returns semantic matches for the active grow", async () => {
+    const client = { rpc: vi.fn() };
+    createSupabaseServerClient.mockResolvedValue(client);
+    findSimilarGrowFindings.mockResolvedValue({
+      ok: true,
+      data: [
+        {
+          id: "finding-1",
+          plantId: "plant-1",
+          plantName: "Blue Dream #1",
+          category: "nutrient_deficiency",
+          severity: "medium",
+          title: "Lower fan yellowing",
+          description: "Yellowing lower leaves",
+          recommendation: null,
+          source: "ai",
+          createdAt: "2026-05-01T00:00:00Z",
+          similarity: 0.86,
+        },
+      ],
+    });
+
+    const result = await executeChatTool(
+      "search_similar_findings",
+      {
+        growId: "grow-1",
+        query: "yellowing lower leaves",
+        limit: 3,
+      },
+      CTX_AUTHED,
+    );
+
+    expect(result).toEqual({
+      ok: true,
+      data: [expect.objectContaining({ id: "finding-1", similarity: 0.86 })],
+    });
+    expect(findSimilarGrowFindings).toHaveBeenCalledWith({
+      supabase: client,
+      growId: "grow-1",
+      query: "yellowing lower leaves",
+      limit: 3,
+      requestId: "req-123",
+    });
+  });
+
+  it("returns friendly copy when semantic search is unavailable", async () => {
+    createSupabaseServerClient.mockResolvedValue({ rpc: vi.fn() });
+    findSimilarGrowFindings.mockResolvedValue({
+      ok: false,
+      code: "embedding_unavailable",
+    });
+
+    const result = await executeChatTool(
+      "search_similar_findings",
+      {
+        growId: "grow-1",
+        query: "yellowing lower leaves",
+      },
+      CTX_AUTHED,
+    );
+
+    expect(result).toEqual({
+      ok: false,
+      error:
+        "semantic finding search is temporarily unavailable; use recent findings or timeline context instead",
+    });
   });
 });
 
