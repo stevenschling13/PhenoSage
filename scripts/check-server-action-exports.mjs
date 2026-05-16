@@ -37,10 +37,11 @@
 import { readFileSync, readdirSync, statSync, existsSync } from "node:fs";
 import { join, relative, sep } from "node:path";
 
-const ROOT = new URL("..", import.meta.url).pathname.replace(
-  /^\/([A-Za-z]:)/,
-  "$1",
-);
+// URL.pathname is percent-encoded — decode so a repo path containing
+// spaces or other reserved characters still resolves on disk.
+const ROOT = decodeURIComponent(
+  new URL("..", import.meta.url).pathname,
+).replace(/^\/([A-Za-z]:)/, "$1");
 const WEB_SRC = join(ROOT, "apps", "web", "src");
 
 const errors = [];
@@ -97,8 +98,10 @@ function findNonAsyncExports(source) {
     // `export type { ... } from "./..."` re-exports are also erased.
     if (/^\s*export\s+type\s*\{/.test(line)) continue;
 
-    // Allowed: `export async function foo(...)`.
-    if (/^\s*export\s+async\s+function\s/.test(line)) continue;
+    // Allowed: `export async function foo(...)` and the default form
+    // `export default async function foo(...)` — both are valid Server
+    // Actions per the React 19 / Next 16 contract.
+    if (/^\s*export\s+(default\s+)?async\s+function\s/.test(line)) continue;
 
     // Flag the disallowed shapes.
     let kind = null;
