@@ -2,7 +2,8 @@
   "mcpServers": {
     "supabase": {
       "type": "http",
-      "url": "https://mcp.supabase.com/mcp?project_ref=yjemotnclrnlxgcfntaf&features=database,debugging,development,docs,functions,branching,storage"
+      "url": "https://mcp.supabase.com/mcp?project_ref=yjemotnclrnlxgcfntaf&read_only=false&features=account,database,debugging,development,docs,functions,branching,storage",
+      "bearer_token_env_var": "SUPABASE_ACCESS_TOKEN"
     }
   }
 }
