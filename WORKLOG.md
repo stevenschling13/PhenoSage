@@ -36,6 +36,32 @@ Handoff log between sessions. Keep entries short. Newest at top.
 
 ---
 
+## 2026-05-16 — Supabase MCP full operator read/write feature scope (Codex)
+
+**In-flight on current branch**
+
+- Expanded repo-scoped Supabase MCP URL to explicitly request `read_only=false` and include full operator feature groups for this project: `account,database,debugging,development,docs,functions,branching,storage`.
+- Added bearer-token fallback via `SUPABASE_ACCESS_TOKEN` so this runtime can authenticate even when OAuth persistence is unsupported.
+
+**Validation**
+
+- `pnpm run validate` still fails in this Linux runner at `check:smoke-script` with `spawn pwsh ENOENT` (PowerShell unavailable).
+
+---
+
+## 2026-05-16 — MCP bearer-token fallback for Supabase auth (Codex)
+
+**In-flight on current branch**
+
+- Updated `.mcp.json` Supabase server config to include `"bearer_token_env_var": "SUPABASE_ACCESS_TOKEN"` as a fallback when OAuth auth is unsupported in this Codex runtime.
+- Validation attempt: `pnpm run validate` reached `check:smoke-script` and failed in this Linux runner with `spawn pwsh ENOENT` (PowerShell missing), so the required validation chain could not complete in-container.
+
+**Dead ends**
+
+- `codex mcp login supabase` OAuth callbacks completed in browser but local Codex MCP status still reports `Auth Unsupported`, so persisted OAuth login is not available in this runtime.
+
+---
+
 ## 2026-05-16 — Env-contract drift + dead browser client cleanup (Copilot)
 
 **In-flight on `copilot/assess-optimize-supabase-project`**
