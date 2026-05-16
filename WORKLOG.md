@@ -9,7 +9,7 @@ Handoff log between sessions. Keep entries short. Newest at top.
 **In-flight on current branch**
 
 - Expanded repo-scoped Supabase MCP URL to explicitly request `read_only=false` and include full operator feature groups for this project: `account,database,debugging,development,docs,functions,branching,storage`.
-- Kept bearer-token fallback via `SUPABASE_ACCESS_TOKEN` so this runtime can authenticate even when OAuth persistence is unsupported.
+- Added bearer-token fallback via `SUPABASE_ACCESS_TOKEN` so this runtime can authenticate even when OAuth persistence is unsupported.
 
 **Validation**
 
