@@ -6,16 +6,11 @@ import { isNextFrameworkError } from "@/lib/server/auth-errors";
 import { getDbClient } from "@/lib/server/db";
 import { logServerEvent } from "@/lib/server/request-id";
 import { isValidTimezone } from "@/lib/server/timezone";
-
-export type UpdateDisplayNameActionResult = {
-  message?: string;
-  status: "error" | "idle" | "success";
-};
-
-export const updateDisplayNameActionInitialState: UpdateDisplayNameActionResult =
-  {
-    status: "idle",
-  };
+import type {
+  UpdateDisplayNameActionResult,
+  UpdateEmailPreferencesActionResult,
+  UpdateTimezoneActionResult,
+} from "./action-state";
 
 function asTrimmedString(value: FormDataEntryValue | null) {
   return typeof value === "string" ? value.trim() : "";
@@ -89,15 +84,6 @@ export async function updateDisplayNameAction(
 }
 
 // ─── Timezone preference ─────────────────────────────────────────────
-
-export type UpdateTimezoneActionResult = {
-  message?: string;
-  status: "error" | "idle" | "success";
-};
-
-export const updateTimezoneActionInitialState: UpdateTimezoneActionResult = {
-  status: "idle",
-};
 
 // Friendly copy for the SQLSTATE codes this path can plausibly throw.
 // `22023` is the migration's validation trigger telling us the IANA
@@ -193,16 +179,6 @@ export async function updateTimezoneAction(
 }
 
 // ─── Email-notification preferences (Tier 2.2) ───────────────────────
-
-export type UpdateEmailPreferencesActionResult = {
-  message?: string;
-  status: "error" | "idle" | "success";
-};
-
-export const updateEmailPreferencesActionInitialState: UpdateEmailPreferencesActionResult =
-  {
-    status: "idle",
-  };
 
 const VALID_EMAIL_SEVERITY_FLOORS = new Set([
   "info",

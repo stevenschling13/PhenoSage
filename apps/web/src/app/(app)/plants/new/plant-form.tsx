@@ -7,10 +7,10 @@ import { FormErrorSummary } from "@/components/form-error-summary";
 import { useActionWithRecovery } from "@/lib/client/action-runner";
 type GrowRecord = { id: string; name: string; stage: string | null };
 import {
-  createPlantAction,
   createPlantActionInitialState,
   type CreatePlantActionResult,
-} from "../actions";
+} from "../action-state";
+import { createPlantAction } from "../actions";
 import { MAX_BULK_PLANT_COUNT } from "../constants";
 
 const FIELD_META = {
