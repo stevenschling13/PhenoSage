@@ -17,7 +17,7 @@ across:
 
 - `GET /` — landing page renders 200 (public).
 - `GET /api/health` — returns 200 with `{ status: "ok" }`.
-- `GET /api/ready` — returns 200 with `status: "ready"` (deeper check
+- `GET /api/ready` — returns 200 with `status: "ok"` (deeper check
   that Supabase, the analysis service, and required env are reachable).
 
 A request that completes with a 4xx that the user _caused_ (e.g. 401
