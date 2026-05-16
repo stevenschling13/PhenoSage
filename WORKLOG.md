@@ -4,6 +4,32 @@ Handoff log between sessions. Keep entries short. Newest at top.
 
 ---
 
+## 2026-05-16 — Supabase policy sync + provenance audit (Copilot)
+
+**Landed on `copilot/optimize-supabase-sql-setup`**
+
+- `694c9f6` — added append-only migration `023_supabase_policy_sync.sql`
+  to restore migration 003's archived-grow filtering after the migration 022
+  RLS recursion fix, and aligned the `plant-images` delete policy with the
+  current `{plantId}/...` storage path convention.
+- The analysis persistence path now explicitly inserts AI-generated
+  `plant_findings` with `source = 'ai'`, with the focused plants server test
+  updated to assert the provenance marker.
+- Validation passed:
+  - `pnpm install --frozen-lockfile`
+  - `pnpm run validate`
+  - `pnpm turbo run type-check lint test`
+  - `pnpm run security:routes`
+  - CodeQL checker
+- Dead ends / constraints:
+  - `supabase --version` failed because the Supabase CLI is not installed in
+    this runner, so the migration was added manually using the repo's existing
+    numeric append-only convention.
+  - Direct `web_fetch` calls to Supabase docs/changelog failed in this sandbox;
+    a web search was used for current Supabase breaking-change context.
+
+---
+
 ## 2026-05-15 — Tier 3: active-grow semantic finding retrieval (Copilot)
 
 **In-flight on `copilot/tier-3-roadmap-research`**
