@@ -431,12 +431,21 @@ export async function createGrowAction(
     });
     // AuthConfigError carries an explicit name and means an env var is
     // missing/rotated — distinguishing it in the response copy gives
-    // on-call a clearer user-report signal.
+    // on-call a clearer user-report signal. TimeoutError / AbortError
+    // can also reach the outer catch when `getServerUser()` or
+    // `createSupabaseServerClient()` hit network-level timeouts before
+    // we even get to the insert; surface the same "took longer than
+    // expected" copy the inner catch uses for the insert-timeout path,
+    // so the user sees consistent language regardless of which stage
+    // timed out.
     const isAuthConfig = errName === "AuthConfigError";
+    const isTimeout = errName === "TimeoutError" || errName === "AbortError";
     return {
       message: isAuthConfig
         ? "Grow creation is temporarily unavailable. Our team has been notified — please try again in a few minutes."
-        : "We couldn't save the grow right now. Please refresh the page, sign in again if prompted, and try once more.",
+        : isTimeout
+          ? "The request took longer than expected. Please refresh the page and try again."
+          : "We couldn't save the grow right now. Please refresh the page, sign in again if prompted, and try once more.",
       status: "error",
     };
   }

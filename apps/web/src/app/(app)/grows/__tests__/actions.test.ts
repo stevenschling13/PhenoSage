@@ -426,6 +426,15 @@ describe("createGrowAction", () => {
     expect(result.message).toMatch(/temporarily unavailable/i);
   });
 
+  it("surfaces the outer-timeout path with the same 'took longer than expected' copy as the insert path", async () => {
+    const err = new Error("aborted");
+    err.name = "TimeoutError";
+    mocks.getServerUser.mockRejectedValueOnce(err);
+    const result = await createGrowAction(buildFormData());
+    expect(result.status).toBe("error");
+    expect(result.message).toMatch(/took longer than expected/i);
+  });
+
   it("still re-throws Next framework signals from the outer guard so redirect/notFound work", async () => {
     const redirectErr = new Error("NEXT_REDIRECT");
     (redirectErr as Error & { digest?: string }).digest = "NEXT_REDIRECT;0;/x";
