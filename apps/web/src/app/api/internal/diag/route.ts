@@ -5,7 +5,7 @@ import {
   AuthConfigError,
   getAuthConfigViolations,
 } from "@/lib/server/auth-errors";
-import { hasServiceRoleConfigured } from "@/lib/server/db";
+import { getCronSecret, hasServiceRoleConfigured } from "@/lib/server/db";
 import { logServerEvent } from "@/lib/server/request-id";
 
 export const dynamic = "force-dynamic";
@@ -33,19 +33,22 @@ export const runtime = "nodejs";
 //       serviceRoleEnv:    { ok, missing? },
 //       supabaseConnect:   { ok, error? },
 //       authenticated:     { ok, note? },
-//       writePathReady:    { ok, note? },
+//       rlsReadPathReady:  { ok, note? },
 //     }
 //   }
 //
 // The endpoint NEVER writes to the database — it's a read-only
-// probe. The "writePathReady" check confirms that the row-level
+// probe. The `rlsReadPathReady` check confirms that the row-level
 // security session can see at least one of its own rows (proof that
-// auth cookies + RLS are wired up). If a deployer wants to run a
-// destructive smoke test, do it with a real authenticated browser
-// session, not this endpoint.
+// auth cookies + RLS are wired up). It does NOT exercise the write
+// path; if a deployer wants to verify writes end-to-end, use a real
+// authenticated browser session.
 export async function GET(request: NextRequest) {
   const authHeader = request.headers.get("authorization");
-  const cronSecret = process.env["CRON_SECRET"];
+  // Read the cron secret through the helper so route handlers stay
+  // free of direct `process.env` access — same env-contract pattern
+  // the service-role probe above uses.
+  const cronSecret = getCronSecret();
   if (!cronSecret || authHeader !== `Bearer ${cronSecret}`) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
@@ -112,12 +115,15 @@ export async function GET(request: NextRequest) {
     ? { ok: true, userId: authedUserId }
     : { ok: false, note: "no Supabase session on the diag call (expected)" };
 
-  // 5. RLS write-path readiness. If we have an authed user we can
+  // 5. RLS read-path readiness. If we have an authed user we can
   //    confirm RLS reads work by counting their own grows. This is
   //    intentionally cheap — `head: true` returns 0 rows, just the
-  //    count, so we don't pull data into the response.
-  let writePathOk = false;
-  let writePathNote: string | undefined;
+  //    count, so we don't pull data into the response. Named for what
+  //    it actually does (a read probe of the RLS session); the write
+  //    path is verified end-to-end via a real browser session, not
+  //    here.
+  let rlsReadOk = false;
+  let rlsReadNote: string | undefined;
   if (supabaseOk && authedUserId) {
     try {
       const supabase = await createSupabaseServerClient();
@@ -126,19 +132,19 @@ export async function GET(request: NextRequest) {
         .select("id", { count: "exact", head: true })
         .limit(1);
       if (rlsError) {
-        writePathNote = `grows read failed: ${rlsError.code ?? "no-code"}`;
+        rlsReadNote = `grows read failed: ${rlsError.code ?? "no-code"}`;
       } else {
-        writePathOk = true;
+        rlsReadOk = true;
       }
     } catch (err) {
-      writePathNote = err instanceof Error ? err.message : String(err);
+      rlsReadNote = err instanceof Error ? err.message : String(err);
     }
   } else {
-    writePathNote = "skipped (no auth session)";
+    rlsReadNote = "skipped (no auth session)";
   }
-  checks["writePathReady"] = writePathOk
+  checks["rlsReadPathReady"] = rlsReadOk
     ? { ok: true }
-    : { ok: false, note: writePathNote };
+    : { ok: false, note: rlsReadNote };
 
   // Overall OK requires the deploy-critical checks; the user-session-
   // dependent ones don't sink the probe when invoked from curl.

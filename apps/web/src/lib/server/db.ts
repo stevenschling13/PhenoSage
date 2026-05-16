@@ -17,6 +17,19 @@ export function hasServiceRoleConfigured(): boolean {
 }
 
 /**
+ * Returns the shared cron auth secret used by `/api/internal/cron/**`
+ * and `/api/internal/diag`, or `null` when unset. Wrapping the env
+ * read here keeps route handlers free of direct `process.env` access
+ * — same consistency pattern as `hasServiceRoleConfigured()` — so a
+ * future env-contract guardrail can flag `CRON_SECRET` reads outside
+ * server libs without touching every call site.
+ */
+export function getCronSecret(): string | null {
+  const v = process.env["CRON_SECRET"];
+  return v && v.length > 0 ? v : null;
+}
+
+/**
  * Creates a Supabase client using the service role key.
  * This client bypasses RLS and must ONLY be used in server-side code.
  * NEVER expose SUPABASE_SERVICE_ROLE_KEY to the browser.

@@ -35,6 +35,14 @@ vi.mock("@/lib/server/auth-errors", async () => {
 
 vi.mock("@/lib/server/db", () => ({
   hasServiceRoleConfigured: mocks.hasServiceRoleConfigured,
+  // Mirror the real helper's behaviour — read from process.env — so
+  // existing tests that flip CRON_SECRET via env continue to work
+  // unchanged. The route under test never reaches process.env
+  // directly any more, only through this helper.
+  getCronSecret: () => {
+    const v = process.env["CRON_SECRET"];
+    return v && v.length > 0 ? v : null;
+  },
 }));
 
 vi.mock("@/lib/server/request-id", () => ({
@@ -155,6 +163,6 @@ describe("GET /api/internal/diag", () => {
       ok: true,
       userId: "user-1",
     });
-    expect(body.checks.writePathReady.ok).toBe(true);
+    expect(body.checks.rlsReadPathReady.ok).toBe(true);
   });
 });
