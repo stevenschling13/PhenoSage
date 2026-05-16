@@ -17,8 +17,13 @@ across:
 
 - `GET /` — landing page renders 200 (public).
 - `GET /api/health` — returns 200 with `{ status: "ok" }`.
-- `GET /api/ready` — returns 200 with `status: "ok"` (deeper check
-  that Supabase, the analysis service, and required env are reachable).
+- `GET /api/ready` — returns 200 with `status: "ok"` when the
+  required backend env vars (`NEXT_PUBLIC_SUPABASE_URL`,
+  `NEXT_PUBLIC_SUPABASE_ANON_KEY`, `ANALYSIS_SERVICE_URL`,
+  `ANALYSIS_SERVICE_API_KEY`) are present; `status: "not_ready"` with
+  HTTP 503 if any are missing. Note: this is a config-presence check,
+  not an upstream reachability probe — Supabase / analysis-service
+  availability is tracked separately (see §"What we don't promise").
 
 A request that completes with a 4xx that the user _caused_ (e.g. 401
 because they're logged out) does not count against availability. A 5xx
