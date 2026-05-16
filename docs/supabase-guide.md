@@ -41,10 +41,10 @@ Supabase provides a managed PgBouncer instance on every project. No installation
 
 You will see two connection strings:
 
-| Mode | Port | Use for |
-|---|---|---|
-| Direct (Postgres) | `5432` | Migrations, long-lived admin sessions |
-| Pooler (PgBouncer) | `6543` | All application traffic |
+| Mode               | Port   | Use for                               |
+| ------------------ | ------ | ------------------------------------- |
+| Direct (Postgres)  | `5432` | Migrations, long-lived admin sessions |
+| Pooler (PgBouncer) | `6543` | All application traffic               |
 
 ### Recommended settings
 
@@ -116,12 +116,12 @@ PITR is available on **Supabase Pro** and above.
 
 ### Retention period recommendations
 
-| Stage | Retention | Rationale |
-|---|---|---|
-| Development / staging | 7 days | Minimal cost; enough to catch mistakes |
-| Early production (< 1k users) | 14 days | Covers a two-week sprint cycle |
-| Growth (1k–10k users) | 30 days | Covers month-end billing disputes, slow-burn data corruption |
-| Enterprise | 90 days | Compliance, audit requirements |
+| Stage                         | Retention | Rationale                                                    |
+| ----------------------------- | --------- | ------------------------------------------------------------ |
+| Development / staging         | 7 days    | Minimal cost; enough to catch mistakes                       |
+| Early production (< 1k users) | 14 days   | Covers a two-week sprint cycle                               |
+| Growth (1k–10k users)         | 30 days   | Covers month-end billing disputes, slow-burn data corruption |
+| Enterprise                    | 90 days   | Compliance, audit requirements                               |
 
 Start with **14 days** for production. Increase as user data becomes more valuable.
 
@@ -247,13 +247,13 @@ rm test_restore.sql
 
 ### Key metrics to watch
 
-| Metric | Warning threshold | Critical threshold | Where to find it |
-|---|---|---|---|
-| Active connections | > 70% of `max_connections` | > 90% | Supabase Dashboard → Reports → Database |
-| Query latency (p99) | > 500ms | > 2s | Supabase Dashboard → Reports → Queries |
-| Cache hit ratio | < 95% | < 90% | `pg_stat_bgwriter` (see query below) |
-| Disk usage | > 70% | > 85% | Supabase Dashboard → Settings → Database |
-| Replication lag | > 10s | > 60s | Supabase Dashboard → Reports |
+| Metric              | Warning threshold          | Critical threshold | Where to find it                         |
+| ------------------- | -------------------------- | ------------------ | ---------------------------------------- |
+| Active connections  | > 70% of `max_connections` | > 90%              | Supabase Dashboard → Reports → Database  |
+| Query latency (p99) | > 500ms                    | > 2s               | Supabase Dashboard → Reports → Queries   |
+| Cache hit ratio     | < 95%                      | < 90%              | `pg_stat_bgwriter` (see query below)     |
+| Disk usage          | > 70%                      | > 85%              | Supabase Dashboard → Settings → Database |
+| Replication lag     | > 10s                      | > 60s              | Supabase Dashboard → Reports             |
 
 ### Checking cache hit ratio
 
@@ -711,11 +711,11 @@ The `IVFFlat` index divides the vector space into `lists` clusters. At query tim
 
 **Choosing `lists`:**
 
-| Row count | Recommended `lists` |
-|---|---|
-| < 1,000 | No index needed — use sequential scan |
+| Row count       | Recommended `lists`                   |
+| --------------- | ------------------------------------- |
+| < 1,000         | No index needed — use sequential scan |
 | 1,000 – 100,000 | `sqrt(rows)` — e.g., 100 for 10k rows |
-| > 100,000 | `rows / 1000` |
+| > 100,000       | `rows / 1000`                         |
 
 **Choosing `probes` at query time:**
 
@@ -1015,6 +1015,7 @@ SELECT auth.uid();  -- confirm you are authenticated as the right user
 ```
 
 Common causes:
+
 - `user_id` field not set to `auth.uid()` on insert
 - Trying to insert into a service-role-only table (e.g., `plant_findings`) with the anon key
 - Missing grow membership record
@@ -1166,12 +1167,12 @@ SELECT indexname, idx_scan FROM pg_stat_user_indexes WHERE idx_scan = 0 ORDER BY
 
 ### Supabase Dashboard shortcuts
 
-| Task | Path |
-|---|---|
-| Enable PITR | Settings → Backups → Point in Time Recovery |
-| Download backup | Settings → Backups → Database Backups |
-| Enable PgBouncer | Settings → Database → Connection pooling |
-| View slow queries | Reports → Queries |
-| Set up alerts | Settings → Alerts |
-| Rotate service role key | Settings → API → Service Role Key |
-| Run SQL | SQL Editor |
+| Task                    | Path                                        |
+| ----------------------- | ------------------------------------------- |
+| Enable PITR             | Settings → Backups → Point in Time Recovery |
+| Download backup         | Settings → Backups → Database Backups       |
+| Enable PgBouncer        | Settings → Database → Connection pooling    |
+| View slow queries       | Reports → Queries                           |
+| Set up alerts           | Settings → Alerts                           |
+| Rotate service role key | Settings → API → Service Role Key           |
+| Run SQL                 | SQL Editor                                  |

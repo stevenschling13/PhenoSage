@@ -26,7 +26,7 @@
     --ps-surface-2: 230 225 206; /* #E6E1CE */
     --ps-panel: 247 242 226;
     --ps-line: 34 42 32;
-    --ps-line-strength: 0.10;
+    --ps-line-strength: 0.1;
     --ps-line-strong-strength: 0.18;
     --ps-ink: 26 36 24; /* #1A2418 deep cola */
     --ps-ink-2: 58 69 52; /* #3A4534 */
@@ -61,8 +61,8 @@
       var(--font-general-sans, "General Sans"), "Söhne", -apple-system,
       BlinkMacSystemFont, system-ui, sans-serif;
     --ps-font-mono:
-      var(--font-jetbrains-mono, "JetBrains Mono"), "IBM Plex Mono", ui-monospace,
-      SFMono-Regular, Menlo, monospace;
+      var(--font-jetbrains-mono, "JetBrains Mono"), "IBM Plex Mono",
+      ui-monospace, SFMono-Regular, Menlo, monospace;
 
     /* ── Legacy shadcn-style HSL tokens (Tailwind) ─────── */
     --background: 47 32% 90%; /* hemp-paper */
@@ -188,7 +188,10 @@
     background-color: rgb(var(--ps-canvas));
     color: rgb(var(--ps-ink));
     font-family: var(--ps-font-body);
-    font-feature-settings: "rlig" 1, "calt" 1, "ss01" 1;
+    font-feature-settings:
+      "rlig" 1,
+      "calt" 1,
+      "ss01" 1;
     text-rendering: optimizeLegibility;
     -webkit-font-smoothing: antialiased;
     -moz-osx-font-smoothing: grayscale;
@@ -325,12 +328,24 @@
   .ps-rise {
     animation: ps-rise 0.45s cubic-bezier(0.2, 0.7, 0.3, 1) backwards;
   }
-  .ps-rise:nth-child(1) { animation-delay: 0.02s; }
-  .ps-rise:nth-child(2) { animation-delay: 0.06s; }
-  .ps-rise:nth-child(3) { animation-delay: 0.10s; }
-  .ps-rise:nth-child(4) { animation-delay: 0.14s; }
-  .ps-rise:nth-child(5) { animation-delay: 0.18s; }
-  .ps-rise:nth-child(6) { animation-delay: 0.22s; }
+  .ps-rise:nth-child(1) {
+    animation-delay: 0.02s;
+  }
+  .ps-rise:nth-child(2) {
+    animation-delay: 0.06s;
+  }
+  .ps-rise:nth-child(3) {
+    animation-delay: 0.1s;
+  }
+  .ps-rise:nth-child(4) {
+    animation-delay: 0.14s;
+  }
+  .ps-rise:nth-child(5) {
+    animation-delay: 0.18s;
+  }
+  .ps-rise:nth-child(6) {
+    animation-delay: 0.22s;
+  }
 }
 
 /* -----------------------------------------------------------
@@ -350,25 +365,55 @@
   }
 
   /* Surfaces */
-  .bg-surface { background-color: rgb(var(--ps-surface)); }
-  .bg-surface-2 { background-color: rgb(var(--ps-surface-2)); }
-  .bg-panel { background-color: rgb(var(--ps-panel)); }
-  .bg-background-subtle { background-color: rgb(var(--ps-surface-2) / 0.55); }
-  .bg-background-subtle\/50 { background-color: rgb(var(--ps-surface-2) / 0.5); }
-  .bg-background-subtle\/60 { background-color: rgb(var(--ps-surface-2) / 0.6); }
-  .bg-background-subtle\/65 { background-color: rgb(var(--ps-surface-2) / 0.65); }
-  .bg-background-subtle\/70 { background-color: rgb(var(--ps-surface-2) / 0.7); }
+  .bg-surface {
+    background-color: rgb(var(--ps-surface));
+  }
+  .bg-surface-2 {
+    background-color: rgb(var(--ps-surface-2));
+  }
+  .bg-panel {
+    background-color: rgb(var(--ps-panel));
+  }
+  .bg-background-subtle {
+    background-color: rgb(var(--ps-surface-2) / 0.55);
+  }
+  .bg-background-subtle\/50 {
+    background-color: rgb(var(--ps-surface-2) / 0.5);
+  }
+  .bg-background-subtle\/60 {
+    background-color: rgb(var(--ps-surface-2) / 0.6);
+  }
+  .bg-background-subtle\/65 {
+    background-color: rgb(var(--ps-surface-2) / 0.65);
+  }
+  .bg-background-subtle\/70 {
+    background-color: rgb(var(--ps-surface-2) / 0.7);
+  }
 
   /* Borders */
-  .border-strong { border-color: rgb(var(--ps-line) / var(--ps-line-strong-strength)); }
-  .border-border-strong { border-color: rgb(var(--ps-line) / var(--ps-line-strong-strength)); }
-  .border-border-strong\/70 { border-color: rgb(var(--ps-line) / 0.14); }
-  .border-border\/70 { border-color: rgb(var(--ps-line) / 0.07); }
-  .border-border\/80 { border-color: rgb(var(--ps-line) / 0.085); }
+  .border-strong {
+    border-color: rgb(var(--ps-line) / var(--ps-line-strong-strength));
+  }
+  .border-border-strong {
+    border-color: rgb(var(--ps-line) / var(--ps-line-strong-strength));
+  }
+  .border-border-strong\/70 {
+    border-color: rgb(var(--ps-line) / 0.14);
+  }
+  .border-border\/70 {
+    border-color: rgb(var(--ps-line) / 0.07);
+  }
+  .border-border\/80 {
+    border-color: rgb(var(--ps-line) / 0.085);
+  }
 
   /* Accent helpers */
-  .text-accent-strong { color: rgb(var(--ps-accent-strong)); }
-  .bg-accent\/10 { background-color: rgb(var(--ps-accent) / 0.10); }
+  .text-accent-strong {
+    color: rgb(var(--ps-accent-strong));
+  }
+  .bg-accent\/10 {
+    background-color: rgb(var(--ps-accent) / 0.1);
+  }
 
   /* Soft shadow — used for cards and floating chrome. */
   .shadow-soft {
@@ -380,8 +425,16 @@
   /* Soft hero gradient (used by /auth and signed-out home). */
   .bg-hero-gradient {
     background-image:
-      radial-gradient(circle at 18% 12%, rgb(var(--ps-accent) / 0.16), transparent 48%),
-      radial-gradient(circle at 88% -8%, rgb(var(--ps-warn) / 0.12), transparent 50%);
+      radial-gradient(
+        circle at 18% 12%,
+        rgb(var(--ps-accent) / 0.16),
+        transparent 48%
+      ),
+      radial-gradient(
+        circle at 88% -8%,
+        rgb(var(--ps-warn) / 0.12),
+        transparent 50%
+      );
   }
 
   /* Skip-link visible only on focus */
@@ -410,11 +463,31 @@
   /* Trichome-stipple watermark — used inside hero cards. */
   .ps-trichome-bg {
     background-image:
-      radial-gradient(circle at 8% 22%, rgb(var(--ps-accent) / 0.12) 0 1.4px, transparent 2px),
-      radial-gradient(circle at 24% 70%, rgb(var(--ps-accent) / 0.10) 0 1.2px, transparent 2px),
-      radial-gradient(circle at 60% 18%, rgb(var(--ps-accent) / 0.10) 0 1.6px, transparent 2px),
-      radial-gradient(circle at 78% 64%, rgb(var(--ps-accent) / 0.10) 0 1.2px, transparent 2px),
-      radial-gradient(circle at 92% 30%, rgb(var(--ps-accent) / 0.08) 0 1.2px, transparent 2px);
+      radial-gradient(
+        circle at 8% 22%,
+        rgb(var(--ps-accent) / 0.12) 0 1.4px,
+        transparent 2px
+      ),
+      radial-gradient(
+        circle at 24% 70%,
+        rgb(var(--ps-accent) / 0.1) 0 1.2px,
+        transparent 2px
+      ),
+      radial-gradient(
+        circle at 60% 18%,
+        rgb(var(--ps-accent) / 0.1) 0 1.6px,
+        transparent 2px
+      ),
+      radial-gradient(
+        circle at 78% 64%,
+        rgb(var(--ps-accent) / 0.1) 0 1.2px,
+        transparent 2px
+      ),
+      radial-gradient(
+        circle at 92% 30%,
+        rgb(var(--ps-accent) / 0.08) 0 1.2px,
+        transparent 2px
+      );
   }
 }
 
@@ -422,8 +495,14 @@
  * Animations
  * --------------------------------------------------------- */
 @keyframes ps-rise {
-  from { opacity: 0; transform: translateY(6px); }
-  to { opacity: 1; transform: translateY(0); }
+  from {
+    opacity: 0;
+    transform: translateY(6px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
 }
 
 @media (prefers-reduced-motion: reduce) {

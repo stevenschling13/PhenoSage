@@ -2,13 +2,44 @@ import "server-only";
 import { z } from "zod";
 import { createSupabaseServerClient } from "./auth";
 import { checkPerToolRateLimit } from "./chat-tool-policies";
+import {
+  AnalysisHistoryArgs,
+  buildBulkPlantNames,
+  ComparePlantsArgs,
+  CreateGrowArgs,
+  CreateGrowTaskArgs,
+  CreatePlantsArgs,
+  escapeIlikePattern,
+  EventsArgs,
+  FindGrowArgs,
+  FindingsArgs,
+  FindPlantArgs,
+  GetGrowSummaryArgs,
+  GetPlantTimelineArgs,
+  LatestAnalysisArgs,
+  ListGrowsArgs,
+  ListOpenTasksArgs,
+  ListPlantsArgs,
+  LogGrowEventArgs,
+  LogPlantObservationArgs,
+  MarkFindingResolvedArgs,
+  ObservationsArgs,
+  RecordImageFindingArgs,
+  TriggerPlantAnalysisArgs,
+  UpdateGrowArgs,
+  UpdateGrowStageArgs,
+  UpdatePlantArgs,
+  UpdateTaskStatusArgs,
+  WRITE_TOOLS,
+} from "./chat-tool-schemas";
 import { persistSingleFindingEmbeddingBestEffort } from "./embeddings";
 import { getPlantTimeline, runAndPersistPlantAnalysis } from "./plants";
 import { logServerEvent } from "./request-id";
 import { executeSearchSimilarFindingsTool } from "./semantic-findings";
 
 // Tool definitions live in chat-tool-definitions.ts (pure data) so this
-// module — executor + schemas + handlers — stays focused on behavior.
+// module — executor + handlers — stays focused on behavior. Schemas,
+// enum lists, and the write-tool allowlist live in chat-tool-schemas.ts.
 export { CHAT_TOOL_DEFINITIONS } from "./chat-tool-definitions";
 
 type ToolResult = { ok: true; data: unknown } | { ok: false; error: string };
@@ -24,352 +55,6 @@ const numClamp = (n: unknown, def: number, max: number): number => {
   const parsed = typeof n === "number" && Number.isFinite(n) ? n : def;
   return Math.max(1, Math.min(max, Math.floor(parsed)));
 };
-
-const ListGrowsArgs = z.object({ limit: z.number().optional() });
-const ListPlantsArgs = z.object({
-  growId: z.string().min(1),
-  limit: z.number().optional(),
-});
-const FindingsArgs = z.object({
-  growId: z.string().min(1).optional(),
-  plantId: z.string().min(1).optional(),
-  limit: z.number().optional(),
-  sinceDays: z.number().optional(),
-});
-const ObservationsArgs = z.object({
-  growId: z.string().min(1).optional(),
-  plantId: z.string().min(1).optional(),
-  limit: z.number().optional(),
-});
-const EventsArgs = z.object({
-  growId: z.string().min(1).optional(),
-  plantId: z.string().min(1).optional(),
-  limit: z.number().optional(),
-  sinceDays: z.number().optional(),
-});
-const LatestAnalysisArgs = z.object({ plantId: z.string().min(1) });
-const AnalysisHistoryArgs = z.object({
-  plantId: z.string().min(1),
-  limit: z.number().optional(),
-});
-
-const EVENT_TYPES = [
-  "water",
-  "feed",
-  "top",
-  "fim",
-  "lst",
-  "defoliate",
-  "transplant",
-  "ipm",
-  "harvest",
-  "observation",
-  "note",
-  "other",
-] as const;
-
-const MAX_NOTES_LENGTH = 2_000;
-
-const isoDatetimeNotFuture = z
-  .string()
-  .min(1)
-  .refine((s) => !Number.isNaN(Date.parse(s)), {
-    message: "must be a valid ISO 8601 datetime",
-  })
-  .refine((s) => Date.parse(s) <= Date.now() + 60_000, {
-    message: "must not be more than 1 minute in the future",
-  });
-
-const LogGrowEventArgs = z.object({
-  growId: z.string().min(1),
-  plantId: z.string().min(1).optional(),
-  eventType: z.enum(EVENT_TYPES),
-  notes: z.string().max(MAX_NOTES_LENGTH).optional(),
-  occurredAt: isoDatetimeNotFuture.optional(),
-});
-
-const LogPlantObservationArgs = z
-  .object({
-    plantId: z.string().min(1),
-    growId: z.string().min(1),
-    heightCm: z.number().positive().max(1_000).optional(),
-    notes: z.string().max(MAX_NOTES_LENGTH).optional(),
-    observedAt: isoDatetimeNotFuture.optional(),
-  })
-  .refine((v) => v.heightCm !== undefined || (v.notes && v.notes.length > 0), {
-    message: "supply at least one of heightCm or notes",
-  });
-
-const GROW_STAGES = [
-  "germination",
-  "seedling",
-  "vegetative",
-  "pre_flower",
-  "flower",
-  "late_flower",
-  "harvest",
-  "dry_cure",
-] as const;
-
-const MarkFindingResolvedArgs = z.object({
-  findingId: z.string().min(1),
-  resolved: z.boolean(),
-  resolvedAt: isoDatetimeNotFuture.optional(),
-});
-
-const UpdateGrowStageArgs = z.object({
-  growId: z.string().min(1),
-  stage: z.enum(GROW_STAGES),
-});
-
-const TASK_STATUSES = ["open", "in_progress", "done", "dismissed"] as const;
-
-const ListOpenTasksArgs = z
-  .object({
-    growId: z.string().min(1).optional(),
-    plantId: z.string().min(1).optional(),
-    includeCompleted: z.boolean().optional(),
-    limit: z.number().optional(),
-  })
-  .refine((v) => v.growId !== undefined || v.plantId !== undefined, {
-    message: "supply growId or plantId",
-  });
-
-const UpdateTaskStatusArgs = z.object({
-  taskId: z.string().min(1),
-  status: z.enum(TASK_STATUSES),
-});
-
-const GROW_MEDIA = [
-  "soil",
-  "coco",
-  "hydro",
-  "aero",
-  "living_soil",
-  "other",
-] as const;
-const LIGHT_TYPES = [
-  "hps",
-  "cmh",
-  "led",
-  "t5",
-  "sun",
-  "mixed",
-  "other",
-] as const;
-
-const isoDateNotFarFuture = z
-  .string()
-  .regex(/^\d{4}-\d{2}-\d{2}$/, "must be a YYYY-MM-DD date")
-  .refine((s) => !Number.isNaN(Date.parse(s)), {
-    message: "must be a valid date",
-  })
-  .refine((s) => Date.parse(s) <= Date.now() + 24 * 60 * 60 * 1000, {
-    message: "must not be more than 1 day in the future",
-  });
-
-const CreateGrowArgs = z
-  .object({
-    name: z.string().min(1).max(120),
-    stage: z.enum(GROW_STAGES),
-    medium: z.enum(GROW_MEDIA),
-    lightType: z.enum(LIGHT_TYPES),
-    startDate: isoDateNotFarFuture.optional(),
-    targetHarvestDate: z
-      .string()
-      .regex(/^\d{4}-\d{2}-\d{2}$/, "must be a YYYY-MM-DD date")
-      .refine((s) => !Number.isNaN(Date.parse(s)), {
-        message: "must be a valid date",
-      })
-      .optional(),
-    description: z.string().max(MAX_NOTES_LENGTH).optional(),
-  })
-  .refine(
-    (v) =>
-      !v.targetHarvestDate ||
-      !v.startDate ||
-      v.targetHarvestDate >= v.startDate,
-    {
-      message: "targetHarvestDate must be on or after startDate",
-      path: ["targetHarvestDate"],
-    },
-  );
-
-const CreatePlantsArgs = z.object({
-  growId: z.string().min(1),
-  name: z.string().min(1).max(115),
-  count: z.number().int().min(1).max(25).optional(),
-  strain: z.string().max(120).optional(),
-  batchLabel: z.string().max(120).optional(),
-  notes: z.string().max(MAX_NOTES_LENGTH).optional(),
-});
-
-const TASK_PRIORITIES = ["low", "medium", "high", "urgent"] as const;
-
-const CreateGrowTaskArgs = z.object({
-  growId: z.string().min(1),
-  plantId: z.string().min(1).optional(),
-  title: z.string().min(1).max(200),
-  description: z.string().max(MAX_NOTES_LENGTH).optional(),
-  priority: z.enum(TASK_PRIORITIES).optional(),
-  dueAt: z
-    .string()
-    .min(1)
-    .refine((s) => !Number.isNaN(Date.parse(s)), {
-      message: "must be a valid ISO 8601 datetime",
-    })
-    .refine((s) => Date.parse(s) > Date.now() - 60_000, {
-      message: "dueAt must be in the future",
-    })
-    .optional(),
-});
-
-function buildBulkPlantNames(prefix: string, count: number): string[] {
-  if (count <= 1) return [prefix];
-  const pad = count >= 10 ? 2 : 1;
-  return Array.from(
-    { length: count },
-    (_, i) => `${prefix} ${String(i + 1).padStart(pad, "0")}`,
-  );
-}
-
-// Target-harvest-date accepts either a YYYY-MM-DD string (set) or an empty
-// string (clear). undefined means "leave the existing value untouched".
-const isoDateOrEmpty = z
-  .string()
-  .refine((s) => s === "" || /^\d{4}-\d{2}-\d{2}$/.test(s), {
-    message: "must be YYYY-MM-DD or empty to clear",
-  })
-  .refine((s) => s === "" || !Number.isNaN(Date.parse(s)), {
-    message: "must be a valid date",
-  });
-
-const UpdateGrowArgs = z
-  .object({
-    growId: z.string().min(1),
-    name: z.string().min(1).max(120).optional(),
-    description: z.string().max(MAX_NOTES_LENGTH).optional(),
-    medium: z.enum(GROW_MEDIA).optional(),
-    lightType: z.enum(LIGHT_TYPES).optional(),
-    targetHarvestDate: isoDateOrEmpty.optional(),
-    archived: z.boolean().optional(),
-  })
-  .refine(
-    (v) =>
-      v.name !== undefined ||
-      v.description !== undefined ||
-      v.medium !== undefined ||
-      v.lightType !== undefined ||
-      v.targetHarvestDate !== undefined ||
-      v.archived !== undefined,
-    { message: "supply at least one field to update" },
-  );
-
-const FINDING_CATEGORIES = [
-  "nutrient_deficiency",
-  "nutrient_toxicity",
-  "pest",
-  "disease",
-  "environmental",
-  "training",
-  "general",
-  "positive",
-] as const;
-const FINDING_SEVERITIES = [
-  "info",
-  "low",
-  "medium",
-  "high",
-  "critical",
-] as const;
-
-const ComparePlantsArgs = z.object({
-  plantIds: z.array(z.string().min(1)).min(2).max(4),
-  sinceDays: z.number().optional(),
-});
-
-const GetGrowSummaryArgs = z.object({
-  growId: z.string().min(1),
-});
-
-const FindGrowArgs = z.object({
-  query: z.string().min(1).max(120),
-  includeArchived: z.boolean().optional(),
-  limit: z.number().optional(),
-});
-
-const FindPlantArgs = z.object({
-  query: z.string().min(1).max(120),
-  growId: z.string().min(1).optional(),
-  includeArchived: z.boolean().optional(),
-  limit: z.number().optional(),
-});
-
-// PostgREST `ilike` requires us to escape the % and _ wildcards so a user
-// query like "50%" matches the literal characters rather than acting as a
-// wildcard. Belt-and-braces — also caps the query length to keep the LIKE
-// pattern bounded.
-function escapeIlikePattern(input: string): string {
-  return input.slice(0, 120).replace(/[%_\\]/g, (m) => `\\${m}`);
-}
-
-const GetPlantTimelineArgs = z.object({
-  plantId: z.string().min(1),
-  limit: z.number().optional(),
-});
-
-const TriggerPlantAnalysisArgs = z.object({
-  plantId: z.string().min(1),
-  imageId: z.string().min(1).optional(),
-});
-
-const RecordImageFindingArgs = z.object({
-  plantId: z.string().min(1),
-  growId: z.string().min(1),
-  category: z.enum(FINDING_CATEGORIES),
-  severity: z.enum(FINDING_SEVERITIES),
-  title: z.string().min(1).max(200),
-  description: z.string().max(MAX_NOTES_LENGTH).optional(),
-  recommendation: z.string().max(MAX_NOTES_LENGTH).optional(),
-  imageId: z.string().min(1).optional(),
-});
-
-const UpdatePlantArgs = z
-  .object({
-    plantId: z.string().min(1),
-    name: z.string().min(1).max(120).optional(),
-    strain: z.string().max(120).optional(),
-    batchLabel: z.string().max(120).optional(),
-    notes: z.string().max(MAX_NOTES_LENGTH).optional(),
-    archived: z.boolean().optional(),
-  })
-  .refine(
-    (v) =>
-      v.name !== undefined ||
-      v.strain !== undefined ||
-      v.batchLabel !== undefined ||
-      v.notes !== undefined ||
-      v.archived !== undefined,
-    { message: "supply at least one field to update" },
-  );
-
-// Tools whose names start the model down a write path. The executor logs
-// arg keys (never values) for these so we have an audit trail without
-// retaining free-text user content in the request log.
-const WRITE_TOOLS = new Set<string>([
-  "log_grow_event",
-  "log_plant_observation",
-  "mark_finding_resolved",
-  "update_grow_stage",
-  "update_task_status",
-  "create_grow",
-  "create_plants",
-  "create_grow_task",
-  "update_grow",
-  "update_plant",
-  "record_image_finding",
-  "trigger_plant_analysis",
-]);
 
 type ChatToolContext = {
   userId: string | null;
