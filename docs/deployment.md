@@ -42,6 +42,8 @@ Mark server-only variables as **Server** exposure only (not Preview/Production c
 | `SUPABASE_SERVICE_ROLE_KEY`     | **Server only** | Supabase service role — bypasses RLS                              |
 | `ANALYSIS_SERVICE_URL`          | **Server only** | Railway analysis service base URL                                 |
 | `ANALYSIS_SERVICE_API_KEY`      | **Server only** | Shared secret for proxy auth                                      |
+| `ANALYSIS_SERVICE_TIMEOUT_MS`   | **Server only** | Optional Railway proxy timeout override in milliseconds           |
+| `READINESS_PROBE_SECRET`        | **Server only** | Protects `/api/internal/ready` readiness checks                   |
 | `GEMINI_API_KEY`                | **Server only** | Google Gemini API key (chat) — free tier from aistudio.google.com |
 | `CRON_SECRET`                   | **Server only** | Protects `/api/internal/cron/*` endpoints                         |
 | `SENTRY_DSN`                    | **Server only** | Optional Sentry DSN for web error reporting                       |
@@ -54,6 +56,7 @@ Set these in Railway project → Variables.
 | Variable                      | Description                                                     |
 | ----------------------------- | --------------------------------------------------------------- |
 | `ANALYSIS_SERVICE_API_KEY`    | Shared secret — must match `ANALYSIS_SERVICE_API_KEY` in Vercel |
+| `READINESS_PROBE_SECRET`      | Optional shared secret for `/ready` readiness checks            |
 | `OPENAI_API_KEY`              | OpenAI API key for Vision analysis                              |
 | `SUPABASE_URL`                | Supabase project URL                                            |
 | `SUPABASE_SERVICE_ROLE_KEY`   | Supabase service role (to fetch private images)                 |
@@ -110,6 +113,29 @@ Vercel Cron is configured in `apps/web/vercel.json`:
 
 ---
 
+## Container Images
+
+The repository includes root-level Dockerfiles for CI and operators who need to
+run the same images outside Vercel/Railway:
+
+```bash
+docker build -f Dockerfile.web -t phenosage-web:local .
+docker build -f Dockerfile.analysis -t phenosage-analysis:local .
+READINESS_PROBE_SECRET=dev-readiness-secret docker compose -f docker-compose.ci.yml up --build
+```
+
+`docker-compose.ci.yml` starts a pgvector-enabled Postgres service, the FastAPI
+analysis container, and the Next.js web container. Health checks use
+`READINESS_PROBE_SECRET` against `apps/analysis` `/ready` and `apps/web`
+`/api/internal/ready`; keep that value server-only in production.
+
+The async analysis enqueue RPC lives in `supabase/migrations/005_analysis_jobs.sql`.
+`enqueue_analysis_job(...)` is service-role-only, idempotent when an
+`idempotency_key` is supplied, and writes rows that authenticated users can read
+through the `analysis_jobs: grow member read` RLS policy.
+
+---
+
 ## Reliability: Error Envelopes, Retries, and Circuit Breaker
 
 Every `apps/web` JSON API route returns errors in a single envelope so the
@@ -149,7 +175,8 @@ used by every upstream call:
   error, by design — silent duplicate side effects on the upstream are
   worse than a loud failure.
 
-The analysis `POST /analyze` is retried up to 2 attempts because
+Direct analysis-service `POST /analyze` calls are retried up to 2 attempts by
+the server-only proxy when used by background workers because
 `runAndPersistPlantAnalysis` upserts on `plant_analyses.image_id`
 (uniqueness enforced by migration 004) and replaces findings by `image_id`
 in a single transaction — a retried call cannot create duplicate rows.

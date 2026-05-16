@@ -3,7 +3,7 @@ from __future__ import annotations
 import os
 from datetime import UTC, datetime
 
-from fastapi import APIRouter, status
+from fastapi import APIRouter, Request, status
 from fastapi.responses import JSONResponse
 
 from app.config import settings
@@ -25,12 +25,20 @@ async def health_check() -> JSONResponse:
 
 
 @router.get("/ready")
-async def readiness_check() -> JSONResponse:
+async def readiness_check(request: Request) -> JSONResponse:
     """Readiness probe — verifies required config is present.
 
     Returns 503 if any required configuration is missing so the platform's
     load balancer can drain traffic from unhealthy instances.
     """
+    secret = settings.readiness_probe_secret
+    authorized = not secret or (
+        request.headers.get("authorization") == f"Bearer {secret}"
+        or request.query_params.get("secret") == secret
+    )
+    if not authorized:
+        return JSONResponse({"status": "forbidden"}, status_code=status.HTTP_403_FORBIDDEN)
+
     checks: dict[str, bool] = {
         "openai_key": bool(settings.openai_api_key),
         "supabase_url": bool(settings.supabase_url),

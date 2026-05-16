@@ -1,17 +1,19 @@
 import { NextRequest } from "next/server";
+import { z } from "zod";
 import { enqueueAnalysisJob } from "@/lib/server/analysis-jobs";
-import { getServerSession, getServerUser } from "@/lib/server/auth";
 import { apiError, apiSuccess } from "@/lib/server/api-errors";
+import { getServerSession, getServerUser } from "@/lib/server/auth";
 import { rateLimit, rateLimitKeyFromRequest } from "@/lib/server/rate-limit";
 import { getOrCreateRequestId, logServerEvent } from "@/lib/server/request-id";
-import { AnalyzeRequestSchema } from "@/lib/server/schemas";
 import { parseJsonBody } from "@/lib/server/validate";
 
-interface RouteParams {
-  params: Promise<{ plantId: string }>;
-}
+const AnalyzeJobRequestSchema = z.object({
+  plant_id: z.string().uuid(),
+  image_id: z.string().uuid(),
+  idempotency_key: z.string().min(8).max(128).optional(),
+});
 
-export async function POST(request: NextRequest, { params }: RouteParams) {
+export async function POST(request: NextRequest) {
   const requestId = getOrCreateRequestId(request);
   const session = await getServerSession();
   if (!session) {
@@ -20,7 +22,7 @@ export async function POST(request: NextRequest, { params }: RouteParams) {
 
   const user = await getServerUser();
   const rate = await rateLimit({
-    key: rateLimitKeyFromRequest(request, user?.id ?? null),
+    key: `analyze:${rateLimitKeyFromRequest(request, user?.id ?? null)}`,
     limit: 5,
     windowMs: 60_000,
   });
@@ -34,8 +36,7 @@ export async function POST(request: NextRequest, { params }: RouteParams) {
     );
   }
 
-  const { plantId } = await params;
-  const parsed = await parseJsonBody(request, AnalyzeRequestSchema);
+  const parsed = await parseJsonBody(request, AnalyzeJobRequestSchema);
   if (!parsed.ok) {
     return apiError(
       parsed.status,
@@ -47,13 +48,12 @@ export async function POST(request: NextRequest, { params }: RouteParams) {
 
   try {
     const job = await enqueueAnalysisJob({
-      plantId,
-      imageId: parsed.data.imageId,
-      ...(parsed.data.idempotencyKey
-        ? { idempotencyKey: parsed.data.idempotencyKey }
+      plantId: parsed.data.plant_id,
+      imageId: parsed.data.image_id,
+      ...(parsed.data.idempotency_key
+        ? { idempotencyKey: parsed.data.idempotency_key }
         : {}),
     });
-
     if (!job) {
       return apiError(
         404,
@@ -62,7 +62,6 @@ export async function POST(request: NextRequest, { params }: RouteParams) {
         requestId,
       );
     }
-
     return apiSuccess(
       202,
       {
@@ -74,19 +73,14 @@ export async function POST(request: NextRequest, { params }: RouteParams) {
       requestId,
     );
   } catch (error) {
-    // Log the underlying cause for operators but never echo the raw exception
-    // text to the browser — it can include "fetch failed", upstream URLs, env
-    // variable names, or stack-trace fragments.
-    logServerEvent("error", "plant analysis failed", {
+    logServerEvent("error", "analysis job enqueue failed", {
       requestId,
-      plantId,
-      imageId: parsed.data.imageId,
       error: error instanceof Error ? error.message : "unknown_error",
     });
     return apiError(
       500,
       "INTERNAL_ERROR",
-      "Plant analysis failed. Please try again.",
+      "Failed to enqueue analysis job",
       requestId,
     );
   }

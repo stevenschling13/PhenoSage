@@ -338,7 +338,7 @@ export function AssistantChat({ grows }: { grows: GrowOption[] }) {
 
       setAttachmentUploading(true);
       try {
-        const signRes = await fetch("/api/uploads/sign", {
+        const signRes = await fetch("/api/upload/sign", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
@@ -349,11 +349,13 @@ export function AssistantChat({ grows }: { grows: GrowOption[] }) {
           }),
         });
         const signPayload = (await signRes.json()) as {
+          data?: {
+            imageId?: string;
+            storagePath?: string;
+            token?: string;
+          };
           error?: string;
           reason?: string;
-          imageId?: string;
-          storagePath?: string;
-          token?: string;
         };
         if (!signRes.ok) {
           if (signPayload.reason === "video_unsupported") {
@@ -363,11 +365,8 @@ export function AssistantChat({ grows }: { grows: GrowOption[] }) {
           }
           return null;
         }
-        if (
-          !signPayload.storagePath ||
-          !signPayload.token ||
-          !signPayload.imageId
-        ) {
+        const signed = signPayload.data ?? {};
+        if (!signed.storagePath || !signed.token || !signed.imageId) {
           setError("Upload signing did not return the required fields.");
           return null;
         }
@@ -375,7 +374,7 @@ export function AssistantChat({ grows }: { grows: GrowOption[] }) {
         const supabase = createSupabaseBrowserClient();
         const { error: uploadError } = await supabase.storage
           .from("plant-images")
-          .uploadToSignedUrl(signPayload.storagePath, signPayload.token, file, {
+          .uploadToSignedUrl(signed.storagePath, signed.token, file, {
             contentType: file.type || "image/jpeg",
           });
         if (uploadError) {
@@ -385,12 +384,13 @@ export function AssistantChat({ grows }: { grows: GrowOption[] }) {
 
         // Persist the plant_images row so the existing analysis +
         // timeline pipelines can find it.
-        const persistRes = await fetch(`/api/plants/${plantId}/images`, {
+        const persistRes = await fetch("/api/upload/finalize", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
-            imageId: signPayload.imageId,
-            storagePath: signPayload.storagePath,
+            imageId: signed.imageId,
+            plantId,
+            storagePath: signed.storagePath,
             source: "upload",
           }),
         });
@@ -405,8 +405,8 @@ export function AssistantChat({ grows }: { grows: GrowOption[] }) {
         return {
           kind: "image",
           plantId,
-          imageId: signPayload.imageId,
-          storagePath: signPayload.storagePath,
+          imageId: signed.imageId,
+          storagePath: signed.storagePath,
         };
       } finally {
         setAttachmentUploading(false);
