@@ -9,7 +9,6 @@ import {
   CreateGrowArgs,
   CreateGrowTaskArgs,
   CreatePlantsArgs,
-  escapeIlikePattern,
   EventsArgs,
   FindGrowArgs,
   FindingsArgs,
@@ -24,6 +23,7 @@ import {
   LogPlantObservationArgs,
   MarkFindingResolvedArgs,
   ObservationsArgs,
+  quotedIlikeOrValue,
   RecordImageFindingArgs,
   TriggerPlantAnalysisArgs,
   UpdateGrowArgs,
@@ -854,7 +854,7 @@ export async function executeChatTool(
                 error: error.message,
               },
             );
-            const pattern = `%${escapeIlikePattern(args.query)}%`;
+            const pattern = quotedIlikeOrValue(args.query);
             let q = supabase
               .from("grows")
               .select(
@@ -890,7 +890,7 @@ export async function executeChatTool(
                 error: error.message,
               },
             );
-            const pattern = `%${escapeIlikePattern(args.query)}%`;
+            const pattern = quotedIlikeOrValue(args.query);
             let q = supabase
               .from("plants")
               .select(

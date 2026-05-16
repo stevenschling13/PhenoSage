@@ -2445,7 +2445,7 @@ describe("chat-tools — find_grow", () => {
     expect(rpc).toHaveBeenCalled();
     expect(from).toHaveBeenCalledWith("grows");
     expect(calls.or[0]?.[0]).toBe(
-      "name.ilike.%north%,description.ilike.%north%",
+      'name.ilike."%north%",description.ilike."%north%"',
     );
     expect(logServerEvent).toHaveBeenCalledWith(
       "warn",
@@ -2573,7 +2573,7 @@ describe("chat-tools — find_plant", () => {
     expect(rpc).toHaveBeenCalled();
     expect(from).toHaveBeenCalledWith("plants");
     expect(calls.or[0]?.[0]).toBe(
-      "name.ilike.%mother%,strain.ilike.%mother%,batch_label.ilike.%mother%",
+      'name.ilike."%mother%",strain.ilike."%mother%",batch_label.ilike."%mother%"',
     );
   });
 

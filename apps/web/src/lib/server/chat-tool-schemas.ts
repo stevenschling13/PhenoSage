@@ -163,9 +163,10 @@ export const LogPlantObservationArgs = z
     notes: z.string().max(MAX_NOTES_LENGTH).optional(),
     observedAt: isoDatetimeNotFuture.optional(),
   })
-  .refine((v) => v.heightCm !== undefined || (v.notes && v.notes.length > 0), {
-    message: "supply at least one of heightCm or notes",
-  });
+  .refine(
+    (v) => v.heightCm !== undefined || (v.notes?.trim().length ?? 0) > 0,
+    { message: "supply at least one of heightCm or notes" },
+  );
 
 export const MarkFindingResolvedArgs = z.object({
   findingId: z.string().min(1),
@@ -346,6 +347,18 @@ export function buildBulkPlantNames(prefix: string, count: number): string[] {
 // pattern bounded.
 export function escapeIlikePattern(input: string): string {
   return input.slice(0, 120).replace(/[%_\\]/g, (m) => `\\${m}`);
+}
+
+// Build a value safe to interpolate into a PostgREST `.or()` filter
+// string. PostgREST's `.or()` parser treats `,` `.` `(` `)` `"` as
+// reserved tokens that delimit predicates; if a raw ILIKE value contains
+// any of them, the parser will split mid-value and an attacker (or a
+// well-meaning user typing "50%, droopy") can graft an extra predicate
+// onto the OR. Wrapping the value in double quotes opts the parser into
+// a literal-string mode where the only escape needed is `\"`.
+export function quotedIlikeOrValue(input: string): string {
+  const escaped = escapeIlikePattern(input).replace(/"/g, '\\"');
+  return `"%${escaped}%"`;
 }
 
 // Tools whose names start the model down a write path. The executor logs
