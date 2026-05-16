@@ -19,10 +19,15 @@ const ROOT = new URL("..", import.meta.url).pathname.replace(
 
 // ─── Canonical env contract ────────────────────────────────────────────────
 // Public = shipped to browser. Server = must never appear in client code.
+// Ops = root-only local/CI workflow vars (CLI, MCP, build-time observability);
+//       not consumed by apps/web runtime so they don't belong in
+//       apps/web/.env.example, but must still be documented in the root
+//       example so contributors know they exist.
 const PUBLIC_VARS = [
   "NEXT_PUBLIC_SUPABASE_URL",
   "NEXT_PUBLIC_SUPABASE_ANON_KEY",
   "NEXT_PUBLIC_APP_URL",
+  "NEXT_PUBLIC_APP_ENV",
 ];
 
 const SERVER_VARS = [
@@ -36,6 +41,21 @@ const SERVER_VARS = [
   "UPSTASH_REDIS_REST_TOKEN",
   "RESEND_API_KEY",
   "RESEND_FROM_EMAIL",
+  "CRON_SECRET",
+  "SENTRY_DSN",
+  "SENTRY_TRACES_SAMPLE_RATE",
+];
+
+const OPS_VARS = [
+  "SUPABASE_PROJECT_REF",
+  "SUPABASE_DB_PASSWORD",
+  "SUPABASE_DB_URL",
+  "SENTRY_ORG",
+  "SENTRY_PROJECT",
+  "SENTRY_AUTH_TOKEN",
+  "OTEL_ENABLED",
+  "OTEL_EXPORTER_OTLP_ENDPOINT",
+  "OTEL_SERVICE_NAME",
 ];
 
 const ANALYSIS_VARS = [
@@ -73,7 +93,11 @@ function assertVarsPresent(file, contents, vars) {
 
 // 1. Validate .env.example files
 const rootEnv = readEnvExample(join(ROOT, ".env.example"));
-assertVarsPresent(".env.example", rootEnv, [...PUBLIC_VARS, ...SERVER_VARS]);
+assertVarsPresent(".env.example", rootEnv, [
+  ...PUBLIC_VARS,
+  ...SERVER_VARS,
+  ...OPS_VARS,
+]);
 
 const webEnv = readEnvExample(join(ROOT, "apps", "web", ".env.example"));
 assertVarsPresent("apps/web/.env.example", webEnv, [
