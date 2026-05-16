@@ -30,6 +30,35 @@ Handoff log between sessions. Keep entries short. Newest at top.
 
 ---
 
+## 2026-05-16 — Env-contract drift + dead browser client cleanup (Copilot)
+
+**In-flight on `copilot/assess-optimize-supabase-project`**
+
+- **A1 — env contract.** `scripts/check-env-contract.mjs` now matches
+  `.env.example`:
+  - `NEXT_PUBLIC_APP_ENV` added to `PUBLIC_VARS`.
+  - `CRON_SECRET`, `SENTRY_DSN`, `SENTRY_TRACES_SAMPLE_RATE` added to
+    `SERVER_VARS` (only referenced under `apps/web/src/lib/server/**`,
+    `apps/web/src/app/api/**`, or in `apps/web/instrumentation.ts` which is
+    outside the scanned `apps/web/src` tree).
+  - New `OPS_VARS` list (root-only) for `SUPABASE_PROJECT_REF`,
+    `SUPABASE_DB_PASSWORD`, `SUPABASE_DB_URL`, `SENTRY_ORG`, `SENTRY_PROJECT`,
+    `SENTRY_AUTH_TOKEN`, `OTEL_ENABLED`, `OTEL_EXPORTER_OTLP_ENDPOINT`,
+    `OTEL_SERVICE_NAME`. These are local CLI/MCP/build-time and don't belong
+    in `apps/web/.env.example`.
+  - `apps/web/.env.example` gained the missing `CRON_SECRET` entry so the
+    apps/web contract check passes.
+- **A2 — dead browser client.** `apps/web/src/lib/supabase/` (browser.ts,
+  index.ts, tests) was byte-identical to the live `apps/web/src/lib/supabase-client.ts`
+  and had zero importers. Deleted. The test coverage was preserved by porting
+  the three test cases to `apps/web/src/lib/__tests__/supabase-client.test.ts`.
+- **Validation**: `pnpm install --frozen-lockfile`, `pnpm run validate`,
+  `pnpm turbo run type-check lint test` (730/730 web tests, 71 files),
+  `pnpm run security:routes`. CodeQL skipped — trivial changes (allowlist
+  extension + dead-code removal + test relocation).
+
+---
+
 ## 2026-05-16 — Production smoke harness fix (Copilot)
 
 **Landed on `copilot/investigate-production-smoke-test-failure` at `8b8f940`**
