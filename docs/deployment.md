@@ -121,7 +121,9 @@ run the same images outside Vercel/Railway:
 ```bash
 docker build -f Dockerfile.web -t phenosage-web:local .
 docker build -f Dockerfile.analysis -t phenosage-analysis:local .
-READINESS_PROBE_SECRET=dev-readiness-secret docker compose -f docker-compose.ci.yml up --build
+POSTGRES_PASSWORD="$(python3 -c 'import secrets; print(secrets.token_urlsafe(24))')" \
+  READINESS_PROBE_SECRET=dev-readiness-secret \
+  docker compose -f docker-compose.ci.yml up --build
 ```
 
 `docker-compose.ci.yml` starts a pgvector-enabled Postgres service, the FastAPI
