@@ -79,7 +79,17 @@ export function ErrorFallback({
               <p className="text-xs text-muted-foreground/80">
                 Reference code: <code className="font-mono">{digest}</code>
               </p>
-            ) : null}
+            ) : (
+              // No digest means the throw didn't originate in a Server
+              // Component render — React caught it client-side (typically
+              // during hydration or a useEffect). A refresh almost
+              // always clears it because the new HTML is freshly hydrated
+              // against the latest deployment + cookie state.
+              <p className="text-xs text-muted-foreground/80">
+                This looked like a client-side hiccup. A page refresh usually
+                clears it.
+              </p>
+            )}
           </div>
           <div className="flex flex-wrap gap-3">
             {reset ? (

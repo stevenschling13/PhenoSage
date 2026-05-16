@@ -30,7 +30,24 @@ export function useLiveAnalysis({ growIds }: { growIds: string[] }) {
 
   useEffect(() => {
     if (growIds.length === 0) return;
-    const supabase = createSupabaseBrowserClient();
+    // `createSupabaseBrowserClient` throws when the public env vars
+    // aren't bundled (e.g. a Vercel deploy that built before the
+    // Supabase integration synced its keys). Swallow that throw so a
+    // live-update side-effect can never take the entire dashboard
+    // page down via React's error boundary — losing realtime is a
+    // graceful degradation; losing the page isn't.
+    let supabase;
+    try {
+      supabase = createSupabaseBrowserClient();
+    } catch (err) {
+      if (typeof console !== "undefined") {
+        console.warn(
+          "useLiveAnalysis: browser supabase client unavailable, realtime disabled",
+          err,
+        );
+      }
+      return;
+    }
 
     const scheduleRefresh = () => {
       setLastEventAt(Date.now());
