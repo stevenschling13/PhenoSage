@@ -6,10 +6,10 @@ import { Button, buttonStyles } from "@/components/ui/button";
 import { FormErrorSummary } from "@/components/form-error-summary";
 import { useActionWithRecovery } from "@/lib/client/action-runner";
 import {
-  createGrowAction,
   createGrowActionInitialState,
   type CreateGrowActionResult,
-} from "../actions";
+} from "../action-state";
+import { createGrowAction } from "../actions";
 
 const FIELD_META = {
   name: { label: "Grow name", targetId: "grow-name" },

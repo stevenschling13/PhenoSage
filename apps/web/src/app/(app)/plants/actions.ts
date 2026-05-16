@@ -4,22 +4,8 @@ import { revalidatePath } from "next/cache";
 import { createSupabaseServerClient, getServerUser } from "@/lib/server/auth";
 import { isNextFrameworkError } from "@/lib/server/auth-errors";
 import { logServerEvent } from "@/lib/server/request-id";
+import type { CreatePlantActionResult } from "./action-state";
 import { MAX_BULK_PLANT_COUNT } from "./constants";
-
-export type CreatePlantActionResult = {
-  fieldErrors?: {
-    count?: string;
-    growId?: string;
-    name?: string;
-  };
-  message?: string;
-  redirectTo?: string;
-  status: "error" | "idle" | "success";
-};
-
-export const createPlantActionInitialState: CreatePlantActionResult = {
-  status: "idle",
-};
 
 function asTrimmedString(value: FormDataEntryValue | null) {
   return typeof value === "string" ? value.trim() : "";
