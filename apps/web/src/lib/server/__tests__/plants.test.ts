@@ -900,6 +900,7 @@ describe("plants server helpers", () => {
         confidence_score: 0.92,
         image_id: "image-current",
         recommendation: "Maintain current environment.",
+        source: "ai",
         title: "Improved posture",
       }),
     ]);
