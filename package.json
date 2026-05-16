@@ -19,13 +19,15 @@
     "check:imports": "node scripts/check-imports.mjs",
     "check:code-scanning": "node scripts/check-code-scanning-patterns.mjs",
     "check:budgets": "node scripts/check-file-budgets.mjs",
+    "check:action-pins": "node scripts/check-action-pins.mjs",
     "check:server-actions": "node scripts/check-server-action-exports.mjs",
+    "check:smoke-script": "node --test scripts/__tests__/*.test.mjs",
     "check:scope": "node scripts/check-changed-scope.mjs",
     "security:routes": "node scripts/check-route-security.mjs",
     "security:audit": "node scripts/security-audit.mjs",
     "pr:guardian": "node scripts/pr-guardian.mjs",
     "smoke:preview": "node scripts/smoke-preview.mjs",
-    "validate": "pnpm run check:env && pnpm run check:routes && pnpm run check:imports && pnpm run check:code-scanning && pnpm run check:budgets && pnpm run check:server-actions",
+    "validate": "pnpm run check:env && pnpm run check:routes && pnpm run check:imports && pnpm run check:code-scanning && pnpm run check:budgets && pnpm run check:action-pins && pnpm run check:server-actions && pnpm run check:smoke-script",
     "prepare": "husky"
   },
   "engines": {

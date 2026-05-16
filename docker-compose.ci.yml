@@ -1,0 +1,76 @@
+services:
+  db:
+    image: pgvector/pgvector:pg16
+    environment:
+      POSTGRES_DB: phenosage
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d phenosage"]
+      interval: 5s
+      timeout: 5s
+      retries: 12
+    ports:
+      - "5432:5432"
+
+  analysis:
+    build:
+      context: .
+      dockerfile: Dockerfile.analysis
+    environment:
+      ANALYSIS_SERVICE_API_KEY: ${ANALYSIS_SERVICE_API_KEY:-dev-api-key}
+      READINESS_PROBE_SECRET: ${READINESS_PROBE_SECRET:-dev-readiness-secret}
+      ALLOWED_ORIGINS: http://web:3000,http://localhost:3000
+      OPENAI_API_KEY: ${OPENAI_API_KEY:-sk-test}
+      SUPABASE_URL: ${NEXT_PUBLIC_SUPABASE_URL:-http://db:5432}
+      SUPABASE_SERVICE_ROLE_KEY: ${SUPABASE_SERVICE_ROLE_KEY:-stub-service-role}
+      APP_ENV: ci
+    healthcheck:
+      test:
+        [
+          "CMD-SHELL",
+          'python -c "import os,urllib.request; urllib.request.urlopen(''http://127.0.0.1:8000/ready?secret='' + os.environ[''READINESS_PROBE_SECRET''], timeout=2)"',
+        ]
+      interval: 5s
+      timeout: 5s
+      retries: 12
+    ports:
+      - "8000:8000"
+
+  web:
+    build:
+      context: .
+      dockerfile: Dockerfile.web
+      args:
+        NEXT_PUBLIC_SUPABASE_URL: ${NEXT_PUBLIC_SUPABASE_URL:-http://db:5432}
+        NEXT_PUBLIC_SUPABASE_ANON_KEY: ${NEXT_PUBLIC_SUPABASE_ANON_KEY:-stub-anon-key}
+        NEXT_PUBLIC_APP_URL: http://localhost:3000
+        SUPABASE_SERVICE_ROLE_KEY: ${SUPABASE_SERVICE_ROLE_KEY:-stub-service-role}
+        ANALYSIS_SERVICE_URL: http://analysis:8000
+        ANALYSIS_SERVICE_API_KEY: ${ANALYSIS_SERVICE_API_KEY:-dev-api-key}
+        READINESS_PROBE_SECRET: ${READINESS_PROBE_SECRET:-dev-readiness-secret}
+    environment:
+      NEXT_PUBLIC_SUPABASE_URL: ${NEXT_PUBLIC_SUPABASE_URL:-http://db:5432}
+      NEXT_PUBLIC_SUPABASE_ANON_KEY: ${NEXT_PUBLIC_SUPABASE_ANON_KEY:-stub-anon-key}
+      NEXT_PUBLIC_APP_URL: http://localhost:3000
+      NEXT_PUBLIC_APP_ENV: ci
+      SUPABASE_SERVICE_ROLE_KEY: ${SUPABASE_SERVICE_ROLE_KEY:-stub-service-role}
+      ANALYSIS_SERVICE_URL: http://analysis:8000
+      ANALYSIS_SERVICE_API_KEY: ${ANALYSIS_SERVICE_API_KEY:-dev-api-key}
+      READINESS_PROBE_SECRET: ${READINESS_PROBE_SECRET:-dev-readiness-secret}
+    depends_on:
+      db:
+        condition: service_healthy
+      analysis:
+        condition: service_healthy
+    healthcheck:
+      test:
+        [
+          "CMD-SHELL",
+          'wget -qO- "http://127.0.0.1:3000/api/internal/ready?secret=$${READINESS_PROBE_SECRET}" >/dev/null',
+        ]
+      interval: 5s
+      timeout: 5s
+      retries: 12
+    ports:
+      - "3000:3000"

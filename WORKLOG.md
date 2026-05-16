@@ -36,6 +36,23 @@ Handoff log between sessions. Keep entries short. Newest at top.
 
 ---
 
+## 2026-05-16 — Production smoke harness fix (Copilot)
+
+**Landed on `copilot/investigate-production-smoke-test-failure` at `8b8f940`**
+
+- Hardened `scripts/smoke-test-prod.ps1` so expected protected-route redirects
+  are captured as HTTP status codes instead of opaque `ERR` rows.
+- Added transport-error handling for root/header and leak-scan probes so a DNS
+  or connection failure reports one actionable failure instead of secondary
+  null-header errors.
+- Added `scripts/__tests__/smoke-test-prod.test.mjs` and wired it into
+  `pnpm run validate` via `check:smoke-script`.
+- Validation passed after commit: `pnpm run validate`,
+  `pnpm turbo run type-check lint test`, `pnpm run security:routes`; CodeQL had
+  no analyzable language changes.
+
+---
+
 ## 2026-05-15 — Tier 3: active-grow semantic finding retrieval (Copilot)
 
 **In-flight on `copilot/tier-3-roadmap-research`**

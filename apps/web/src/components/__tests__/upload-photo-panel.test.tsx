@@ -104,18 +104,17 @@ describe("UploadPhotoPanel", () => {
     fetchSpy
       .mockResolvedValueOnce(
         makeResponse({
-          imageId: "img-1",
-          storagePath: "plant-1/leaf.png",
-          token: "tok-1",
+          data: {
+            imageId: "img-1",
+            storagePath: "plant-1/leaf.png",
+            token: "tok-1",
+          },
         }),
       )
       .mockResolvedValueOnce(makeResponse({}))
       .mockResolvedValueOnce(
         makeResponse({
-          analysis: {
-            analysisMode: "openai",
-            summary: "Healthy canopy, no anomalies detected.",
-          },
+          data: { job_id: "job-1", status: "queued" },
         }),
       );
 
@@ -128,7 +127,7 @@ describe("UploadPhotoPanel", () => {
     await waitFor(() => expect(fetchSpy).toHaveBeenCalledTimes(3));
 
     const [signUrl, signInit] = getFetchCall(0);
-    expect(signUrl).toBe("/api/uploads/sign");
+    expect(signUrl).toBe("/api/upload/sign");
     expect(signInit?.method).toBe("POST");
     expect(JSON.parse((signInit?.body as string) ?? "{}")).toMatchObject({
       contentType: "image/png",
@@ -143,11 +142,11 @@ describe("UploadPhotoPanel", () => {
       { contentType: "image/png" },
     );
 
-    expect(getFetchCall(1)[0]).toBe("/api/plants/plant-1/images");
-    expect(getFetchCall(2)[0]).toBe("/api/plants/plant-1/analyze");
+    expect(getFetchCall(1)[0]).toBe("/api/upload/finalize");
+    expect(getFetchCall(2)[0]).toBe("/api/analyze");
 
     const status = await screen.findByRole("status");
-    expect(status).toHaveTextContent(/healthy canopy/i);
+    expect(status).toHaveTextContent(/queued for analysis/i);
     expect(refresh).toHaveBeenCalled();
   });
 
@@ -171,9 +170,11 @@ describe("UploadPhotoPanel", () => {
     fetchSpy
       .mockResolvedValueOnce(
         makeResponse({
-          imageId: "img-1",
-          storagePath: "plant-1/leaf.png",
-          token: "tok-1",
+          data: {
+            imageId: "img-1",
+            storagePath: "plant-1/leaf.png",
+            token: "tok-1",
+          },
         }),
       )
       .mockResolvedValueOnce(makeResponse({}))
@@ -194,18 +195,17 @@ describe("UploadPhotoPanel", () => {
     fetchSpy
       .mockResolvedValueOnce(
         makeResponse({
-          imageId: "img-1",
-          storagePath: "plant-1/leaf.png",
-          token: "tok-1",
+          data: {
+            imageId: "img-1",
+            storagePath: "plant-1/leaf.png",
+            token: "tok-1",
+          },
         }),
       )
       .mockResolvedValueOnce(makeResponse({}))
       .mockResolvedValueOnce(
         makeResponse({
-          analysis: {
-            analysisMode: "fallback",
-            summary: "inconclusive",
-          },
+          data: { job_id: "job-1", status: "queued" },
         }),
       );
 
@@ -216,15 +216,17 @@ describe("UploadPhotoPanel", () => {
     await user.click(screen.getByRole("button", { name: /upload photo/i }));
 
     const status = await screen.findByRole("status");
-    expect(status).toHaveTextContent(/inconclusive fallback output/i);
+    expect(status).toHaveTextContent(/queued for analysis/i);
   });
 
   it("surfaces danger when supabase upload itself fails", async () => {
     fetchSpy.mockResolvedValueOnce(
       makeResponse({
-        imageId: "img-1",
-        storagePath: "plant-1/leaf.png",
-        token: "tok-1",
+        data: {
+          imageId: "img-1",
+          storagePath: "plant-1/leaf.png",
+          token: "tok-1",
+        },
       }),
     );
     uploadToSignedUrl.mockResolvedValueOnce({

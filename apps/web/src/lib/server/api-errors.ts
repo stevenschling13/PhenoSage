@@ -34,6 +34,17 @@ export interface ApiErrorOptions {
   retryAfterSeconds?: number;
 }
 
+export function apiSuccess<T>(
+  status: number,
+  data: T,
+  requestId: string,
+): NextResponse {
+  return attachRequestId(
+    NextResponse.json({ success: true, status, requestId, data }, { status }),
+    requestId,
+  );
+}
+
 export function apiError(
   status: number,
   code: ApiErrorCode,

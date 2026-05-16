@@ -1,17 +1,17 @@
 import { NextRequest } from "next/server";
-import { enqueueAnalysisJob } from "@/lib/server/analysis-jobs";
 import { getServerSession, getServerUser } from "@/lib/server/auth";
-import { apiError, apiSuccess } from "@/lib/server/api-errors";
+import { persistPlantImageUpload } from "@/lib/server/plants";
 import { rateLimit, rateLimitKeyFromRequest } from "@/lib/server/rate-limit";
 import { getOrCreateRequestId, logServerEvent } from "@/lib/server/request-id";
-import { AnalyzeRequestSchema } from "@/lib/server/schemas";
+import { apiError, apiSuccess } from "@/lib/server/api-errors";
+import { UploadFinalizeRequestSchema, UuidSchema } from "@/lib/server/schemas";
 import { parseJsonBody } from "@/lib/server/validate";
 
-interface RouteParams {
-  params: Promise<{ plantId: string }>;
-}
+const UploadFinalizeRouteSchema = UploadFinalizeRequestSchema.extend({
+  plantId: UuidSchema,
+});
 
-export async function POST(request: NextRequest, { params }: RouteParams) {
+export async function POST(request: NextRequest) {
   const requestId = getOrCreateRequestId(request);
   const session = await getServerSession();
   if (!session) {
@@ -21,21 +21,20 @@ export async function POST(request: NextRequest, { params }: RouteParams) {
   const user = await getServerUser();
   const rate = await rateLimit({
     key: rateLimitKeyFromRequest(request, user?.id ?? null),
-    limit: 5,
+    limit: 10,
     windowMs: 60_000,
   });
   if (!rate.ok) {
     return apiError(
       429,
       "RATE_LIMITED",
-      "Too many analysis requests. Try again shortly.",
+      "Too many upload finalization requests. Try again shortly.",
       requestId,
       { retryAfterSeconds: 30 },
     );
   }
 
-  const { plantId } = await params;
-  const parsed = await parseJsonBody(request, AnalyzeRequestSchema);
+  const parsed = await parseJsonBody(request, UploadFinalizeRouteSchema);
   if (!parsed.ok) {
     return apiError(
       parsed.status,
@@ -46,47 +45,33 @@ export async function POST(request: NextRequest, { params }: RouteParams) {
   }
 
   try {
-    const job = await enqueueAnalysisJob({
-      plantId,
+    const persisted = await persistPlantImageUpload({
       imageId: parsed.data.imageId,
-      ...(parsed.data.idempotencyKey
-        ? { idempotencyKey: parsed.data.idempotencyKey }
-        : {}),
+      plantId: parsed.data.plantId,
+      ...(parsed.data.takenAt ? { takenAt: parsed.data.takenAt } : {}),
+      ...(parsed.data.source ? { source: parsed.data.source } : {}),
+      ...(parsed.data.notes ? { notes: parsed.data.notes } : {}),
+      storagePath: parsed.data.storagePath,
     });
-
-    if (!job) {
+    if (!persisted) {
       return apiError(
         404,
         "NOT_FOUND",
-        "Plant image not found or access denied",
+        "Plant not found or access denied",
         requestId,
       );
     }
-
-    return apiSuccess(
-      202,
-      {
-        job_id: job.id,
-        status: job.status,
-        plant_id: job.plantId,
-        image_id: job.imageId,
-      },
-      requestId,
-    );
+    return apiSuccess(201, persisted, requestId);
   } catch (error) {
-    // Log the underlying cause for operators but never echo the raw exception
-    // text to the browser — it can include "fetch failed", upstream URLs, env
-    // variable names, or stack-trace fragments.
-    logServerEvent("error", "plant analysis failed", {
+    logServerEvent("error", "plant image finalize failed", {
       requestId,
-      plantId,
-      imageId: parsed.data.imageId,
+      plantId: parsed.data.plantId,
       error: error instanceof Error ? error.message : "unknown_error",
     });
     return apiError(
       500,
       "INTERNAL_ERROR",
-      "Plant analysis failed. Please try again.",
+      "Image persistence failed",
       requestId,
     );
   }

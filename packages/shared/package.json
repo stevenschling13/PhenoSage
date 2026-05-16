@@ -1,5 +1,4 @@
 {
-  "_lockfile_note": "zod is declared here as a no-op transitional dependency only so the existing pnpm-lock.yaml on this branch remains in sync with this package.json (this sandbox's git proxy refuses pushes >~10KB, blocking a regenerated lockfile). The runtime schemas themselves live in apps/web/src/lib/server/schemas.ts per .github/instructions/packages-shared.instructions.md (no runtime deps in shared). The zod entry below will be removed in a follow-up commit once the lockfile can be regenerated and pushed atomically.",
   "name": "@phenosage/shared",
   "version": "0.1.0",
   "private": true,
@@ -17,8 +16,5 @@
     "@vitest/coverage-v8": "^4.1.6",
     "typescript": "^6.0.3",
     "vitest": "^4.1.6"
-  },
-  "dependencies": {
-    "zod": "^3.24.1"
   }
 }

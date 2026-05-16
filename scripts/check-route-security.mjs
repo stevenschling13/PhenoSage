@@ -6,8 +6,9 @@
 //      (a) be a public route listed in PUBLIC_ROUTES, or
 //      (b) reference an auth helper from @/lib/server/auth, or
 //      (c) be an /api/internal/* route, which must instead verify the
-//          Vercel cron secret (header "Authorization: Bearer ..." against
-//          CRON_SECRET or VERCEL_CRON_SECRET).
+//          Vercel cron secret or readiness secret (header
+//          "Authorization: Bearer ..." against CRON_SECRET,
+//          VERCEL_CRON_SECRET, or READINESS_PROBE_SECRET).
 //   2. State-changing routes (POST/PUT/PATCH/DELETE) must read from the
 //      request body via .json()/.formData() and not blindly trust query params.
 //   3. Route Handlers must not import from "@/components/**" (client leak).
@@ -63,7 +64,7 @@ const HTTP_METHOD_NAMES = new Set(["GET", "POST", "PUT", "PATCH", "DELETE"]);
 const AUTH_IMPORT_RE = /from\s+["']@\/lib\/server\/auth["']/;
 const COMPONENTS_IMPORT_RE = /from\s+["']@\/components\//;
 const CRON_SECRET_RE =
-  /(CRON_SECRET|VERCEL_CRON_SECRET|x-vercel-cron|Vercel-Cron)/;
+  /(CRON_SECRET|VERCEL_CRON_SECRET|READINESS_PROBE_SECRET|x-vercel-cron|Vercel-Cron)/;
 
 let scanned = 0;
 for (const file of walk(API_ROOT)) {
@@ -103,7 +104,7 @@ for (const file of walk(API_ROOT)) {
   if (isInternal) {
     if (!hasCronGuard) {
       errors.push(
-        `${rel}: /api/internal route missing cron-secret guard (CRON_SECRET/Vercel-Cron header check)`,
+        `${rel}: /api/internal route missing cron/readiness-secret guard (CRON_SECRET/READINESS_PROBE_SECRET/Vercel-Cron header check)`,
       );
     }
     continue;
@@ -117,7 +118,9 @@ for (const file of walk(API_ROOT)) {
 
   const stateChange = methods.some((m) => m !== "GET");
   if (stateChange) {
-    const parsesBody = /\.(json|formData|text|arrayBuffer)\s*\(/.test(text);
+    const parsesBody =
+      /\.(json|formData|text|arrayBuffer)\s*\(/.test(text) ||
+      /\bparseJsonBody\s*\(/.test(text);
     if (!parsesBody) {
       warnings.push(
         `${rel}: state-changing handler (${methods.join(",")}) but no request body parsing detected`,
