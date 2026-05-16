@@ -355,9 +355,13 @@ export function escapeIlikePattern(input: string): string {
 // any of them, the parser will split mid-value and an attacker (or a
 // well-meaning user typing "50%, droopy") can graft an extra predicate
 // onto the OR. Wrapping the value in double quotes opts the parser into
-// a literal-string mode where the only escape needed is `\"`.
+// literal-string mode, where the two characters that still need
+// escaping are `"` (which would close the string) and `\` (the escape
+// character itself). Escape both before wrapping; otherwise a bare `\`
+// in the input would be consumed by the parser as the start of an
+// escape sequence and the resulting ILIKE value would be wrong.
 export function quotedIlikeOrValue(input: string): string {
-  const escaped = escapeIlikePattern(input).replace(/"/g, '\\"');
+  const escaped = escapeIlikePattern(input).replace(/[\\"]/g, "\\$&");
   return `"%${escaped}%"`;
 }
 

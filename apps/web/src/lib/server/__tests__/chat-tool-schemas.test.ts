@@ -28,7 +28,17 @@ describe("quotedIlikeOrValue", () => {
   });
 
   it("escapes ILIKE wildcards inside the quoted value", () => {
-    expect(quotedIlikeOrValue("50%")).toBe('"%50\\%%"');
+    // ILIKE-level: `%` → `\%` so it matches literally.
+    // PostgREST-level: the resulting `\` must itself be escaped to `\\`
+    // so the parser doesn't consume it as the start of an escape
+    // sequence inside the double-quoted value.
+    expect(quotedIlikeOrValue("50%")).toBe('"%50\\\\%%"');
+  });
+
+  it("escapes backslashes so PostgREST doesn't consume them", () => {
+    // Input `\` would otherwise become a lone `\` inside the quoted
+    // string and PostgREST would treat it as the start of an escape.
+    expect(quotedIlikeOrValue("\\")).toBe('"%\\\\\\\\%"');
   });
 
   it("does not let comma/period delimiters break out of the value", () => {
