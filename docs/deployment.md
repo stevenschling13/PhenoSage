@@ -375,8 +375,9 @@ following workflows then fire automatically:
 | `DISCORD_WEBHOOK_URL`      | Channel webhook for ✅ / 🚨 deploy alerts.                      | Discord channel → Edit Channel → Integrations → Webhooks → Copy URL                                 |
 | `VERCEL_PROTECTION_BYPASS` | Optional — lets smoke reach pages behind Deployment Protection. | Vercel → Project → Settings → Deployment Protection → Protection Bypass for Automation → Add        |
 
-All five are safe to leave unset — the workflows degrade gracefully
-(skip the step + log a warning) instead of failing the deploy.
+All five listed secrets, including `VERCEL_PROTECTION_BYPASS`, are safe
+to leave unset — any workflow that depends on one will skip that step and
+log a warning instead of failing the deploy.
 
 ### Enabling Vercel Rolling Releases
 
