@@ -349,6 +349,55 @@ The GitHub Actions workflow (`.github/workflows/ci.yml`) runs on every push/PR:
 - **Analysis**: ruff lint, mypy type-check, pytest
 - **Shared**: type-check
 
+## Production deploy lifecycle
+
+Every push to `main` triggers Vercel to build and deploy production. The
+following workflows then fire automatically:
+
+1. **`post-deploy-smoke.yml`** — runs `scripts/smoke-test-prod.ps1`
+   against the new deployment. On failure it:
+   - Auto-rolls-back to the previous successful production deploy via
+     Vercel's promote API (requires `VERCEL_TOKEN` +
+     `VERCEL_PROJECT_ID` secrets).
+   - Opens a GitHub issue with the bad SHA + rollback receipt.
+   - Posts to Discord (requires `DISCORD_WEBHOOK_URL` secret).
+2. **`release-on-prod-deploy.yml`** — tags the deployed SHA as
+   `vYYYY.MM.DD-N` and creates a GitHub Release with auto-generated
+   notes (PRs merged since the previous tag).
+
+### Required GitHub secrets
+
+| Secret                     | Purpose                                                         | How to get it                                                                                       |
+| -------------------------- | --------------------------------------------------------------- | --------------------------------------------------------------------------------------------------- |
+| `VERCEL_TOKEN`             | Auto-rollback can call the promote API.                         | Vercel → Account Settings → Tokens → Create (full scope, or scoped to the `pheno-sage-web` project) |
+| `VERCEL_PROJECT_ID`        | Identifies the project for the promote call.                    | `prj_XtNTJz3FT3PGokPxlyE3bm5XHp2V` (visible in any deployment metadata)                             |
+| `VERCEL_TEAM_ID`           | Team scope for the promote call.                                | `team_1jHeAEF8oKm2Z46fqRMdu5uL`                                                                     |
+| `DISCORD_WEBHOOK_URL`      | Channel webhook for ✅ / 🚨 deploy alerts.                      | Discord channel → Edit Channel → Integrations → Webhooks → Copy URL                                 |
+| `VERCEL_PROTECTION_BYPASS` | Optional — lets smoke reach pages behind Deployment Protection. | Vercel → Project → Settings → Deployment Protection → Protection Bypass for Automation → Add        |
+
+All four are safe to leave unset — the workflows degrade gracefully
+(skip the step + log a warning) instead of failing the deploy.
+
+### Enabling Vercel Rolling Releases
+
+Rolling Releases gradually shift traffic from the previous production
+deploy to the new one (e.g. 5% → 25% → 100%) instead of cutting over
+instantly. A bad deploy then affects only the canary cohort, and you
+can use Vercel's built-in **Instant Rollback** to revert before more
+users hit it.
+
+To enable:
+
+1. Vercel → `pheno-sage-web` → Settings → Rolling Releases → Enable.
+2. Start with a single stage: **5% canary for 10 min, then 100%**.
+3. Over time, layer Speed Insights / Sentry comparisons into the
+   promotion gate (see `docs/runbooks/slo.md` for the SLO numbers
+   that should drive auto-promote vs auto-rollback decisions).
+
+Docs: https://vercel.com/docs/rolling-releases · https://vercel.com/docs/instant-rollback
+
+## Pre-deploy readiness
+
 Preview and production deploys should be considered ready only after `/api/ready` on the web app and `/ready` on the analysis service both return healthy responses with the expected request IDs in headers.
 
 Run the repo-level readiness check before the authenticated smoke so missing

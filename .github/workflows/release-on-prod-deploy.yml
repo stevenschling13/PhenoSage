@@ -1,0 +1,104 @@
+name: Release tag on production deploy
+
+# Auto-creates a date-based release tag (e.g. v2026.05.16-1) and a
+# GitHub Release page on every successful Vercel production deploy.
+# The release notes are auto-generated from PRs merged since the
+# previous tag, giving you a fast answer to "what's in prod right now?"
+# and "what changed since the last good deploy?".
+#
+# Why date-based instead of semver? Semver implies a contract about
+# breaking changes that solo apps shipping continuously don't really
+# have. Date.run pinpoints any tag to a specific deploy in seconds
+# without manual version-bump discipline.
+#
+# Required: GITHUB_TOKEN (provided automatically). No secrets needed.
+
+on:
+  deployment_status:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: release-tag-${{ github.event.deployment_status.deployment.sha }}
+  cancel-in-progress: false
+
+jobs:
+  tag-and-release:
+    name: Tag + release
+    runs-on: ubuntu-latest
+    if: |
+      github.event.deployment_status.state == 'success' &&
+      github.event.deployment_status.environment == 'Production'
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          # Full history so we can compute "changed since last tag".
+          fetch-depth: 0
+
+      - name: Compute next tag
+        id: tag
+        shell: bash
+        run: |
+          set -euo pipefail
+          DATE=$(date -u +%Y.%m.%d)
+          PREFIX="v${DATE}"
+          # Find the highest -N suffix already used today, increment.
+          LAST_N=$(git tag -l "${PREFIX}-*" \
+            | awk -F- '{print $NF}' \
+            | sort -n \
+            | tail -1)
+          if [ -z "$LAST_N" ]; then
+            NEXT_N=1
+          else
+            NEXT_N=$((LAST_N + 1))
+          fi
+          TAG="${PREFIX}-${NEXT_N}"
+          echo "tag=${TAG}" >> "$GITHUB_OUTPUT"
+          echo "Computed next tag: ${TAG}"
+
+      - name: Find previous tag (for release notes)
+        id: prev
+        shell: bash
+        run: |
+          set -euo pipefail
+          # Most recent existing tag, ignoring lightweight refs created
+          # in this run. Empty string is fine — release notes will fall
+          # back to "all commits".
+          PREV=$(git tag -l 'v*' --sort=-creatordate | head -1 || true)
+          echo "prev=${PREV}" >> "$GITHUB_OUTPUT"
+          echo "Previous tag: ${PREV:-<none>}"
+
+      - name: Create tag at deployed SHA
+        env:
+          TAG: ${{ steps.tag.outputs.tag }}
+          SHA: ${{ github.event.deployment_status.deployment.sha }}
+        run: |
+          set -euo pipefail
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git tag -a "${TAG}" "${SHA}" -m "Production deploy ${TAG}"
+          git push origin "${TAG}"
+
+      - name: Create GitHub Release with auto-generated notes
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ steps.tag.outputs.tag }}
+          PREV: ${{ steps.prev.outputs.prev }}
+        run: |
+          set -euo pipefail
+          # Use GitHub's auto-generated release notes endpoint. When PREV
+          # is empty, GitHub will pick the previous tag chronologically.
+          if [ -n "$PREV" ]; then
+            gh release create "$TAG" \
+              --target "${{ github.event.deployment_status.deployment.sha }}" \
+              --title "$TAG" \
+              --generate-notes \
+              --notes-start-tag "$PREV"
+          else
+            gh release create "$TAG" \
+              --target "${{ github.event.deployment_status.deployment.sha }}" \
+              --title "$TAG" \
+              --generate-notes
+          fi
+          echo "::notice::Created release $TAG"
