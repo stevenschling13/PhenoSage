@@ -36,7 +36,7 @@ function Add-BypassHeaders([hashtable]$h) {
   return $h
 }
 
-function Test-IsSsoInterstitial([Microsoft.PowerShell.Commands.WebResponseObject]$resp, [int]$code) {
+function Test-IsSsoInterstitial($resp, [int]$code) {
   if ($null -eq $resp) { return $false }
   if ($code -ne 401 -and $code -ne 307 -and $code -ne 308) { return $false }
   $cookies  = ($resp.Headers['Set-Cookie'] -join ';')
@@ -48,16 +48,54 @@ function Test-IsSsoInterstitial([Microsoft.PowerShell.Commands.WebResponseObject
   return $false
 }
 
+function Invoke-SmokeRequest([string]$Uri, [string]$Method = 'GET', [hashtable]$Headers = @{}, [switch]$NoRedirect) {
+  $handler = [System.Net.Http.HttpClientHandler]::new()
+  $handler.AllowAutoRedirect = -not $NoRedirect
+  $client = [System.Net.Http.HttpClient]::new($handler)
+
+  try {
+    $request = [System.Net.Http.HttpRequestMessage]::new(
+      [System.Net.Http.HttpMethod]::new($Method),
+      $Uri
+    )
+    foreach ($key in $Headers.Keys) {
+      $request.Headers.TryAddWithoutValidation([string]$key, [string]$Headers[$key]) | Out-Null
+    }
+    $response = $client.Send($request)
+    $responseHeaders = @{}
+    foreach ($header in $response.Headers.GetEnumerator()) {
+      $responseHeaders[$header.Key] = @($header.Value)
+    }
+    foreach ($header in $response.Content.Headers.GetEnumerator()) {
+      $responseHeaders[$header.Key] = @($header.Value)
+    }
+
+    return [PSCustomObject]@{
+      StatusCode = [int]$response.StatusCode
+      Headers    = $responseHeaders
+      Content    = $response.Content.ReadAsStringAsync().GetAwaiter().GetResult()
+      Error      = $null
+    }
+  } catch {
+    return [PSCustomObject]@{
+      StatusCode = $null
+      Headers    = @{}
+      Content    = $null
+      Error      = $_.Exception.Message
+    }
+  } finally {
+    $client.Dispose()
+    $handler.Dispose()
+  }
+}
+
 # Probe the root once to figure out whether we're behind the SSO interstitial.
 $ssoDetected   = $false
 $bypassActive  = -not [string]::IsNullOrWhiteSpace($BypassToken)
-try {
-  $probeHeaders = Add-BypassHeaders @{}
-  $probe = Invoke-WebRequest -Uri "$Base/" -UseBasicParsing -MaximumRedirection 0 `
-    -SkipHttpErrorCheck -Headers $probeHeaders -ErrorAction Stop
+$probeHeaders = Add-BypassHeaders @{}
+$probe = Invoke-SmokeRequest -Uri "$Base/" -Headers $probeHeaders -NoRedirect
+if ($null -ne $probe.StatusCode) {
   $ssoDetected = Test-IsSsoInterstitial $probe ([int]$probe.StatusCode)
-} catch {
-  # ignore - tests below will surface a real connectivity failure
 }
 
 if ($ssoDetected -and -not $bypassActive) {
@@ -105,12 +143,12 @@ $results = foreach ($t in $tests) {
   }
 
   try {
-    $r = Invoke-WebRequest -Uri "$Base$($t.p)" -Method $t.m `
-      -UseBasicParsing -MaximumRedirection 0 -SkipHttpErrorCheck `
-      -Headers $headers -ErrorAction Stop
-    $code = [int]$r.StatusCode
+    $r = Invoke-SmokeRequest -Uri "$Base$($t.p)" -Method $t.m -Headers $headers -NoRedirect
+    $code = if ($null -ne $r.StatusCode) { [int]$r.StatusCode } else { 'ERR' }
+    $requestError = if ($code -eq 'ERR') { $r.Error } else { '' }
   } catch {
     $code = 'ERR'
+    $requestError = $_.Exception.Message
   }
   $ok = $t.e -contains $code
   [PSCustomObject]@{
@@ -120,6 +158,7 @@ $results = foreach ($t in $tests) {
     Expected = ($t.e -join ',')
     OK       = $ok
     Note     = $t.note
+    Error    = $requestError
   }
 }
 
@@ -130,7 +169,7 @@ if ($ssoDetected -and -not $bypassActive) {
   Write-Host "  SKIP (SSO interstitial does not carry app headers)" -ForegroundColor Yellow
 } else {
   $rootHeaders = Add-BypassHeaders @{}
-  $root = Invoke-WebRequest -Uri "$Base/" -UseBasicParsing -SkipHttpErrorCheck -Headers $rootHeaders
+  $root = Invoke-SmokeRequest -Uri "$Base/" -Headers $rootHeaders
   $secHeaders = @{
     'Strict-Transport-Security' = $true   # required
     'X-Frame-Options'           = $true
@@ -138,6 +177,10 @@ if ($ssoDetected -and -not $bypassActive) {
     'Referrer-Policy'           = $true
     'Permissions-Policy'        = $true
     'Content-Security-Policy'   = $false  # recommended but not required
+  }
+  if ($null -eq $root.StatusCode) {
+    Write-Host ("  FAIL Unable to fetch root: {0}" -f $root.Error) -ForegroundColor Red
+    $secFail++
   }
   foreach ($h in $secHeaders.Keys) {
     $v = $root.Headers[$h]
@@ -161,7 +204,13 @@ if ($ssoDetected -and -not $bypassActive) {
   $leakPages = '/','/auth','/dashboard','/grows','/assistant','/settings'
   foreach ($p in $leakPages) {
     $leakHeaders = Add-BypassHeaders @{}
-    $c = (Invoke-WebRequest -Uri "$Base$p" -UseBasicParsing -SkipHttpErrorCheck -Headers $leakHeaders).Content
+    $page = Invoke-SmokeRequest -Uri "$Base$p" -Headers $leakHeaders
+    if ($null -eq $page.StatusCode) {
+      Write-Host ("  FAIL Unable to fetch {0}: {1}" -f $p, $page.Error) -ForegroundColor Red
+      $leaks++
+      continue
+    }
+    $c = $page.Content
     if ($c -match 'sk-[A-Za-z0-9]{20,}')        { Write-Host "  FAIL OpenAI key in $p" -ForegroundColor Red; $leaks++ }
     if ($c -match 'service_role')               { Write-Host "  FAIL service_role in $p" -ForegroundColor Red; $leaks++ }
     if ($c -match 'SUPABASE_SERVICE_ROLE_KEY')  { Write-Host "  FAIL service-role var in $p" -ForegroundColor Red; $leaks++ }
@@ -171,7 +220,7 @@ if ($ssoDetected -and -not $bypassActive) {
 
 # --- Results table ---
 Write-Host "`n=== Endpoint smoke tests ===" -ForegroundColor Cyan
-$results | Format-Table Method,Path,Status,Expected,OK,Note -AutoSize
+$results | Format-Table Method,Path,Status,Expected,OK,Note,Error -AutoSize
 
 $pass = ($results | Where-Object OK).Count
 $fail = $results.Count - $pass
