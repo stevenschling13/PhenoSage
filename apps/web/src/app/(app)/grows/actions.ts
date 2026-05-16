@@ -7,7 +7,13 @@ import { createSupabaseServerClient, getServerUser } from "@/lib/server/auth";
 import { isNextFrameworkError } from "@/lib/server/auth-errors";
 import { rateLimit } from "@/lib/server/rate-limit";
 import { logServerEvent, REQUEST_ID_HEADER } from "@/lib/server/request-id";
+import type { CreateGrowActionResult } from "./action-state";
 import { MAX_DESCRIPTION_LENGTH, MAX_FUTURE_START_MS } from "./constants";
+
+// Re-export the result type for backwards-compatible imports. `export
+// type` is erased at compile time (SWC strips it from the JS output)
+// so the runtime "use server" file still only exports async functions.
+export type { CreateGrowActionResult } from "./action-state";
 
 const validStages = new Set<GrowStage>([
   "germination",
@@ -60,25 +66,6 @@ const IDEMPOTENCY_LIMIT = 1;
 // well below what a runaway script could cost us.
 const ABUSE_LIMIT_WINDOW_MS = 60_000;
 const ABUSE_LIMIT = 20;
-
-export type CreateGrowActionResult = {
-  fieldErrors?: {
-    description?: string;
-    lightType?: string;
-    medium?: string;
-    name?: string;
-    stage?: string;
-    startDate?: string;
-    targetHarvestDate?: string;
-  };
-  message?: string;
-  redirectTo?: string;
-  status: "error" | "idle" | "success";
-};
-
-export const createGrowActionInitialState: CreateGrowActionResult = {
-  status: "idle",
-};
 
 function asTrimmedString(value: FormDataEntryValue | null) {
   return typeof value === "string" ? value.trim() : "";

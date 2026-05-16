@@ -3,11 +3,11 @@
 import { useState } from "react";
 import { Button } from "@/components/ui/button";
 import { useActionWithRecovery } from "@/lib/client/action-runner";
+import { deleteGrowAction } from "./actions";
 import {
-  deleteGrowAction,
   deleteGrowActionInitialState,
   type DeleteGrowActionResult,
-} from "./actions";
+} from "./action-state";
 
 // Destructive island. Two-step UI: the "Delete grow" CTA reveals an
 // inline confirmation that requires the user to retype the grow name.

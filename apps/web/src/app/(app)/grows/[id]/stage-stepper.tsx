@@ -3,11 +3,11 @@
 import type { GrowStage } from "@phenosage/shared";
 import { Button } from "@/components/ui/button";
 import { useActionWithRecovery } from "@/lib/client/action-runner";
+import { advanceGrowStageAction } from "./actions";
 import {
-  advanceGrowStageAction,
   advanceGrowStageActionInitialState,
   type AdvanceGrowStageActionResult,
-} from "./actions";
+} from "./action-state";
 
 // Linear vocabulary order matches the create-grow form's option list.
 // `dry_cure` is the terminal stage — beyond it there's no "next" step

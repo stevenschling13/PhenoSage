@@ -5,7 +5,23 @@ import type { GrowMedium, GrowStage, LightType } from "@phenosage/shared";
 import { createSupabaseServerClient, getServerUser } from "@/lib/server/auth";
 import { isNextFrameworkError } from "@/lib/server/auth-errors";
 import { logServerEvent } from "@/lib/server/request-id";
+import type {
+  AdvanceGrowStageActionResult,
+  DeleteGrowActionResult,
+  ToggleArchiveActionResult,
+  UpdateGrowActionResult,
+} from "./action-state";
 import { MAX_DESCRIPTION_LENGTH, MAX_FUTURE_START_MS } from "../constants";
+
+// Re-export the action-result types for backwards-compatible imports.
+// `export type` is erased by SWC so the runtime "use server" file
+// still only exports async functions.
+export type {
+  AdvanceGrowStageActionResult,
+  DeleteGrowActionResult,
+  ToggleArchiveActionResult,
+  UpdateGrowActionResult,
+} from "./action-state";
 
 // Stage / medium / light vocabularies are duplicated from
 // new/actions.ts on purpose: keeping the two action files independent
@@ -47,16 +63,6 @@ function asTrimmedString(value: FormDataEntryValue | null) {
 function isIsoDate(value: string) {
   return /^\d{4}-\d{2}-\d{2}$/.test(value) && !Number.isNaN(Date.parse(value));
 }
-
-export type ToggleArchiveActionResult = {
-  message?: string;
-  redirectTo?: string;
-  status: "error" | "idle" | "success";
-};
-
-export const toggleArchiveActionInitialState: ToggleArchiveActionResult = {
-  status: "idle",
-};
 
 // Toggle a grow's `is_archived` flag. Owner-only — enforced by RLS
 // ("grows: owner write" policy from migration 001), so an unauthorised
@@ -153,25 +159,6 @@ export async function toggleGrowArchiveAction(
 // (`grows: owner write`) so non-owners get a 42501 we surface as a
 // clean message. Validation mirrors createGrowAction so a user can't
 // reach an invalid state via either path.
-
-export type UpdateGrowActionResult = {
-  fieldErrors?: {
-    description?: string;
-    lightType?: string;
-    medium?: string;
-    name?: string;
-    stage?: string;
-    startDate?: string;
-    targetHarvestDate?: string;
-  };
-  message?: string;
-  redirectTo?: string;
-  status: "error" | "idle" | "success";
-};
-
-export const updateGrowActionInitialState: UpdateGrowActionResult = {
-  status: "idle",
-};
 
 export async function updateGrowAction(
   growId: string,
@@ -325,16 +312,6 @@ export async function updateGrowAction(
 // lets owners jump backward shouldn't have to introduce a second
 // action. Owner-only via RLS.
 
-export type AdvanceGrowStageActionResult = {
-  message?: string;
-  status: "error" | "idle" | "success";
-};
-
-export const advanceGrowStageActionInitialState: AdvanceGrowStageActionResult =
-  {
-    status: "idle",
-  };
-
 export async function advanceGrowStageAction(
   growId: string,
   nextStage: GrowStage,
@@ -408,16 +385,6 @@ export async function advanceGrowStageAction(
 // images, analyses, jobs, members, tasks, observations, events, and
 // findings. `chat_threads.grow_id` is SET NULL on purpose, so any
 // assistant chat scoped here unscope's rather than disappearing.
-
-export type DeleteGrowActionResult = {
-  message?: string;
-  redirectTo?: string;
-  status: "error" | "idle" | "success";
-};
-
-export const deleteGrowActionInitialState: DeleteGrowActionResult = {
-  status: "idle",
-};
 
 function normaliseName(value: string) {
   return value.trim().toLowerCase();

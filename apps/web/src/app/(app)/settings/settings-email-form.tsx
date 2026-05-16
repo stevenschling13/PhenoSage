@@ -5,11 +5,11 @@ import { useRouter } from "next/navigation";
 
 import { Button } from "@/components/ui/button";
 
+import { updateEmailPreferencesAction } from "./actions";
 import {
-  updateEmailPreferencesAction,
   updateEmailPreferencesActionInitialState,
   type UpdateEmailPreferencesActionResult,
-} from "./actions";
+} from "./action-state";
 
 const checkboxClassName =
   "h-4 w-4 rounded border-border/70 bg-surface text-accent focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/35";

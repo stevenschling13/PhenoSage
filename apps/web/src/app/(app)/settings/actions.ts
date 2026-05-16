@@ -5,6 +5,20 @@ import { createSupabaseServerClient, getServerUser } from "@/lib/server/auth";
 import { isNextFrameworkError } from "@/lib/server/auth-errors";
 import { logServerEvent } from "@/lib/server/request-id";
 import { isValidTimezone } from "@/lib/server/timezone";
+import type {
+  UpdateDisplayNameActionResult,
+  UpdateEmailPreferencesActionResult,
+  UpdateTimezoneActionResult,
+} from "./action-state";
+
+// Re-export the action-result types for backwards-compatible imports.
+// `export type` is erased by SWC so the runtime "use server" file
+// still only exports async functions.
+export type {
+  UpdateDisplayNameActionResult,
+  UpdateEmailPreferencesActionResult,
+  UpdateTimezoneActionResult,
+} from "./action-state";
 
 // ─── Shared helpers ──────────────────────────────────────────────────
 //
@@ -77,16 +91,6 @@ function asTrimmedString(value: FormDataEntryValue | null) {
 }
 
 // ─── Display name ────────────────────────────────────────────────────
-
-export type UpdateDisplayNameActionResult = {
-  message?: string;
-  status: "error" | "idle" | "success";
-};
-
-export const updateDisplayNameActionInitialState: UpdateDisplayNameActionResult =
-  {
-    status: "idle",
-  };
 
 // Postgres SQLSTATE → user-facing copy. Same mapping pattern as
 // createGrowAction. Anything unmapped falls through to the generic
@@ -164,15 +168,6 @@ export async function updateDisplayNameAction(
 }
 
 // ─── Timezone preference ─────────────────────────────────────────────
-
-export type UpdateTimezoneActionResult = {
-  message?: string;
-  status: "error" | "idle" | "success";
-};
-
-export const updateTimezoneActionInitialState: UpdateTimezoneActionResult = {
-  status: "idle",
-};
 
 // Friendly copy for the SQLSTATE codes this path can plausibly throw.
 // `22023` is the migration's validation trigger telling us the IANA
@@ -256,16 +251,6 @@ export async function updateTimezoneAction(
 }
 
 // ─── Email-notification preferences (Tier 2.2) ───────────────────────
-
-export type UpdateEmailPreferencesActionResult = {
-  message?: string;
-  status: "error" | "idle" | "success";
-};
-
-export const updateEmailPreferencesActionInitialState: UpdateEmailPreferencesActionResult =
-  {
-    status: "idle",
-  };
 
 const VALID_EMAIL_SEVERITY_FLOORS = new Set([
   "info",

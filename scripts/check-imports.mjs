@@ -88,6 +88,53 @@ for (const f of walk(webSrc, [".ts", ".tsx"])) {
   }
 }
 
+// 4b. Next 16 contract: any file beginning with `"use server"` may only
+//     export async functions. Exporting a `const`, `let`, `var`, `class`,
+//     or non-async `function` triggers `Error: A "use server" file can
+//     only export async functions, found object` at every server-action
+//     POST. Type-only exports (`export type`, `export interface`,
+//     `export type {...}`) are erased by SWC and stay safe.
+//
+//     This guardrail caught the May 15 2026 production audit's create-
+//     grow + settings outages — the InitialState constants used to live
+//     next to the actions and only blew up at runtime. Now drift is
+//     caught locally before it ships.
+//
+//     The regex deliberately matches at column 0 only: indented exports
+//     are inside a function or block and are not module-level.
+const USE_SERVER_RE = /^\s*["']use server["'];?\s*$/m;
+const NON_ASYNC_EXPORT_RE =
+  /^export\s+(?:const|let|var|enum|class)\s+([A-Za-z_$][\w$]*)/gm;
+const NON_ASYNC_FUNCTION_EXPORT_RE =
+  /^export\s+function\s+([A-Za-z_$][\w$]*)/gm;
+for (const f of walk(webSrc, [".ts", ".tsx"])) {
+  const text = readFileSync(f, "utf8");
+  // Only inspect files whose top of the module is "use server".
+  // (Function-level "use server" inline directives don't pose this
+  // hazard — only file-level ones do.)
+  const head = text.slice(0, 200);
+  if (!USE_SERVER_RE.test(head)) continue;
+  const rel = relative(ROOT, f).split(sep).join("/");
+  let m;
+  NON_ASYNC_EXPORT_RE.lastIndex = 0;
+  while ((m = NON_ASYNC_EXPORT_RE.exec(text)) !== null) {
+    errors.push(
+      `"use server" file exports non-async value (Next 16 will throw at runtime): ${rel} → ${m[1]}`,
+    );
+  }
+  NON_ASYNC_FUNCTION_EXPORT_RE.lastIndex = 0;
+  while ((m = NON_ASYNC_FUNCTION_EXPORT_RE.exec(text)) !== null) {
+    // `export async function` is fine; `export function` is not.
+    const lineStart = text.lastIndexOf("\n", m.index) + 1;
+    const line = text.slice(lineStart, m.index + m[0].length + 6);
+    if (!/export\s+async\s+function/.test(line)) {
+      errors.push(
+        `"use server" file exports non-async function (Next 16 will throw at runtime): ${rel} → ${m[1]}`,
+      );
+    }
+  }
+}
+
 // 4. Required files exist
 const required = [
   "apps/web/src/app/layout.tsx",
