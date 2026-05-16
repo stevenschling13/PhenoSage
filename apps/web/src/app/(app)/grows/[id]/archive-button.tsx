@@ -5,9 +5,9 @@ import { Button, buttonStyles } from "@/components/ui/button";
 import { useActionWithRecovery } from "@/lib/client/action-runner";
 import {
   toggleArchiveActionInitialState,
-  toggleGrowArchiveAction,
   type ToggleArchiveActionResult,
-} from "./actions";
+} from "./action-state";
+import { toggleGrowArchiveAction } from "./actions";
 
 // Client island that hosts the archive / restore toggle. The form
 // inherits the same auto-correction pattern as create-grow:

@@ -58,3 +58,6 @@ htmlcov/
 playwright-report
 test-results
 .cursor
+
+# Supabase CLI local state
+supabase/.temp/

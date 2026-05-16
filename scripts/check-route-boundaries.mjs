@@ -13,7 +13,10 @@
 import { readFileSync, readdirSync, statSync, existsSync } from "node:fs";
 import { join, relative, sep } from "node:path";
 
-const ROOT = new URL("..", import.meta.url).pathname.replace(/^\/([A-Za-z]:)/, "$1");
+const ROOT = new URL("..", import.meta.url).pathname.replace(
+  /^\/([A-Za-z]:)/,
+  "$1",
+);
 const WEB_SRC = join(ROOT, "apps", "web", "src");
 
 const errors = [];
@@ -32,7 +35,8 @@ function* walk(dir) {
   }
 }
 
-const SERVER_IMPORT_RE = /from\s+["'](?:@\/lib\/server\/[^"']+|server-only)["']/;
+const SERVER_IMPORT_RE =
+  /from\s+["'](?:@\/lib\/server\/[^"']+|server-only)["']/;
 const USE_CLIENT_RE = /^\s*["']use client["']/m;
 const RAILWAY_FETCH_RE = /https?:\/\/[^"'\s]*\.railway\.app/;
 

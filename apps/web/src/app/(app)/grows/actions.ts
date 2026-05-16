@@ -7,6 +7,7 @@ import { createSupabaseServerClient, getServerUser } from "@/lib/server/auth";
 import { isNextFrameworkError } from "@/lib/server/auth-errors";
 import { rateLimit } from "@/lib/server/rate-limit";
 import { logServerEvent, REQUEST_ID_HEADER } from "@/lib/server/request-id";
+import type { CreateGrowActionResult } from "./action-state";
 import { MAX_DESCRIPTION_LENGTH, MAX_FUTURE_START_MS } from "./constants";
 
 const validStages = new Set<GrowStage>([
@@ -60,25 +61,6 @@ const IDEMPOTENCY_LIMIT = 1;
 // well below what a runaway script could cost us.
 const ABUSE_LIMIT_WINDOW_MS = 60_000;
 const ABUSE_LIMIT = 20;
-
-export type CreateGrowActionResult = {
-  fieldErrors?: {
-    description?: string;
-    lightType?: string;
-    medium?: string;
-    name?: string;
-    stage?: string;
-    startDate?: string;
-    targetHarvestDate?: string;
-  };
-  message?: string;
-  redirectTo?: string;
-  status: "error" | "idle" | "success";
-};
-
-export const createGrowActionInitialState: CreateGrowActionResult = {
-  status: "idle",
-};
 
 function asTrimmedString(value: FormDataEntryValue | null) {
   return typeof value === "string" ? value.trim() : "";
@@ -175,150 +157,226 @@ async function resolveRequestId(): Promise<string> {
 export async function createGrowAction(
   formData: FormData,
 ): Promise<CreateGrowActionResult> {
-  const requestId = await resolveRequestId();
-
-  const user = await getServerUser();
-  if (!user) {
-    return {
-      message: "You must be signed in to create a grow.",
-      status: "error",
-    };
-  }
-
-  // ─── Soft idempotency + abuse caps ──────────────────────────────────
-  // Order matters: the tight 2 s window catches double-submits before
-  // we run any validation, so a user spamming the button doesn't get
-  // 5× field-error renders. The 60 s cap is the abuse backstop.
-  const idempotency = await rateLimit({
-    key: `create-grow:idem:u:${user.id}`,
-    limit: IDEMPOTENCY_LIMIT,
-    windowMs: IDEMPOTENCY_WINDOW_MS,
-  });
-  if (!idempotency.ok) {
-    logServerEvent("warn", "create grow rate-limited (idempotency window)", {
-      requestId,
-      resetAt: idempotency.resetAt,
-      userId: user.id,
-    });
-    return {
-      message:
-        "We're already saving your last submission — give it a moment, then try again if it didn't go through.",
-      status: "error",
-    };
-  }
-
-  const abuse = await rateLimit({
-    key: `create-grow:abuse:u:${user.id}`,
-    limit: ABUSE_LIMIT,
-    windowMs: ABUSE_LIMIT_WINDOW_MS,
-  });
-  if (!abuse.ok) {
-    logServerEvent("warn", "create grow rate-limited (abuse cap)", {
-      requestId,
-      resetAt: abuse.resetAt,
-      userId: user.id,
-    });
-    return {
-      message:
-        "You've created a lot of grows in the last minute. Please slow down and try again shortly.",
-      status: "error",
-    };
-  }
-
-  const name = asTrimmedString(formData.get("name"));
-  const description = asTrimmedString(formData.get("description"));
-  const stage = asTrimmedString(formData.get("stage"));
-  const medium = asTrimmedString(formData.get("medium"));
-  const lightType = asTrimmedString(formData.get("lightType"));
-  const startDate = asTrimmedString(formData.get("startDate"));
-  const targetHarvestDate = asTrimmedString(formData.get("targetHarvestDate"));
-
-  const fieldErrors: CreateGrowActionResult["fieldErrors"] = {};
-
-  if (!name) {
-    fieldErrors.name = "Name is required.";
-  } else if (name.length > 120) {
-    fieldErrors.name = "Keep the grow name under 120 characters.";
-  }
-
-  if (description.length > MAX_DESCRIPTION_LENGTH) {
-    fieldErrors.description = `Keep the description under ${MAX_DESCRIPTION_LENGTH} characters.`;
-  }
-
-  if (!validStages.has(stage as GrowStage)) {
-    fieldErrors.stage = "Choose a valid grow stage.";
-  }
-
-  if (!validMedia.has(medium as GrowMedium)) {
-    fieldErrors.medium = "Choose a valid medium.";
-  }
-
-  if (!validLightTypes.has(lightType as LightType)) {
-    fieldErrors.lightType = "Choose a valid light type.";
-  }
-
-  if (!startDate) {
-    fieldErrors.startDate = "Start date is required.";
-  } else if (!isIsoDate(startDate)) {
-    fieldErrors.startDate = "Use a valid start date.";
-  } else if (Date.parse(startDate) > Date.now() + MAX_FUTURE_START_MS) {
-    fieldErrors.startDate =
-      "Start date can't be more than a day in the future.";
-  }
-
-  if (targetHarvestDate) {
-    if (!isIsoDate(targetHarvestDate)) {
-      fieldErrors.targetHarvestDate = "Use a valid target harvest date.";
-    } else if (
-      startDate &&
-      isIsoDate(startDate) &&
-      targetHarvestDate < startDate
-    ) {
-      fieldErrors.targetHarvestDate =
-        "Target harvest date must be on or after the start date.";
-    }
-  }
-
-  if (Object.keys(fieldErrors).length > 0) {
-    return {
-      fieldErrors,
-      message: "Fix the highlighted fields and try again.",
-      status: "error",
-    };
-  }
-
-  let newGrowId: string | null = null;
+  // Top-level try/catch is the load-bearing "professional error handling"
+  // wrapper: every code path inside the action is allowed to throw, and
+  // this catch converts the throw into a structured `{ status: "error" }`
+  // result instead of letting it bubble to React's error boundary as the
+  // generic "An error occurred in the Server Components render" message.
+  // Without it, a thrown `getServerUser()` (AuthConfigError on a rotated
+  // Supabase key, fetch-failed during a Supabase incident) or `rateLimit()`
+  // (Redis outage on a misconfigured Upstash backend) takes the form
+  // offline silently. Next.js framework control-flow signals are re-thrown
+  // so redirect / notFound still work.
+  let requestId = "unknown";
+  let userId: string | null = null;
   try {
-    const supabase = await createSupabaseServerClient();
-    // Per-attempt deadline. AbortSignal.timeout fires at INSERT_TIMEOUT_MS
-    // and supabase-js v2 forwards it to its underlying fetch via
-    // .abortSignal(). On fire we treat it as a retryable timeout — the
-    // INSERT either landed (and we never see the row) or it didn't; the
-    // (owner_id, lower(name)) UNIQUE index converts a phantom-success
-    // double into a friendly 23505 on retry.
-    const timeoutSignal = AbortSignal.timeout(INSERT_TIMEOUT_MS);
-    const { data, error } = await supabase
-      .from("grows")
-      .insert({
-        description: description || null,
-        light_type: lightType as LightType,
-        medium: medium as GrowMedium,
-        name,
-        owner_id: user.id,
-        stage: stage as GrowStage,
-        start_date: startDate,
-        target_harvest_date: targetHarvestDate || null,
-      })
-      .select("id")
-      .abortSignal(timeoutSignal)
-      .single();
+    requestId = await resolveRequestId();
 
-    if (error || !data) {
-      logServerEvent("error", "create grow insert failed", {
-        error: error?.message ?? "no row returned",
-        errorCode: error?.code ?? null,
+    // Single attempt log at the very top so we can confirm in production
+    // logs that the action was reached. Pre-fix the symptom was a 500 at
+    // the runtime "use server" gate so this never ran; with the fix in,
+    // a missing attempt log is itself a meaningful signal.
+    logServerEvent("info", "create grow attempt", { requestId });
+
+    const user = await getServerUser();
+    if (!user) {
+      logServerEvent("warn", "create grow unauthenticated", { requestId });
+      return {
+        message: "You must be signed in to create a grow.",
+        status: "error",
+      };
+    }
+    userId = user.id;
+
+    // ─── Soft idempotency + abuse caps ──────────────────────────────────
+    // Order matters: the tight 2 s window catches double-submits before
+    // we run any validation, so a user spamming the button doesn't get
+    // 5× field-error renders. The 60 s cap is the abuse backstop.
+    const idempotency = await rateLimit({
+      key: `create-grow:idem:u:${user.id}`,
+      limit: IDEMPOTENCY_LIMIT,
+      windowMs: IDEMPOTENCY_WINDOW_MS,
+    });
+    if (!idempotency.ok) {
+      logServerEvent("warn", "create grow rate-limited (idempotency window)", {
+        requestId,
+        resetAt: idempotency.resetAt,
+        userId: user.id,
+      });
+      return {
+        message:
+          "We're already saving your last submission — give it a moment, then try again if it didn't go through.",
+        status: "error",
+      };
+    }
+
+    const abuse = await rateLimit({
+      key: `create-grow:abuse:u:${user.id}`,
+      limit: ABUSE_LIMIT,
+      windowMs: ABUSE_LIMIT_WINDOW_MS,
+    });
+    if (!abuse.ok) {
+      logServerEvent("warn", "create grow rate-limited (abuse cap)", {
+        requestId,
+        resetAt: abuse.resetAt,
+        userId: user.id,
+      });
+      return {
+        message:
+          "You've created a lot of grows in the last minute. Please slow down and try again shortly.",
+        status: "error",
+      };
+    }
+
+    const name = asTrimmedString(formData.get("name"));
+    const description = asTrimmedString(formData.get("description"));
+    const stage = asTrimmedString(formData.get("stage"));
+    const medium = asTrimmedString(formData.get("medium"));
+    const lightType = asTrimmedString(formData.get("lightType"));
+    const startDate = asTrimmedString(formData.get("startDate"));
+    const targetHarvestDate = asTrimmedString(
+      formData.get("targetHarvestDate"),
+    );
+
+    const fieldErrors: CreateGrowActionResult["fieldErrors"] = {};
+
+    if (!name) {
+      fieldErrors.name = "Name is required.";
+    } else if (name.length > 120) {
+      fieldErrors.name = "Keep the grow name under 120 characters.";
+    }
+
+    if (description.length > MAX_DESCRIPTION_LENGTH) {
+      fieldErrors.description = `Keep the description under ${MAX_DESCRIPTION_LENGTH} characters.`;
+    }
+
+    if (!validStages.has(stage as GrowStage)) {
+      fieldErrors.stage = "Choose a valid grow stage.";
+    }
+
+    if (!validMedia.has(medium as GrowMedium)) {
+      fieldErrors.medium = "Choose a valid medium.";
+    }
+
+    if (!validLightTypes.has(lightType as LightType)) {
+      fieldErrors.lightType = "Choose a valid light type.";
+    }
+
+    if (!startDate) {
+      fieldErrors.startDate = "Start date is required.";
+    } else if (!isIsoDate(startDate)) {
+      fieldErrors.startDate = "Use a valid start date.";
+    } else if (Date.parse(startDate) > Date.now() + MAX_FUTURE_START_MS) {
+      fieldErrors.startDate =
+        "Start date can't be more than a day in the future.";
+    }
+
+    if (targetHarvestDate) {
+      if (!isIsoDate(targetHarvestDate)) {
+        fieldErrors.targetHarvestDate = "Use a valid target harvest date.";
+      } else if (
+        startDate &&
+        isIsoDate(startDate) &&
+        targetHarvestDate < startDate
+      ) {
+        fieldErrors.targetHarvestDate =
+          "Target harvest date must be on or after the start date.";
+      }
+    }
+
+    if (Object.keys(fieldErrors).length > 0) {
+      // Validation surface log: tells on-call which field tripped without
+      // leaking the free-text contents. Previously this branch logged
+      // nothing, which meant a silent return looked indistinguishable
+      // from a successful insert in the request trace.
+      logServerEvent("info", "create grow validation rejected", {
+        requestId,
+        userId: user.id,
+        fields: Object.keys(fieldErrors).sort(),
+      });
+      return {
+        fieldErrors,
+        message: "Fix the highlighted fields and try again.",
+        status: "error",
+      };
+    }
+
+    let newGrowId: string | null = null;
+    try {
+      const supabase = await createSupabaseServerClient();
+      // Per-attempt deadline. AbortSignal.timeout fires at INSERT_TIMEOUT_MS
+      // and supabase-js v2 forwards it to its underlying fetch via
+      // .abortSignal(). On fire we treat it as a retryable timeout — the
+      // INSERT either landed (and we never see the row) or it didn't; the
+      // (owner_id, lower(name)) UNIQUE index converts a phantom-success
+      // double into a friendly 23505 on retry.
+      const timeoutSignal = AbortSignal.timeout(INSERT_TIMEOUT_MS);
+      const { data, error } = await supabase
+        .from("grows")
+        .insert({
+          description: description || null,
+          light_type: lightType as LightType,
+          medium: medium as GrowMedium,
+          name,
+          owner_id: user.id,
+          stage: stage as GrowStage,
+          start_date: startDate,
+          target_harvest_date: targetHarvestDate || null,
+        })
+        .select("id")
+        .abortSignal(timeoutSignal)
+        .single();
+
+      if (error || !data) {
+        logServerEvent("error", "create grow insert failed", {
+          error: error?.message ?? "no row returned",
+          errorCode: error?.code ?? null,
+          hasDescription: description.length > 0,
+          hasTargetHarvestDate: targetHarvestDate.length > 0,
+          lightType,
+          medium,
+          nameLength: name.length,
+          requestId,
+          stage,
+          userId: user.id,
+        });
+        return {
+          message: describePostgresError(error?.code ?? null),
+          status: "error",
+        };
+      }
+
+      newGrowId = data.id;
+
+      // Success log — closes the observability loop. With this, "POST
+      // /grows/new returned 200 but the row is missing" can be triaged
+      // by a single grep for `create grow inserted` + the requestId.
+      logServerEvent("info", "create grow inserted", {
+        requestId,
+        userId: user.id,
+        growId: newGrowId,
+      });
+
+      revalidatePath("/dashboard");
+      revalidatePath("/grows");
+      revalidatePath("/plants");
+    } catch (err) {
+      // Re-throw Next framework control-flow signals untouched.
+      if (isNextFrameworkError(err)) throw err;
+      // Differentiate the timeout/abort path so the user gets actionable
+      // copy ("took too long") instead of a generic "something went wrong".
+      // AbortSignal.timeout fires a DOMException with name "TimeoutError";
+      // a caller-cancelled abort fires "AbortError". Either way the
+      // database state is uncertain — see the UNIQUE-index backstop note
+      // above the insert.
+      const errName = err instanceof Error ? err.name : "";
+      const isTimeout = errName === "TimeoutError" || errName === "AbortError";
+      logServerEvent("error", "create grow action threw", {
+        error: err instanceof Error ? err.message : String(err),
+        errorName: errName || null,
         hasDescription: description.length > 0,
         hasTargetHarvestDate: targetHarvestDate.length > 0,
+        isTimeout,
         lightType,
         medium,
         nameLength: name.length,
@@ -327,64 +385,68 @@ export async function createGrowAction(
         userId: user.id,
       });
       return {
-        message: describePostgresError(error?.code ?? null),
+        message: isTimeout
+          ? "The save took longer than expected. Please try again — your input is preserved."
+          : "We couldn't save the grow right now. Please try again in a moment — if it keeps failing, your sign-in may have expired.",
         status: "error",
       };
     }
 
-    newGrowId = data.id;
-
-    revalidatePath("/dashboard");
-    revalidatePath("/grows");
-    revalidatePath("/plants");
-  } catch (err) {
-    // Re-throw Next framework control-flow signals untouched.
-    if (isNextFrameworkError(err)) throw err;
-    // Differentiate the timeout/abort path so the user gets actionable
-    // copy ("took too long") instead of a generic "something went wrong".
-    // AbortSignal.timeout fires a DOMException with name "TimeoutError";
-    // a caller-cancelled abort fires "AbortError". Either way the
-    // database state is uncertain — see the UNIQUE-index backstop note
-    // above the insert.
-    const errName = err instanceof Error ? err.name : "";
-    const isTimeout = errName === "TimeoutError" || errName === "AbortError";
-    logServerEvent("error", "create grow action threw", {
-      error: err instanceof Error ? err.message : String(err),
-      errorName: errName || null,
-      hasDescription: description.length > 0,
-      hasTargetHarvestDate: targetHarvestDate.length > 0,
-      isTimeout,
-      lightType,
-      medium,
-      nameLength: name.length,
-      requestId,
-      stage,
-      userId: user.id,
-    });
+    // Return a redirectTo instead of calling redirect() here. When this server
+    // action is invoked from a client-side `await` inside startTransition, a
+    // NEXT_REDIRECT throw cannot be intercepted by the framework and surfaces
+    // as an error boundary hit. Letting the client perform router.push avoids
+    // that entire failure mode.
+    //
+    // Land on the grow detail page so the user immediately sees the grow
+    // they just created with plant intake one click away. The form's
+    // useActionWithRecovery falls back to /grows if /grows/[id] is
+    // unreachable for any reason, so users are never stranded.
+    const redirectTo = newGrowId
+      ? `/grows/${encodeURIComponent(newGrowId)}?just_created=1`
+      : "/grows";
     return {
-      message: isTimeout
-        ? "The save took longer than expected. Please try again — your input is preserved."
-        : "We couldn't save the grow right now. Please try again in a moment — if it keeps failing, your sign-in may have expired.",
+      message: "Grow created.",
+      redirectTo,
+      status: "success",
+    };
+  } catch (err) {
+    // ─── Outer defensive guard ──────────────────────────────────────────
+    // Anything that escapes the inner blocks lands here — typically
+    // `getServerUser()` or `rateLimit()` throwing because of misconfigured
+    // env (AuthConfigError on a rotated Supabase key), a Supabase auth
+    // outage (fetch-failed), or a Redis blowup on a misconfigured Upstash
+    // backend. Without this guard the throw bubbles to React's error
+    // boundary as the generic "Server Components render" message — the
+    // exact failure mode the user reported. Re-throw framework signals
+    // so Next can finish redirect / notFound control flow.
+    if (isNextFrameworkError(err)) throw err;
+    const errName = err instanceof Error ? err.name : "";
+    const errMessage = err instanceof Error ? err.message : String(err);
+    logServerEvent("error", "create grow action top-level threw", {
+      error: errMessage,
+      errorName: errName || null,
+      requestId,
+      userId,
+    });
+    // AuthConfigError carries an explicit name and means an env var is
+    // missing/rotated — distinguishing it in the response copy gives
+    // on-call a clearer user-report signal. TimeoutError / AbortError
+    // can also reach the outer catch when `getServerUser()` or
+    // `createSupabaseServerClient()` hit network-level timeouts before
+    // we even get to the insert; surface the same "took longer than
+    // expected" copy the inner catch uses for the insert-timeout path,
+    // so the user sees consistent language regardless of which stage
+    // timed out.
+    const isAuthConfig = errName === "AuthConfigError";
+    const isTimeout = errName === "TimeoutError" || errName === "AbortError";
+    return {
+      message: isAuthConfig
+        ? "Grow creation is temporarily unavailable. Our team has been notified — please try again in a few minutes."
+        : isTimeout
+          ? "The request took longer than expected. Please refresh the page and try again."
+          : "We couldn't save the grow right now. Please refresh the page, sign in again if prompted, and try once more.",
       status: "error",
     };
   }
-
-  // Return a redirectTo instead of calling redirect() here. When this server
-  // action is invoked from a client-side `await` inside startTransition, a
-  // NEXT_REDIRECT throw cannot be intercepted by the framework and surfaces
-  // as an error boundary hit. Letting the client perform router.push avoids
-  // that entire failure mode.
-  //
-  // Land on the grow detail page so the user immediately sees the grow
-  // they just created with plant intake one click away. The form's
-  // useActionWithRecovery falls back to /grows if /grows/[id] is
-  // unreachable for any reason, so users are never stranded.
-  const redirectTo = newGrowId
-    ? `/grows/${encodeURIComponent(newGrowId)}?just_created=1`
-    : "/grows";
-  return {
-    message: "Grow created.",
-    redirectTo,
-    status: "success",
-  };
 }

@@ -28,7 +28,7 @@ Supabase         Railway
 
 | Layer            | Technology                                             |
 | ---------------- | ------------------------------------------------------ |
-| Web app          | Next.js 15 App Router, TypeScript strict, Tailwind CSS |
+| Web app          | Next.js 16 App Router, TypeScript strict, Tailwind CSS |
 | Analysis service | FastAPI (Python 3.12)                                  |
 | Shared types     | TypeScript package                                     |
 | Auth             | Supabase Auth                                          |

@@ -368,4 +368,77 @@ describe("createGrowAction", () => {
       expect.objectContaining({ requestId: "req-abc-123" }),
     );
   });
+
+  it("emits an info-level attempt log on entry so on-call can confirm the action ran", async () => {
+    mocks.single.mockResolvedValue({ data: { id: "grow-1" }, error: null });
+    await createGrowAction(buildFormData());
+    expect(mocks.logServerEvent).toHaveBeenCalledWith(
+      "info",
+      "create grow attempt",
+      expect.objectContaining({ requestId: expect.any(String) }),
+    );
+  });
+
+  it("emits a success log with the new grow id on the happy path", async () => {
+    mocks.single.mockResolvedValue({ data: { id: "grow-xyz" }, error: null });
+    await createGrowAction(buildFormData());
+    expect(mocks.logServerEvent).toHaveBeenCalledWith(
+      "info",
+      "create grow inserted",
+      expect.objectContaining({
+        growId: "grow-xyz",
+        userId: "user-1",
+      }),
+    );
+  });
+
+  it("logs which fields tripped validation so silent 200s are no longer indistinguishable from successes", async () => {
+    await createGrowAction(buildFormData({ name: "", stage: "not-a-stage" }));
+    expect(mocks.logServerEvent).toHaveBeenCalledWith(
+      "info",
+      "create grow validation rejected",
+      expect.objectContaining({
+        fields: expect.arrayContaining(["name", "stage"]),
+      }),
+    );
+  });
+
+  it("converts a thrown getServerUser() into a structured error result instead of bubbling to the error boundary", async () => {
+    const err = new Error("Supabase auth unreachable");
+    err.name = "FetchError";
+    mocks.getServerUser.mockRejectedValueOnce(err);
+    const result = await createGrowAction(buildFormData());
+    expect(result.status).toBe("error");
+    expect(result.message).toMatch(/refresh the page/i);
+    expect(mocks.logServerEvent).toHaveBeenCalledWith(
+      "error",
+      "create grow action top-level threw",
+      expect.objectContaining({ errorName: "FetchError" }),
+    );
+  });
+
+  it("surfaces the AuthConfigError path with distinct user copy", async () => {
+    const err = new Error("env var rotated");
+    err.name = "AuthConfigError";
+    mocks.getServerUser.mockRejectedValueOnce(err);
+    const result = await createGrowAction(buildFormData());
+    expect(result.status).toBe("error");
+    expect(result.message).toMatch(/temporarily unavailable/i);
+  });
+
+  it("surfaces the outer-timeout path with the same 'took longer than expected' copy as the insert path", async () => {
+    const err = new Error("aborted");
+    err.name = "TimeoutError";
+    mocks.getServerUser.mockRejectedValueOnce(err);
+    const result = await createGrowAction(buildFormData());
+    expect(result.status).toBe("error");
+    expect(result.message).toMatch(/took longer than expected/i);
+  });
+
+  it("still re-throws Next framework signals from the outer guard so redirect/notFound work", async () => {
+    const redirectErr = new Error("NEXT_REDIRECT");
+    (redirectErr as Error & { digest?: string }).digest = "NEXT_REDIRECT;0;/x";
+    mocks.getServerUser.mockRejectedValueOnce(redirectErr);
+    await expect(createGrowAction(buildFormData())).rejects.toBe(redirectErr);
+  });
 });

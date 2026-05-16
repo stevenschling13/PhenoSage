@@ -8,12 +8,12 @@ client depends on.
 
 A contract is anything observed across a process boundary:
 
-| Boundary                          | Contract surface                                |
-| --------------------------------- | ----------------------------------------------- |
-| Browser ⇄ `apps/web` Route Handler | Request/response JSON shape; status codes       |
+| Boundary                           | Contract surface                                  |
+| ---------------------------------- | ------------------------------------------------- |
+| Browser ⇄ `apps/web` Route Handler | Request/response JSON shape; status codes         |
 | `apps/web` ⇄ `apps/analysis`       | `apps/analysis/app/models/**` ↔ `packages/shared` |
-| `apps/web` ⇄ Supabase Postgres     | Migration column names/types ↔ `packages/shared` |
-| `apps/web` ⇄ Supabase Storage      | Bucket name + path convention                   |
+| `apps/web` ⇄ Supabase Postgres     | Migration column names/types ↔ `packages/shared`  |
+| `apps/web` ⇄ Supabase Storage      | Bucket name + path convention                     |
 
 ## The Rule
 
