@@ -4,6 +4,38 @@ Handoff log between sessions. Keep entries short. Newest at top.
 
 ---
 
+## 2026-05-16 — CI optimization 4-PR series handoff doc (Copilot)
+
+**Landed on `copilot/optimize-ci-process`** (commit `633926e`)
+
+- Added `docs/playbooks/ci-optimization-series.md`: self-contained plan that
+  future agents can find and follow. Modeled on the
+  `docs/playbooks/post-pr-163-followups.md` precedent.
+- Splits the CI work into four independently revertable PRs that each fit
+  under the `AGENTS.md` size caps (≤30 files / ≤1,500 lines, one concern):
+  - **(a)** Turbo orchestration + Next/pip/ruff/mypy caches + per-job
+    `timeout-minutes`.
+  - **(b)** Docker buildx GHA layer cache + optional analysis pytest matrix.
+  - **(c)** `dependency-review-action` + Trivy `fs` SARIF (job-scoped perms).
+  - **(d)** `merge_group` trigger + `paths`/`paths-ignore` skips with
+    required-check shims.
+- Doc encodes: quick-start baseline, shared rules (preserve harden-runner,
+  concurrency, min-scoped permissions, pinned SHAs, no force-push, no
+  `--no-verify`), per-slice `In scope`/`Out of scope`/`Validation`/`Stop
+  condition`, copy-paste session prompt (§3), recommended order
+  **a → c → b → d**.
+- No workflow/code changes in this PR — the doc is the deliverable; each
+  slice lands as its own PR.
+
+**Next step**
+
+- Open a fresh session per slice and paste the prompt template in §3 of the
+  new doc, swapping the slice letter. Before kicking off (a), also run the
+  reviewer prompt provided at session close to have a second agent harden the
+  plan itself.
+
+---
+
 ## 2026-05-16 — Supabase policy sync + provenance audit (Copilot)
 
 **Landed on `copilot/optimize-supabase-sql-setup`**
