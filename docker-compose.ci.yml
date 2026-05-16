@@ -3,10 +3,10 @@ services:
     image: pgvector/pgvector:pg16
     environment:
       POSTGRES_DB: phenosage
-      POSTGRES_USER: postgres
-      POSTGRES_PASSWORD: postgres
+      POSTGRES_USER: ${POSTGRES_USER:-postgres}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-ci-only-not-a-secret}
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U postgres -d phenosage"]
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-postgres} -d phenosage"]
       interval: 5s
       timeout: 5s
       retries: 12
