@@ -3,16 +3,16 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 const mocks = vi.hoisted(() => {
   const upsert = vi.fn();
   const from = vi.fn(() => ({ upsert }));
-  const dbStub = { from };
-  const getDbClient = vi.fn(() => dbStub);
+  const supabaseStub = { from };
+  const createSupabaseServerClient = vi.fn(async () => supabaseStub);
   const getServerUser = vi.fn(async () => ({ id: "user-1" }));
   const revalidatePath = vi.fn();
   const logServerEvent = vi.fn();
   return {
     upsert,
     from,
-    dbStub,
-    getDbClient,
+    supabaseStub,
+    createSupabaseServerClient,
     getServerUser,
     revalidatePath,
     logServerEvent,
@@ -20,11 +20,8 @@ const mocks = vi.hoisted(() => {
 });
 
 vi.mock("@/lib/server/auth", () => ({
+  createSupabaseServerClient: mocks.createSupabaseServerClient,
   getServerUser: mocks.getServerUser,
-}));
-
-vi.mock("@/lib/server/db", () => ({
-  getDbClient: mocks.getDbClient,
 }));
 
 vi.mock("next/cache", () => ({
@@ -53,51 +50,74 @@ function buildTzFormData(timezone: string): FormData {
   return fd;
 }
 
-describe("updateDisplayNameAction", () => {
-  beforeEach(() => {
-    mocks.upsert.mockReset();
-    mocks.from.mockClear();
-    mocks.getDbClient.mockReset().mockReturnValue(mocks.dbStub);
-    mocks.getServerUser.mockReset().mockResolvedValue({ id: "user-1" });
-    mocks.revalidatePath.mockReset();
-    mocks.logServerEvent.mockReset();
-  });
+function resetMocks() {
+  mocks.upsert.mockReset();
+  mocks.from.mockClear().mockReturnValue({ upsert: mocks.upsert });
+  mocks.createSupabaseServerClient
+    .mockReset()
+    .mockResolvedValue(mocks.supabaseStub);
+  mocks.getServerUser.mockReset().mockResolvedValue({ id: "user-1" });
+  mocks.revalidatePath.mockReset();
+  mocks.logServerEvent.mockReset();
+}
 
-  it("upserts and returns success", async () => {
+describe("updateDisplayNameAction", () => {
+  beforeEach(resetMocks);
+
+  it("upserts via the RLS-scoped client and returns success", async () => {
     mocks.upsert.mockResolvedValue({ error: null });
     const result = await updateDisplayNameAction(buildFormData("Steve"));
     expect(result.status).toBe("success");
+    expect(mocks.createSupabaseServerClient).toHaveBeenCalled();
+    expect(mocks.from).toHaveBeenCalledWith("profiles");
     expect(mocks.upsert).toHaveBeenCalledWith(
       { display_name: "Steve", id: "user-1" },
       { onConflict: "id" },
     );
   });
 
-  it("returns structured error (does NOT throw) when service-role env is missing", async () => {
-    mocks.getDbClient.mockImplementationOnce(() => {
-      throw new Error("supabase service-role credential is required");
-    });
+  it("returns a structured error (does NOT throw) when the supabase client itself fails to construct", async () => {
+    mocks.createSupabaseServerClient.mockRejectedValueOnce(
+      new Error("env missing"),
+    );
     const result = await updateDisplayNameAction(buildFormData("Steve"));
     expect(result.status).toBe("error");
     expect(result.message).toMatch(/couldn't save your display name/i);
     expect(mocks.logServerEvent).toHaveBeenCalled();
   });
 
-  it("returns structured error when supabase upsert returns an error", async () => {
+  it("returns a structured error (does NOT throw) when getServerUser itself throws (auth misconfig)", async () => {
+    mocks.getServerUser.mockRejectedValueOnce(new Error("AuthConfigError"));
+    const result = await updateDisplayNameAction(buildFormData("Steve"));
+    expect(result.status).toBe("error");
+    expect(result.message).toMatch(/couldn't save your display name/i);
+    expect(mocks.logServerEvent).toHaveBeenCalled();
+  });
+
+  it("maps supabase upsert errors to friendly copy by SQLSTATE", async () => {
     mocks.upsert.mockResolvedValue({
-      error: { message: "boom", code: "XX000" },
+      error: { message: "duplicate", code: "23505" },
     });
     const result = await updateDisplayNameAction(buildFormData("Steve"));
     expect(result.status).toBe("error");
-    expect(result.message).toContain("boom");
+    expect(result.message).toMatch(/already in use/i);
+    expect(result.message).not.toContain("duplicate");
+  });
+
+  it("falls back to generic copy for unmapped SQLSTATEs (never leaks raw provider text)", async () => {
+    mocks.upsert.mockResolvedValue({
+      error: { message: "boom raw text", code: "XX000" },
+    });
+    const result = await updateDisplayNameAction(buildFormData("Steve"));
+    expect(result.status).toBe("error");
+    expect(result.message).toMatch(/couldn't save your display name/i);
+    expect(result.message).not.toMatch(/boom/);
   });
 
   it("re-throws Next framework redirect signals untouched", async () => {
     const e: Error & { digest?: string } = new Error("NEXT_REDIRECT");
     e.digest = "NEXT_REDIRECT;replace;/settings;307;";
-    mocks.getDbClient.mockImplementationOnce(() => {
-      throw e;
-    });
+    mocks.createSupabaseServerClient.mockRejectedValueOnce(e);
     await expect(updateDisplayNameAction(buildFormData("Steve"))).rejects.toBe(
       e,
     );
@@ -107,7 +127,7 @@ describe("updateDisplayNameAction", () => {
     const result = await updateDisplayNameAction(buildFormData("x".repeat(61)));
     expect(result.status).toBe("error");
     expect(result.message).toMatch(/under 60/i);
-    expect(mocks.getDbClient).not.toHaveBeenCalled();
+    expect(mocks.upsert).not.toHaveBeenCalled();
   });
 
   it("requires the user to be signed in", async () => {
@@ -119,21 +139,16 @@ describe("updateDisplayNameAction", () => {
 });
 
 describe("updateTimezoneAction", () => {
-  beforeEach(() => {
-    mocks.upsert.mockReset();
-    mocks.from.mockClear();
-    mocks.getDbClient.mockReset().mockReturnValue(mocks.dbStub);
-    mocks.getServerUser.mockReset().mockResolvedValue({ id: "user-1" });
-    mocks.revalidatePath.mockReset();
-    mocks.logServerEvent.mockReset();
-  });
+  beforeEach(resetMocks);
 
-  it("upserts a valid IANA timezone and reports success", async () => {
+  it("upserts a valid IANA timezone via the RLS-scoped client and reports success", async () => {
     mocks.upsert.mockResolvedValue({ error: null });
     const result = await updateTimezoneAction(
       buildTzFormData("America/Los_Angeles"),
     );
     expect(result.status).toBe("success");
+    expect(mocks.createSupabaseServerClient).toHaveBeenCalled();
+    expect(mocks.from).toHaveBeenCalledWith("user_preferences");
     expect(mocks.upsert).toHaveBeenCalledWith(
       { user_id: "user-1", timezone: "America/Los_Angeles" },
       { onConflict: "user_id" },
@@ -147,13 +162,13 @@ describe("updateTimezoneAction", () => {
     );
     expect(result.status).toBe("error");
     expect(result.message).toMatch(/don't recognise/i);
-    expect(mocks.getDbClient).not.toHaveBeenCalled();
+    expect(mocks.upsert).not.toHaveBeenCalled();
   });
 
   it("rejects an empty timezone without touching the db", async () => {
     const result = await updateTimezoneAction(buildTzFormData(""));
     expect(result.status).toBe("error");
-    expect(mocks.getDbClient).not.toHaveBeenCalled();
+    expect(mocks.upsert).not.toHaveBeenCalled();
   });
 
   it("maps SQLSTATE 22023 from the trigger to friendly copy", async () => {
@@ -174,6 +189,16 @@ describe("updateTimezoneAction", () => {
     expect(result.status).toBe("error");
     expect(result.message).toMatch(/couldn't save your timezone/i);
     expect(result.message).not.toMatch(/boom/);
+  });
+
+  it("returns a structured error if the supabase client construction itself throws", async () => {
+    mocks.createSupabaseServerClient.mockRejectedValueOnce(
+      new Error("env missing"),
+    );
+    const result = await updateTimezoneAction(buildTzFormData("UTC"));
+    expect(result.status).toBe("error");
+    expect(result.message).toMatch(/couldn't save your timezone/i);
+    expect(mocks.logServerEvent).toHaveBeenCalled();
   });
 
   it("requires the user to be signed in", async () => {
@@ -200,14 +225,7 @@ function buildEmailPrefsFormData(opts: {
 }
 
 describe("updateEmailPreferencesAction", () => {
-  beforeEach(() => {
-    mocks.upsert.mockReset();
-    mocks.from.mockClear();
-    mocks.getDbClient.mockReturnValue(mocks.dbStub);
-    mocks.getServerUser.mockResolvedValue({ id: "user-1" });
-    mocks.revalidatePath.mockReset();
-    mocks.logServerEvent.mockReset();
-  });
+  beforeEach(resetMocks);
 
   it("requires authentication", async () => {
     mocks.getServerUser.mockResolvedValueOnce(null as never);
@@ -288,5 +306,17 @@ describe("updateEmailPreferencesAction", () => {
     );
     expect(result.status).toBe("error");
     expect(result.message).not.toMatch(/internal exception/);
+  });
+
+  it("returns a structured error if the supabase client construction itself throws", async () => {
+    mocks.createSupabaseServerClient.mockRejectedValueOnce(
+      new Error("env missing"),
+    );
+    const result = await updateEmailPreferencesAction(
+      buildEmailPrefsFormData({}),
+    );
+    expect(result.status).toBe("error");
+    expect(result.message).toMatch(/couldn't save your notification settings/i);
+    expect(mocks.logServerEvent).toHaveBeenCalled();
   });
 });
