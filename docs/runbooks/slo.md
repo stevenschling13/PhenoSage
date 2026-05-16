@@ -52,9 +52,17 @@ A request is an "error" if:
 - A client component throws during hydration, caught by the same
   boundaries (these don't carry a server-side digest — see PR #182).
 
-Measured via Vercel runtime logs + Sentry (when configured). A bad
-deploy that immediately spikes errors past 1% should auto-rollback —
-see `post-deploy-smoke.yml`.
+Measured via Vercel runtime logs + Sentry (when configured).
+
+> **Today:** there is no automated error-rate gate. `post-deploy-smoke.yml`
+> checks endpoint health, headers, and secret-leak patterns — not error
+> volume. If a bad deploy doesn't break those checks but quietly spikes
+> client- or server-side throws, you'll see it via Sentry / Vercel logs
+> rather than auto-rollback.
+>
+> **Phase 2 follow-up:** wire an error-rate probe (Vercel runtime-log
+> count or Sentry release-comparison) into the smoke step so a deploy
+> that immediately crosses 1% errors triggers the same rollback path.
 
 ## Deploy reliability — `change failure rate < 15%`
 

@@ -19,8 +19,14 @@ on:
 permissions:
   contents: write
 
+# Singleton concurrency group across all production deploys so the
+# "find latest tag + compute next -N suffix + push tag" sequence runs
+# atomically. A per-SHA group would let two same-day deploys race on
+# tag computation and one would fail to push (or worse, both would
+# pick the same vYYYY.MM.DD-N). cancel-in-progress: false so a fast
+# second deploy can't skip its own release entry.
 concurrency:
-  group: release-tag-${{ github.event.deployment_status.deployment.sha }}
+  group: release-tag-production
   cancel-in-progress: false
 
 jobs:
