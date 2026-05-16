@@ -18,7 +18,11 @@ import { EmptyState } from "@/components/ui/empty-state";
 import { SectionHeader } from "@/components/ui/section-header";
 import { StatCard } from "@/components/ui/stat-card";
 import { getCurrentProfile } from "@/lib/server/profile";
-import { getWorkspaceOverview } from "@/lib/server/workspace-overview";
+import { logServerEvent } from "@/lib/server/request-id";
+import {
+  EMPTY_WORKSPACE_OVERVIEW,
+  getWorkspaceOverview,
+} from "@/lib/server/workspace-overview";
 
 export const metadata: Metadata = { title: "Dashboard" };
 
@@ -51,10 +55,43 @@ function formatTodayLabel(now: Date) {
 }
 
 export default async function DashboardPage() {
-  const [profile, overview] = await Promise.all([
+  // Use Promise.allSettled so a profile-load blip (transient Supabase
+  // auth error, expired cookie mid-request) can't take the entire
+  // dashboard page down. The layout already loaded the profile to
+  // render the AppShell, so any failure here is by definition a fresh
+  // hiccup on the page's second call — the right move is to render
+  // with anonymous copy, not throw into the workspace error boundary.
+  // getWorkspaceOverview is internally defended (Promise.allSettled
+  // around each query, returns EMPTY_WORKSPACE_OVERVIEW on failure)
+  // and never throws.
+  const [profileSettled, overviewSettled] = await Promise.allSettled([
     getCurrentProfile(),
     getWorkspaceOverview(),
   ]);
+  const profile =
+    profileSettled.status === "fulfilled" ? profileSettled.value : null;
+  if (profileSettled.status === "rejected") {
+    logServerEvent("warn", "dashboard: profile reload failed, rendering anon", {
+      error:
+        profileSettled.reason instanceof Error
+          ? profileSettled.reason.message
+          : String(profileSettled.reason),
+    });
+  }
+  const overview =
+    overviewSettled.status === "fulfilled"
+      ? overviewSettled.value
+      : EMPTY_WORKSPACE_OVERVIEW;
+  if (overviewSettled.status === "rejected") {
+    // Defence in depth — getWorkspaceOverview catches internally, but
+    // future refactors could break that contract. Log + degrade.
+    logServerEvent("error", "dashboard: workspace overview threw", {
+      error:
+        overviewSettled.reason instanceof Error
+          ? overviewSettled.reason.message
+          : String(overviewSettled.reason),
+    });
+  }
   const operator =
     profile?.displayName?.trim() ||
     profile?.email

@@ -78,7 +78,7 @@ export type WorkspaceOverview = {
   };
 };
 
-const EMPTY_WORKSPACE_OVERVIEW: WorkspaceOverview = {
+export const EMPTY_WORKSPACE_OVERVIEW: WorkspaceOverview = {
   grows: [],
   openFindings: 0,
   recentActivity: {
