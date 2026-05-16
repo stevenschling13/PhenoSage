@@ -23,7 +23,7 @@ describe("createSupabaseBrowserClient", () => {
 
   it("throws when NEXT_PUBLIC_SUPABASE_URL is missing", async () => {
     process.env["NEXT_PUBLIC_SUPABASE_ANON_KEY"] = "anon";
-    const { createSupabaseBrowserClient } = await import("../browser");
+    const { createSupabaseBrowserClient } = await import("../supabase-client");
     expect(() => createSupabaseBrowserClient()).toThrow(
       /NEXT_PUBLIC_SUPABASE_URL/,
     );
@@ -32,7 +32,7 @@ describe("createSupabaseBrowserClient", () => {
 
   it("throws when NEXT_PUBLIC_SUPABASE_ANON_KEY is missing", async () => {
     process.env["NEXT_PUBLIC_SUPABASE_URL"] = "https://x.supabase.co";
-    const { createSupabaseBrowserClient } = await import("../browser");
+    const { createSupabaseBrowserClient } = await import("../supabase-client");
     expect(() => createSupabaseBrowserClient()).toThrow(
       /NEXT_PUBLIC_SUPABASE_ANON_KEY/,
     );
@@ -42,7 +42,7 @@ describe("createSupabaseBrowserClient", () => {
   it("returns a client built from the public env vars", async () => {
     process.env["NEXT_PUBLIC_SUPABASE_URL"] = "https://x.supabase.co";
     process.env["NEXT_PUBLIC_SUPABASE_ANON_KEY"] = "anon";
-    const { createSupabaseBrowserClient } = await import("../browser");
+    const { createSupabaseBrowserClient } = await import("../supabase-client");
     const client = createSupabaseBrowserClient();
     expect(client).toBe(browserClientSentinel);
     expect(createBrowserClient).toHaveBeenCalledWith(
