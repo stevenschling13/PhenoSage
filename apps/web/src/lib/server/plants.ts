@@ -502,6 +502,7 @@ export async function runAndPersistPlantAnalysis(params: {
           image_id: currentImage.id,
           category: finding.category,
           severity: finding.severity,
+          source: "ai",
           confidence_score: finding.confidenceScore ?? null,
           title: finding.title,
           description: finding.description,

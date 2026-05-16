@@ -4,6 +4,38 @@ Handoff log between sessions. Keep entries short. Newest at top.
 
 ---
 
+## 2026-05-16 — Supabase policy sync + provenance audit (Copilot)
+
+**Landed on `copilot/optimize-supabase-sql-setup`**
+
+- `7e4c48a` — after reviewing all Supabase-related agent skills, added
+  `20260516151402_plant_findings_confidence_guard.sql` so the
+  `plant_findings_user_update_guard()` also blocks user-context edits to
+  `confidence_score`; service-role analysis writes still bypass via the
+  existing `auth.uid() is null` path.
+- `694c9f6` — added append-only migration `023_supabase_policy_sync.sql`
+  to restore migration 003's archived-grow filtering after the migration 022
+  RLS recursion fix, and aligned the `plant-images` delete policy with the
+  current `{plantId}/...` storage path convention.
+- The analysis persistence path now explicitly inserts AI-generated
+  `plant_findings` with `source = 'ai'`, with the focused plants server test
+  updated to assert the provenance marker.
+- Validation passed:
+  - `pnpm install --frozen-lockfile`
+  - `pnpm run validate`
+  - `pnpm turbo run type-check lint test`
+  - `pnpm run security:routes`
+  - CodeQL checker found 0 alerts, but the analyzer reported failures after two
+    attempts in this sandbox.
+- Dead ends / constraints:
+  - `supabase --version` failed because the Supabase CLI is not installed in
+    this runner, so the migration was added manually using the repo's existing
+    numeric append-only convention.
+  - Direct `web_fetch` calls to Supabase docs/changelog failed in this sandbox;
+    a web search was used for current Supabase breaking-change context.
+
+---
+
 ## 2026-05-16 — Supabase MCP full operator read/write feature scope (Codex)
 
 **In-flight on current branch**

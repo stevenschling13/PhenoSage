@@ -75,7 +75,9 @@ if (violations.length > 0) {
   console.error(
     "are not the author of this reference, add it to LEGACY_ALLOWLIST in",
   );
-  console.error("scripts/check-action-pins.mjs and open a follow-up to pin it.");
+  console.error(
+    "scripts/check-action-pins.mjs and open a follow-up to pin it.",
+  );
   process.exit(1);
 }
 
