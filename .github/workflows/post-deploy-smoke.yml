@@ -2,7 +2,23 @@ name: Post-deploy smoke test
 
 # Runs scripts/smoke-test-prod.ps1 against production whenever a Vercel
 # deploy_status event marks the production environment as success.
+# On failure: auto-rollback to the previous production deployment via the
+# Vercel API, then open a tracking issue, then notify Discord.
 # Also runnable on demand against any URL.
+#
+# Required repository secrets:
+#   * VERCEL_TOKEN              — personal access token from Vercel
+#                                  Account Settings → Tokens (scope:
+#                                  full account or limited to the
+#                                  pheno-sage-web project).
+#   * VERCEL_PROJECT_ID         — `prj_XtNTJz3FT3PGokPxlyE3bm5XHp2V`
+#   * VERCEL_TEAM_ID            — `team_1jHeAEF8oKm2Z46fqRMdu5uL`
+#   * DISCORD_WEBHOOK_URL       — Discord channel webhook (any channel).
+#   * VERCEL_PROTECTION_BYPASS  — optional; see in-line comment below.
+#
+# Missing VERCEL_TOKEN or VERCEL_PROJECT_ID safely disables the rollback
+# step (smoke + issue + notification continue to work). Missing
+# DISCORD_WEBHOOK_URL safely disables the notification step.
 
 on:
   deployment_status:
@@ -49,6 +65,7 @@ jobs:
           echo "Smoke target: $URL"
 
       - name: Run smoke tests
+        id: smoke
         shell: pwsh
         env:
           # Optional: Vercel "Protection Bypass for Automation" token. When set,
@@ -59,6 +76,59 @@ jobs:
           VERCEL_PROTECTION_BYPASS: ${{ secrets.VERCEL_PROTECTION_BYPASS }}
         run: pwsh scripts/smoke-test-prod.ps1 -Base "${{ steps.target.outputs.url }}"
 
+      # ─── Auto-rollback on smoke failure ──────────────────────────────────
+      # When the smoke step fails on a real deployment_status event, promote
+      # the most recent prior successful production deployment back into the
+      # alias. This collapses MTTR from "however long until you see the
+      # issue" to seconds. Manual workflow_dispatch runs are exempt because
+      # operators are already in the loop.
+      - name: Auto-rollback to previous production deploy
+        id: rollback
+        if: failure() && steps.smoke.conclusion == 'failure' && github.event_name == 'deployment_status'
+        shell: bash
+        env:
+          VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
+          VERCEL_PROJECT_ID: ${{ secrets.VERCEL_PROJECT_ID }}
+          VERCEL_TEAM_ID: ${{ secrets.VERCEL_TEAM_ID }}
+          BAD_SHA: ${{ github.event.deployment_status.deployment.sha }}
+        run: |
+          set -euo pipefail
+          if [ -z "${VERCEL_TOKEN:-}" ] || [ -z "${VERCEL_PROJECT_ID:-}" ]; then
+            echo "::warning::VERCEL_TOKEN or VERCEL_PROJECT_ID missing — auto-rollback skipped"
+            echo "skipped=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          TEAM_QS=""
+          if [ -n "${VERCEL_TEAM_ID:-}" ]; then
+            TEAM_QS="&teamId=${VERCEL_TEAM_ID}"
+          fi
+
+          # Find the most recent READY production deployment that is NOT
+          # the failing one. Vercel returns deployments newest-first, so
+          # we take the first match.
+          DEPS_URL="https://api.vercel.com/v6/deployments?projectId=${VERCEL_PROJECT_ID}&target=production&state=READY&limit=20${TEAM_QS}"
+          PAYLOAD=$(curl -fsS -H "Authorization: Bearer ${VERCEL_TOKEN}" "${DEPS_URL}")
+          PREV_ID=$(echo "$PAYLOAD" | jq -r --arg bad "$BAD_SHA" '
+            .deployments
+            | map(select(.meta.githubCommitSha != $bad))
+            | .[0].uid // empty
+          ')
+          if [ -z "$PREV_ID" ]; then
+            echo "::error::No previous READY production deployment found to roll back to"
+            exit 1
+          fi
+          echo "Rolling back to previous deployment: $PREV_ID"
+          echo "previous_id=$PREV_ID" >> "$GITHUB_OUTPUT"
+
+          # Promote = re-alias production to the previous deployment.
+          # Vercel's promote endpoint: POST /v10/projects/:projectId/promote/:deploymentId
+          PROMOTE_URL="https://api.vercel.com/v10/projects/${VERCEL_PROJECT_ID}/promote/${PREV_ID}?${TEAM_QS#&}"
+          curl -fsS -X POST -H "Authorization: Bearer ${VERCEL_TOKEN}" "${PROMOTE_URL}" || {
+            echo "::error::Promote API call failed"
+            exit 1
+          }
+          echo "::notice::Rolled back production alias to $PREV_ID"
+
       - name: Open issue on failure
         if: failure() && github.event_name == 'deployment_status'
         uses: actions/github-script@v9
@@ -67,6 +137,10 @@ jobs:
             const url = "${{ steps.target.outputs.url }}";
             const sha = context.payload.deployment.sha || context.sha;
             const runUrl = `${context.serverUrl}/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId}`;
+            const rolledBackTo = `${{ steps.rollback.outputs.previous_id || '' }}`;
+            const rollbackLine = rolledBackTo
+              ? `**Auto-rollback:** production alias promoted back to \`${rolledBackTo}\` — users are no longer on the bad deploy.`
+              : `**Auto-rollback:** skipped (missing VERCEL_TOKEN / VERCEL_PROJECT_ID, or no previous deployment found). Roll back manually per docs/runbooks/rollback.md.`;
             await github.rest.issues.create({
               owner: context.repo.owner,
               repo: context.repo.repo,
@@ -76,7 +150,84 @@ jobs:
                 `**Target URL:** ${url}`,
                 `**Workflow run:** ${runUrl}`,
                 "",
-                "Investigate and either roll back the deployment or fix forward."
+                rollbackLine,
+                "",
+                "**Next steps:**",
+                "1. Confirm the alias is now serving the previous deploy (`curl /api/health`).",
+                "2. Investigate the failing smoke step in the workflow logs.",
+                "3. Fix forward in a new PR — never re-promote the broken deploy.",
               ].join("\n"),
               labels: ["bug", "production", "smoke-test"]
             });
+
+      # ─── Discord notifications ───────────────────────────────────────────
+      # Fires on both success (so you have a heartbeat that prod deploys
+      # actually went green) and failure (so an outage hits your phone, not
+      # an email digest). Skipped silently when the secret isn't set.
+      - name: Notify Discord — success
+        if: success() && github.event_name == 'deployment_status'
+        env:
+          DISCORD_WEBHOOK_URL: ${{ secrets.DISCORD_WEBHOOK_URL }}
+        shell: bash
+        run: |
+          if [ -z "${DISCORD_WEBHOOK_URL:-}" ]; then
+            echo "::notice::DISCORD_WEBHOOK_URL not set — notification skipped"
+            exit 0
+          fi
+          SHA="${{ github.event.deployment_status.deployment.sha }}"
+          SHORT_SHA="${SHA:0:7}"
+          URL="${{ steps.target.outputs.url }}"
+          RUN_URL="${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
+          curl -fsS -H "Content-Type: application/json" -X POST -d @- "${DISCORD_WEBHOOK_URL}" <<JSON
+          {
+            "username": "PhenoSage Deploy",
+            "embeds": [{
+              "title": "✅ Production smoke passed",
+              "url": "${URL}",
+              "color": 5763719,
+              "fields": [
+                { "name": "Commit", "value": "\`${SHORT_SHA}\`", "inline": true },
+                { "name": "Target", "value": "${URL}", "inline": true }
+              ],
+              "footer": { "text": "Workflow run" },
+              "timestamp": "$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+            }]
+          }
+          JSON
+
+      - name: Notify Discord — failure
+        if: failure() && github.event_name == 'deployment_status'
+        env:
+          DISCORD_WEBHOOK_URL: ${{ secrets.DISCORD_WEBHOOK_URL }}
+        shell: bash
+        run: |
+          if [ -z "${DISCORD_WEBHOOK_URL:-}" ]; then
+            echo "::notice::DISCORD_WEBHOOK_URL not set — notification skipped"
+            exit 0
+          fi
+          SHA="${{ github.event.deployment_status.deployment.sha }}"
+          SHORT_SHA="${SHA:0:7}"
+          URL="${{ steps.target.outputs.url }}"
+          RUN_URL="${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
+          ROLLED_BACK="${{ steps.rollback.outputs.previous_id }}"
+          ROLLBACK_LINE="Auto-rollback skipped or unavailable."
+          if [ -n "$ROLLED_BACK" ]; then
+            ROLLBACK_LINE="Auto-rollback fired → production now serving \`${ROLLED_BACK:0:12}\`."
+          fi
+          curl -fsS -H "Content-Type: application/json" -X POST -d @- "${DISCORD_WEBHOOK_URL}" <<JSON
+          {
+            "username": "PhenoSage Deploy",
+            "embeds": [{
+              "title": "🚨 Production smoke FAILED",
+              "url": "${RUN_URL}",
+              "color": 15548997,
+              "description": "${ROLLBACK_LINE}",
+              "fields": [
+                { "name": "Bad commit", "value": "\`${SHORT_SHA}\`", "inline": true },
+                { "name": "Target", "value": "${URL}", "inline": true }
+              ],
+              "footer": { "text": "Click title to open the failing workflow run" },
+              "timestamp": "$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+            }]
+          }
+          JSON
