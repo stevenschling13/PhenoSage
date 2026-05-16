@@ -51,6 +51,12 @@ export default function DashboardError({
           </Link>
           <Link
             className={buttonStyles({ size: "md", variant: "surface" })}
+            href="/plants"
+          >
+            Open plants
+          </Link>
+          <Link
+            className={buttonStyles({ size: "md", variant: "surface" })}
             href="/assistant"
           >
             Open copilot
