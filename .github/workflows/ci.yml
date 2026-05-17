@@ -213,10 +213,33 @@ jobs:
         with:
           egress-policy: audit
       - uses: actions/checkout@v6
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3.12.0
+      # `load: true` puts the image in the local docker daemon so the
+      # subsequent `docker compose up` and SBOM steps can use it by tag.
+      # `cache-to: type=gha,mode=max` exports BOTH image layers AND the
+      # `--mount=type=cache` data (pnpm store / Next cache / pip cache)
+      # to the GitHub Actions cache backend; the next run pulls them via
+      # `cache-from`. `scope=` partitions the cache per image so the two
+      # builds don't fight for the same key.
       - name: Build web image
-        run: docker build -f Dockerfile.web -t phenosage-web:ci .
+        uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8 # v6.19.2
+        with:
+          context: .
+          file: Dockerfile.web
+          tags: phenosage-web:ci
+          load: true
+          cache-from: type=gha,scope=web
+          cache-to: type=gha,mode=max,scope=web
       - name: Build analysis image
-        run: docker build -f Dockerfile.analysis -t phenosage-analysis:ci .
+        uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8 # v6.19.2
+        with:
+          context: .
+          file: Dockerfile.analysis
+          tags: phenosage-analysis:ci
+          load: true
+          cache-from: type=gha,scope=analysis
+          cache-to: type=gha,mode=max,scope=analysis
       - name: Validate compose config
         run: docker compose -f docker-compose.ci.yml config
       - name: Start containers
