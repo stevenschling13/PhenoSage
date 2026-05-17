@@ -15,6 +15,10 @@ services:
       - "5432:5432"
 
   analysis:
+    # CI pre-builds and loads `phenosage-analysis:ci` via buildx with GHA
+    # cache export. Pinning `image:` here makes compose reuse that image
+    # instead of doing its own uncached `docker build` on `up`.
+    image: phenosage-analysis:ci
     build:
       context: .
       dockerfile: Dockerfile.analysis
@@ -39,6 +43,9 @@ services:
       - "8000:8000"
 
   web:
+    # Mirrors `analysis` above — reuse the pre-built `phenosage-web:ci`
+    # image instead of letting compose rebuild from scratch.
+    image: phenosage-web:ci
     build:
       context: .
       dockerfile: Dockerfile.web

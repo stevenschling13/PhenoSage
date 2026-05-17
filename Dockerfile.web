@@ -1,12 +1,24 @@
+# syntax=docker/dockerfile:1.7
+# Cache mounts (`--mount=type=cache`) require BuildKit + dockerfile frontend
+# 1.7+. They persist the pnpm content-addressable store and the Next build
+# cache across builds (within a builder instance, or across CI runs when
+# paired with `cache-to=type=gha` on the build invocation).
+
 FROM node:20-alpine AS base
 WORKDIR /app
-RUN corepack enable && corepack prepare pnpm@9.15.9 --activate
+# Pin pnpm to a deterministic store dir so the cache mount target is stable.
+ENV PNPM_HOME=/pnpm \
+    PATH=/pnpm:$PATH
+RUN corepack enable && corepack prepare pnpm@9.15.9 --activate \
+  && pnpm config set store-dir /pnpm/store
 
 FROM base AS deps
 COPY package.json pnpm-lock.yaml pnpm-workspace.yaml turbo.json ./
 COPY apps/web/package.json apps/web/package.json
 COPY packages/shared/package.json packages/shared/package.json
-RUN pnpm install --frozen-lockfile
+# Cache the pnpm CAS store so repeat installs only re-link, never re-download.
+RUN --mount=type=cache,id=pnpm-store,target=/pnpm/store,sharing=locked \
+    pnpm install --frozen-lockfile
 
 FROM deps AS build
 COPY . .
@@ -24,7 +36,11 @@ ENV NEXT_PUBLIC_SUPABASE_URL=$NEXT_PUBLIC_SUPABASE_URL \
     ANALYSIS_SERVICE_URL=$ANALYSIS_SERVICE_URL \
     ANALYSIS_SERVICE_API_KEY=$ANALYSIS_SERVICE_API_KEY \
     READINESS_PROBE_SECRET=$READINESS_PROBE_SECRET
-RUN pnpm --filter web build
+# Cache the Next.js incremental build cache (SWC outputs, route trace, etc.)
+# so warm builds skip work the tracer already did last time.
+RUN --mount=type=cache,id=pnpm-store,target=/pnpm/store,sharing=locked \
+    --mount=type=cache,id=next-cache-web,target=/app/apps/web/.next/cache,sharing=locked \
+    pnpm --filter web build
 
 # Runner ships only the Next.js standalone trace (server.js + the traced
 # subset of node_modules) plus static + public assets the standalone
