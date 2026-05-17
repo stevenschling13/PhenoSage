@@ -90,15 +90,18 @@ async def with_retry(  # noqa: UP047 - PEP 695 generics require Python 3.12; loc
         raise ValueError(f"max_attempts must be >= 1 (operation={operation!r})")
 
     sleep_fn = sleep if sleep is not None else _DEFAULT_SLEEP
-    last_error: AnalysisError | None = None
 
     for attempt in range(1, max_attempts + 1):
         try:
             return await fn()
         except AnalysisError as exc:
             if not exc.retryable or attempt == max_attempts:
+                # Both terminal cases — non-retryable failure and retry
+                # exhaustion — are logged at ERROR so monitoring that
+                # alerts on ERROR-level logs catches persistent upstream
+                # degradation, not just one-shot misconfiguration.
                 log_event(
-                    logging.WARNING if exc.retryable else logging.ERROR,
+                    logging.ERROR,
                     "upstream call failed",
                     operation=operation,
                     attempt=attempt,
@@ -108,7 +111,6 @@ async def with_retry(  # noqa: UP047 - PEP 695 generics require Python 3.12; loc
                     request_id=get_request_id(),
                 )
                 raise
-            last_error = exc
             delay = _full_jitter_delay(
                 attempt,
                 base_delay_s=base_delay_s,
@@ -128,11 +130,12 @@ async def with_retry(  # noqa: UP047 - PEP 695 generics require Python 3.12; loc
         # Non-AnalysisError exceptions intentionally propagate — see
         # ``run_analysis``'s docstring re: programmer-defect discipline.
 
-    # Defensive: the loop must always return or raise. ``last_error`` is
-    # populated whenever we reach this point because every iteration either
-    # returns, raises, or assigns ``last_error`` before sleeping.
-    assert last_error is not None  # pragma: no cover - defensive
-    raise last_error
+    # Unreachable: every iteration either returns, raises, or sleeps and
+    # continues. The loop bound itself guarantees the final iteration
+    # hits the `attempt == max_attempts` branch above and raises.
+    raise AssertionError(  # pragma: no cover - defensive
+        f"with_retry exited loop without returning or raising (operation={operation!r})"
+    )
 
 
 __all__ = ["with_retry"]
