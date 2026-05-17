@@ -13,18 +13,29 @@ import { logServerEvent } from "@/lib/server/request-id";
 export const dynamic = "force-dynamic";
 
 export default async function AppLayout({ children }: { children: ReactNode }) {
+  // Profile + unread-count are independent reads (notifications uses its
+  // own SSR client and swallows its own errors), so fire them in parallel
+  // — saves one Supabase round-trip on every authed page render.
+  const [profileResult, unreadResult] = await Promise.allSettled([
+    getCurrentProfile(),
+    countUnreadNotifications(),
+  ]);
+
   let profile: Awaited<ReturnType<typeof getCurrentProfile>> = null;
-  try {
-    profile = await getCurrentProfile();
-  } catch (err) {
+  if (profileResult.status === "fulfilled") {
+    profile = profileResult.value;
+  } else {
     // Re-throw Next.js control-flow signals (redirect, notFound, dynamic
     // server usage) untouched — they aren't real errors.
-    if (isNextFrameworkError(err)) throw err;
+    if (isNextFrameworkError(profileResult.reason)) throw profileResult.reason;
     // If auth/db is unreachable we can't safely render the authenticated
     // shell. Bounce the user back to /auth where they'll see a friendly
     // status message instead of a generic Next.js error screen.
     logServerEvent("error", "app layout profile load failed", {
-      error: err instanceof Error ? err.message : String(err),
+      error:
+        profileResult.reason instanceof Error
+          ? profileResult.reason.message
+          : String(profileResult.reason),
     });
     redirect(
       "/auth?error=" +
@@ -38,11 +49,11 @@ export default async function AppLayout({ children }: { children: ReactNode }) {
     redirect("/auth");
   }
 
-  // Fetch unread count for the header bell + sidebar badge. This call
-  // already swallows errors and returns 0 on failure (see
-  // notifications.ts), so a Supabase blip degrades to "no badge"
-  // rather than taking the whole shell down.
-  const unreadNotifications = await countUnreadNotifications();
+  // countUnreadNotifications already returns 0 on failure (see
+  // notifications.ts), so a rejected settle here is the unexpected path
+  // — degrade to "no badge" rather than taking the whole shell down.
+  const unreadNotifications =
+    unreadResult.status === "fulfilled" ? unreadResult.value : 0;
 
   return (
     <AppShell
