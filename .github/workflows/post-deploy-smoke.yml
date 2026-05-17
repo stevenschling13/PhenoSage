@@ -90,7 +90,7 @@ jobs:
           VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
           VERCEL_PROJECT_ID: ${{ secrets.VERCEL_PROJECT_ID }}
           VERCEL_TEAM_ID: ${{ secrets.VERCEL_TEAM_ID }}
-          BAD_SHA: ${{ github.event.deployment_status.deployment.sha }}
+          BAD_SHA: ${{ github.event.deployment.sha }}
         run: |
           set -euo pipefail
           if [ -z "${VERCEL_TOKEN:-}" ] || [ -z "${VERCEL_PROJECT_ID:-}" ]; then
@@ -174,7 +174,7 @@ jobs:
             echo "::notice::DISCORD_WEBHOOK_URL not set — notification skipped"
             exit 0
           fi
-          SHA="${{ github.event.deployment_status.deployment.sha }}"
+          SHA="${{ github.event.deployment.sha }}"
           SHORT_SHA="${SHA:0:7}"
           URL="${{ steps.target.outputs.url }}"
           RUN_URL="${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
@@ -205,7 +205,7 @@ jobs:
             echo "::notice::DISCORD_WEBHOOK_URL not set — notification skipped"
             exit 0
           fi
-          SHA="${{ github.event.deployment_status.deployment.sha }}"
+          SHA="${{ github.event.deployment.sha }}"
           SHORT_SHA="${SHA:0:7}"
           URL="${{ steps.target.outputs.url }}"
           RUN_URL="${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"

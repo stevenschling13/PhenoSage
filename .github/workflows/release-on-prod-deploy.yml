@@ -78,7 +78,7 @@ jobs:
       - name: Create tag at deployed SHA
         env:
           TAG: ${{ steps.tag.outputs.tag }}
-          SHA: ${{ github.event.deployment_status.deployment.sha }}
+          SHA: ${{ github.event.deployment.sha }}
         run: |
           set -euo pipefail
           git config user.name "github-actions[bot]"
@@ -97,13 +97,13 @@ jobs:
           # is empty, GitHub will pick the previous tag chronologically.
           if [ -n "$PREV" ]; then
             gh release create "$TAG" \
-              --target "${{ github.event.deployment_status.deployment.sha }}" \
+              --target "${{ github.event.deployment.sha }}" \
               --title "$TAG" \
               --generate-notes \
               --notes-start-tag "$PREV"
           else
             gh release create "$TAG" \
-              --target "${{ github.event.deployment_status.deployment.sha }}" \
+              --target "${{ github.event.deployment.sha }}" \
               --title "$TAG" \
               --generate-notes
           fi
