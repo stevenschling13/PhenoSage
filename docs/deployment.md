@@ -349,6 +349,29 @@ The GitHub Actions workflow (`.github/workflows/ci.yml`) runs on every push/PR:
 - **Analysis**: ruff lint, mypy type-check, pytest
 - **Shared**: type-check
 
+### Required status checks for `main`
+
+The following PR-level checks should be marked as **required** in branch
+protection so a PR cannot merge unless they pass. Branch protection cannot be
+configured from code — an operator must set this in repo Settings.
+
+- `CI / *` (existing build/lint/test matrix from `ci.yml`)
+- `CodeQL`
+- `Gitleaks / Secret scan`
+- `Pre-deploy checklist / Verify` — enforces the PR template's
+  **Validation**, **Architecture & Forbidden Changes**, and **Rollback**
+  checklists. Skipped automatically for draft PRs and for PRs labelled
+  `guardian:approved`. Source: `.github/workflows/pre-deploy-checklist.yml`
+  (parser: `scripts/check-pr-checklist.mjs`).
+
+**How to mark the checklist gate as required** (operator action):
+
+1. GitHub → repo → Settings → Branches → `main` rule.
+2. Tick **Require status checks to pass before merging**.
+3. Search for `Pre-deploy checklist` and add the **Verify** check.
+4. Save. The check now blocks merge for non-draft, non-waived PRs whose
+   bodies do not have all required checklist items ticked.
+
 ## Production deploy lifecycle
 
 Every push to `main` triggers Vercel to build and deploy production. The

@@ -4,6 +4,41 @@ Handoff log between sessions. Keep entries short. Newest at top.
 
 ---
 
+## 2026-05-17 — Phase 2 slice (e): pre-deploy checklist gate (Copilot)
+
+**Landed on `copilot/phase-2-implementation`** alongside Step 0.
+
+- New `.github/workflows/pre-deploy-checklist.yml`: parses PR body for the
+  template's required sections; fails if any item under **Validation**,
+  **Architecture & Forbidden Changes**, or **Rollback** is unchecked. Skips
+  draft PRs and PRs labelled `guardian:approved`. SHA-pinned
+  `step-security/harden-runner`, minimum-scoped permissions
+  (`contents: read`, `pull-requests: read`), concurrency scoped per-PR.
+- New `scripts/check-pr-checklist.mjs`: pure parser + `evaluate(body)`
+  function exported for the workflow (via `actions/github-script@v9`) and
+  for unit tests.
+- New `scripts/__tests__/check-pr-checklist.test.mjs`: 7 tests, picked up
+  automatically by the existing `check:smoke-script` glob; all pass.
+- `docs/deployment.md` §CI/CD: added "Required status checks for `main`"
+  subsection with operator instructions to flip the new gate to required
+  in branch protection (cannot be configured from code).
+- Validation: `pnpm run validate` ✅ (9/9 smoke + script tests),
+  `pnpm run security:routes` ✅, `pnpm turbo run type-check lint test` ✅
+  (730 tests), CodeQL ✅ (0 alerts).
+- Branch note: the playbook's `copilot/phase2-<slice>` branch-per-slice
+  convention starts with the next slice. This slice rode the existing
+  `copilot/phase-2-implementation` branch because the playbook PR was
+  already open there and the sandbox can only push to the current branch.
+
+**Next slice**
+
+- **(a)** Error-rate probe in `post-deploy-smoke.yml`. Open a fresh
+  session, paste the prompt in §6 of
+  `docs/playbooks/phase2-deploy-hardening-series.md`, swap the slice
+  letter to `a`. Highest user value — closes the load-bearing SLO gap.
+
+---
+
 ## 2026-05-17 — Phase 2 deploy-hardening series handoff (Copilot)
 
 **In-flight on `copilot/phase-2-implementation`** (Step 0 only — doc).
