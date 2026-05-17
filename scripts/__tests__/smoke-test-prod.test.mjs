@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { spawn } from "node:child_process";
+import { spawn, spawnSync } from "node:child_process";
 import { once } from "node:events";
 import { createServer } from "node:http";
 import { test } from "node:test";
@@ -10,6 +10,24 @@ const repoRoot = path.resolve(
   path.dirname(fileURLToPath(import.meta.url)),
   "../..",
 );
+
+// PowerShell Core is preinstalled on GitHub-hosted runners but not on most
+// Linux/macOS dev machines or sandboxes. Skip rather than fail so a fresh
+// checkout can run `pnpm run validate` without an extra dependency.
+function pwshAvailable() {
+  try {
+    const r = spawnSync("pwsh", ["-NoLogo", "-Command", "exit 0"], {
+      stdio: "ignore",
+    });
+    return r.status === 0;
+  } catch {
+    return false;
+  }
+}
+
+const skipReason = pwshAvailable()
+  ? false
+  : "pwsh (PowerShell Core) not on PATH — install it to exercise scripts/smoke-test-prod.ps1";
 
 function runSmoke(baseUrl) {
   return new Promise((resolve, reject) => {
@@ -57,64 +75,72 @@ function writeRoot(res) {
   res.end("<!doctype html><title>PhenoSage</title>");
 }
 
-test("production smoke treats expected protected-page redirects as passing", async () => {
-  await withServer(
-    (req, res) => {
-      const url = new URL(req.url ?? "/", "http://127.0.0.1");
-      if (["/", "/auth", "/assistant"].includes(url.pathname)) {
-        writeRoot(res);
-        return;
-      }
-      if (["/dashboard", "/grows", "/settings"].includes(url.pathname)) {
-        res.writeHead(307, { Location: "/auth" });
-        res.end();
-        return;
-      }
-      if (url.pathname === "/api/health") {
-        res.writeHead(200, { "Content-Type": "application/json" });
-        res.end(JSON.stringify({ status: "ok" }));
-        return;
-      }
-      if (
-        [
-          "/api/chat",
-          "/api/uploads/sign",
-          "/api/plants/abc/timeline",
-          "/api/plants/abc/analysis/latest",
-          "/api/internal/cron/daily-summary",
-        ].includes(url.pathname)
-      ) {
-        res.writeHead(401, { "Content-Type": "application/json" });
-        res.end(JSON.stringify({ error: "unauthorized" }));
-        return;
-      }
-      res.writeHead(404, { "Content-Type": "application/json" });
-      res.end(JSON.stringify({ error: "not_found" }));
-    },
-    async (baseUrl) => {
-      const result = await runSmoke(baseUrl);
-      assert.equal(result.code, 0, result.stdout + result.stderr);
-      assert.match(result.stdout, /PASSED/);
-      assert.doesNotMatch(result.stdout + result.stderr, /\bERR\b/);
-    },
-  );
-});
+test(
+  "production smoke treats expected protected-page redirects as passing",
+  { skip: skipReason },
+  async () => {
+    await withServer(
+      (req, res) => {
+        const url = new URL(req.url ?? "/", "http://127.0.0.1");
+        if (["/", "/auth", "/assistant"].includes(url.pathname)) {
+          writeRoot(res);
+          return;
+        }
+        if (["/dashboard", "/grows", "/settings"].includes(url.pathname)) {
+          res.writeHead(307, { Location: "/auth" });
+          res.end();
+          return;
+        }
+        if (url.pathname === "/api/health") {
+          res.writeHead(200, { "Content-Type": "application/json" });
+          res.end(JSON.stringify({ status: "ok" }));
+          return;
+        }
+        if (
+          [
+            "/api/chat",
+            "/api/uploads/sign",
+            "/api/plants/abc/timeline",
+            "/api/plants/abc/analysis/latest",
+            "/api/internal/cron/daily-summary",
+          ].includes(url.pathname)
+        ) {
+          res.writeHead(401, { "Content-Type": "application/json" });
+          res.end(JSON.stringify({ error: "unauthorized" }));
+          return;
+        }
+        res.writeHead(404, { "Content-Type": "application/json" });
+        res.end(JSON.stringify({ error: "not_found" }));
+      },
+      async (baseUrl) => {
+        const result = await runSmoke(baseUrl);
+        assert.equal(result.code, 0, result.stdout + result.stderr);
+        assert.match(result.stdout, /PASSED/);
+        assert.doesNotMatch(result.stdout + result.stderr, /\bERR\b/);
+      },
+    );
+  },
+);
 
-test("production smoke reports transport errors without null-header noise", async () => {
-  const server = createServer();
-  server.listen(0, "127.0.0.1");
-  await once(server, "listening");
-  const { port } = server.address();
-  server.close();
-  await once(server, "close");
+test(
+  "production smoke reports transport errors without null-header noise",
+  { skip: skipReason },
+  async () => {
+    const server = createServer();
+    server.listen(0, "127.0.0.1");
+    await once(server, "listening");
+    const { port } = server.address();
+    server.close();
+    await once(server, "close");
 
-  const result = await runSmoke(`http://127.0.0.1:${port}`);
+    const result = await runSmoke(`http://127.0.0.1:${port}`);
 
-  assert.equal(result.code, 1);
-  assert.match(result.stdout, /FAILED/);
-  assert.match(result.stdout, /Unable to fetch root/);
-  assert.doesNotMatch(
-    result.stdout + result.stderr,
-    /Cannot index into a null array/,
-  );
-});
+    assert.equal(result.code, 1);
+    assert.match(result.stdout, /FAILED/);
+    assert.match(result.stdout, /Unable to fetch root/);
+    assert.doesNotMatch(
+      result.stdout + result.stderr,
+      /Cannot index into a null array/,
+    );
+  },
+);
