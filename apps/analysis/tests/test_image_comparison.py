@@ -17,25 +17,20 @@ from app.services.image_comparison import compare_images
 
 
 @pytest.mark.asyncio
-async def test_compare_images_returns_string() -> None:
-    result = await compare_images(
-        image_id_a="img-a",
-        storage_path_a="plants/p/img-a.jpg",
-        image_id_b="img-b",
-        storage_path_b="plants/p/img-b.jpg",
-    )
-    assert isinstance(result, str)
-    assert result  # non-empty
+async def test_compare_images_raises_not_implemented() -> None:
+    """The stub must fail loudly if it's ever called from a production path.
 
-
-@pytest.mark.asyncio
-async def test_compare_images_current_stub_marker() -> None:
+    Returning a placeholder string previously hid the unfinished state from
+    callers. Raising ``NotImplementedError`` instead makes accidental
+    wiring an observable bug rather than a silent UX defect.
     """
-    The stub returns a known sentinel string. When the real implementation
-    lands this test should be replaced — its failure is the intended signal.
-    """
-    result = await compare_images("a", "p/a", "b", "p/b")
-    assert "not yet implemented" in result.lower()
+    with pytest.raises(NotImplementedError, match="Milestone 2"):
+        await compare_images(
+            image_id_a="img-a",
+            storage_path_a="plants/p/img-a.jpg",
+            image_id_b="img-b",
+            storage_path_b="plants/p/img-b.jpg",
+        )
 
 
 def test_compare_images_signature_is_stable() -> None:

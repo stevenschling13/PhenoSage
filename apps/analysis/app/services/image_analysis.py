@@ -29,7 +29,18 @@ from app.models.analysis import (
 )
 from app.services.image_quality import assess_image_quality
 from app.services.prompts import SYSTEM_PROMPT, build_analysis_prompt
+from app.services.retry import with_retry
 from app.services.scoring import compute_health_score
+
+# Bounded retries for transient upstream failures. Storage gets one extra
+# attempt over the model because it is dramatically cheaper to re-run and
+# the failure mode (Supabase blip) clears in single-digit seconds. The
+# model call is more expensive, so we cap retries tighter — and the OpenAI
+# SDK already does its own internal retry on connection errors, so we are
+# strictly adding a second outer ring around the *classified* failure
+# (rate-limit, 5xx, timeout).
+_STORAGE_FETCH_MAX_ATTEMPTS = 3
+_MODEL_CALL_MAX_ATTEMPTS = 2
 
 MODEL_VERSION = "gpt-4o-mini-vision"
 logger = logging.getLogger(__name__)
@@ -254,17 +265,32 @@ async def _run_model_analysis(
 
 async def run_analysis(request: AnalyzeRequest) -> AnalyzeResponse:
     try:
-        image_bytes, content_type = await _fetch_storage_image(request.storage_path)
+        # Bounded retry on transient storage failures (5xx / network /
+        # timeout). Non-retryable errors — ConfigurationError, an invalid
+        # storage path — propagate on the first attempt because retrying
+        # an operator-action error wastes time and amplifies log noise.
+        image_bytes, content_type = await with_retry(
+            lambda: _fetch_storage_image(request.storage_path),
+            operation="storage.fetch",
+            max_attempts=_STORAGE_FETCH_MAX_ATTEMPTS,
+        )
         # Pre-vision quality gate: refuse unanalysable images here so the
         # outcome is an explicit *inconclusive* envelope rather than a
         # low-confidence diagnosis from the vision model. ImageQuality-
         # Inconclusive is an AnalysisError subclass, so it's routed by the
         # except branch below into the same fallback path.
         assess_image_quality(image_bytes)
-        response = await _run_model_analysis(
-            request,
-            image_bytes=image_bytes,
-            content_type=content_type,
+        # Retry the model call on rate-limit / 5xx / timeout only. The
+        # bytes and content type are captured by the closure so a retry
+        # does not re-download the image — only the model call repeats.
+        response = await with_retry(
+            lambda: _run_model_analysis(
+                request,
+                image_bytes=image_bytes,
+                content_type=content_type,
+            ),
+            operation="model.analyze",
+            max_attempts=_MODEL_CALL_MAX_ATTEMPTS,
         )
         log_event(
             logging.INFO,

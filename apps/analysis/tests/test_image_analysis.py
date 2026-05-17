@@ -413,19 +413,165 @@ async def test_run_analysis_falls_back_when_storage_fetch_fails(
     monkeypatch: pytest.MonkeyPatch,
     caplog: pytest.LogCaptureFixture,
 ) -> None:
+    calls = 0
+
     async def fake_fetch(storage_path: str) -> tuple[bytes, str]:
+        nonlocal calls
+        calls += 1
         raise image_analysis.StorageUnavailable("simulated outage")
 
+    # No-op sleep so we don't pay real backoff time in unit tests.
+    async def _no_sleep(_: float) -> None:
+        return None
+
     monkeypatch.setattr(image_analysis, "_fetch_storage_image", fake_fetch)
+    monkeypatch.setattr(
+        "app.services.retry._DEFAULT_SLEEP",
+        _no_sleep,
+    )
 
     with caplog.at_level("WARNING", logger="phenosage.analysis"):
         response = await image_analysis.run_analysis(_request())
 
+    # Storage fetch is retried (default 3 attempts) before falling back.
+    assert calls == 3
     assert response.is_fallback is True
     assert response.analysis_mode == "fallback"
     # Stable, redaction-safe code — never the raw exception class name.
     assert response.fallback_reason == "STORAGE_UNAVAILABLE"
     assert "analysis fallback triggered" in caplog.text
+
+
+@pytest.mark.asyncio
+async def test_run_analysis_retries_storage_fetch_then_succeeds(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A single transient storage blip must not surface as a fallback.
+
+    Locks in the Phase 1 reliability behaviour: the user-visible result
+    after one retryable failure should be a real analysis, not the
+    inconclusive fallback envelope.
+    """
+    monkeypatch.setattr(settings, "openai_api_key", "sk-test")
+
+    attempts = 0
+
+    async def fake_fetch(storage_path: str) -> tuple[bytes, str]:
+        nonlocal attempts
+        attempts += 1
+        if attempts == 1:
+            raise image_analysis.StorageUnavailable("transient blip")
+        return _valid_png_bytes(), "image/png"
+
+    monkeypatch.setattr(image_analysis, "_fetch_storage_image", fake_fetch)
+
+    async def _no_sleep(_: float) -> None:
+        return None
+
+    monkeypatch.setattr("app.services.retry._DEFAULT_SLEEP", _no_sleep)
+
+    class FakeCompletions:
+        async def create(self, **kwargs: object) -> object:
+            return SimpleNamespace(
+                choices=[
+                    SimpleNamespace(
+                        message=SimpleNamespace(
+                            content=json.dumps(
+                                {
+                                    "overall_health_score": 91,
+                                    "summary": "Healthy.",
+                                    "findings": [],
+                                }
+                            )
+                        )
+                    )
+                ]
+            )
+
+    class FakeAsyncOpenAI:
+        def __init__(self, *, api_key: str) -> None:
+            self.chat = SimpleNamespace(completions=FakeCompletions())
+
+    monkeypatch.setitem(
+        sys.modules,
+        "openai",
+        SimpleNamespace(AsyncOpenAI=FakeAsyncOpenAI),
+    )
+
+    response = await image_analysis.run_analysis(_request())
+
+    assert attempts == 2
+    assert response.is_fallback is False
+    assert response.analysis_mode == "model"
+    assert response.overall_health_score == 91.0
+
+
+@pytest.mark.asyncio
+async def test_run_analysis_retries_model_then_succeeds(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A single model rate-limit must be absorbed by the retry layer.
+
+    The image bytes are captured by the closure, so a retried model call
+    must not re-download the image — exercised by asserting the storage
+    fetch ran exactly once.
+    """
+    monkeypatch.setattr(settings, "openai_api_key", "sk-test")
+
+    fetch_calls = 0
+
+    async def fake_fetch(storage_path: str) -> tuple[bytes, str]:
+        nonlocal fetch_calls
+        fetch_calls += 1
+        return _valid_png_bytes(), "image/png"
+
+    monkeypatch.setattr(image_analysis, "_fetch_storage_image", fake_fetch)
+
+    async def _no_sleep(_: float) -> None:
+        return None
+
+    monkeypatch.setattr("app.services.retry._DEFAULT_SLEEP", _no_sleep)
+
+    model_calls = 0
+
+    class FakeCompletions:
+        async def create(self, **kwargs: object) -> object:
+            nonlocal model_calls
+            model_calls += 1
+            if model_calls == 1:
+                raise image_analysis.ModelRateLimited("burst")
+            return SimpleNamespace(
+                choices=[
+                    SimpleNamespace(
+                        message=SimpleNamespace(
+                            content=json.dumps(
+                                {
+                                    "overall_health_score": 80,
+                                    "summary": "Recovered.",
+                                    "findings": [],
+                                }
+                            )
+                        )
+                    )
+                ]
+            )
+
+    class FakeAsyncOpenAI:
+        def __init__(self, *, api_key: str) -> None:
+            self.chat = SimpleNamespace(completions=FakeCompletions())
+
+    monkeypatch.setitem(
+        sys.modules,
+        "openai",
+        SimpleNamespace(AsyncOpenAI=FakeAsyncOpenAI),
+    )
+
+    response = await image_analysis.run_analysis(_request())
+
+    assert fetch_calls == 1, "storage must not be re-fetched on a model retry"
+    assert model_calls == 2
+    assert response.is_fallback is False
+    assert response.overall_health_score == 80.0
 
 
 @pytest.mark.asyncio

@@ -1,10 +1,7 @@
-"""
-Health scoring service.
+"""Severity-weighted health score.
 
-TODO (Milestone 2):
-  - Accept a list of AnalysisFinding objects
-  - Apply weighted scoring based on severity and category
-  - Return a 0–100 health score
+Penalises each finding by its severity (info contributes nothing) and
+subtracts the total from 100. Capped at 0.
 """
 
 from __future__ import annotations
