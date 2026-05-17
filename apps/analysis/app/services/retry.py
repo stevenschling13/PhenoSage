@@ -33,8 +33,6 @@ T = TypeVar("T")
 # ``asyncio.sleep`` globally.
 _DEFAULT_SLEEP: Callable[[float], Awaitable[None]] = asyncio.sleep
 
-logger = logging.getLogger(__name__)
-
 
 def _full_jitter_delay(
     attempt: int,
