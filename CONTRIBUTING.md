@@ -87,6 +87,10 @@ pwsh scripts/smoke-test-prod.ps1
 ```
 
 It exits non-zero if any endpoint, security header, or secret-leak check fails.
+PowerShell Core (`pwsh`) is preinstalled on GitHub-hosted runners. On a Linux
+or macOS dev machine without it, `pnpm run validate` will skip the
+`check:smoke-script` step with a clear reason rather than failing — install
+`pwsh` (e.g., `brew install --cask powershell`) to exercise it locally.
 
 For the authenticated persisted-flow smoke, run the Playwright suite with the
 Supabase service role available to the test runner:
