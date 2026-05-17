@@ -9,6 +9,11 @@
  *  - Referrer + Permissions Policy restricting sensors
  */
 
+import path from "node:path";
+import { fileURLToPath } from "node:url";
+
+const __dirname = path.dirname(fileURLToPath(import.meta.url));
+
 function parseOrigin(value) {
   if (!value) return null;
   try {
@@ -44,6 +49,15 @@ function buildCSP() {
 const nextConfig = {
   reactStrictMode: true,
   poweredByHeader: false,
+  // Emit a self-contained server tree under `.next/standalone` so non-Vercel
+  // deploys (Docker / Railway) ship only the files Next's tracer determined
+  // are reachable instead of the full pnpm workspace node_modules. Vercel
+  // ignores this and bundles via its own tracer, so this is a no-op there.
+  // `outputFileTracingRoot` is required in a pnpm workspace so the tracer
+  // walks up out of `apps/web` and follows the workspace:* symlinks into
+  // `packages/shared`.
+  output: "standalone",
+  outputFileTracingRoot: path.join(__dirname, "../.."),
   serverExternalPackages: [],
   images: {
     remotePatterns: [
