@@ -126,6 +126,7 @@ export async function POST(request: NextRequest) {
       plantId?: string;
       history?: unknown;
       attachments?: unknown;
+      idempotencyKey?: string;
     };
     try {
       body = (await request.json()) as typeof body;
@@ -255,6 +256,29 @@ export async function POST(request: NextRequest) {
         requestId,
       );
     }
+    // Optional client-supplied dedup key. Matches the bounds used elsewhere
+    // (AnalyzeRequestSchema, UploadFinalizeRequestSchema) so clients can
+    // reuse a single id-minting helper across endpoints. Empty strings are
+    // rejected by the length check below — they're never useful as a key
+    // and surface as a clear 400 instead of being silently coerced to
+    // "no idempotency".
+    const idempotencyKey =
+      typeof body.idempotencyKey === "string" ? body.idempotencyKey : undefined;
+    if (
+      idempotencyKey !== undefined &&
+      (idempotencyKey.length < 8 || idempotencyKey.length > 128)
+    ) {
+      return attachRequestId(
+        NextResponse.json(
+          {
+            error: "idempotencyKey must be between 8 and 128 characters.",
+            requestId,
+          },
+          { status: 400 },
+        ),
+        requestId,
+      );
+    }
 
     // Validate optional client-supplied history. We trust role+content shape but
     // not the model identities — the server prepends the canonical system
@@ -314,12 +338,15 @@ export async function POST(request: NextRequest) {
       // Persist the user message before we call out to the model so the
       // transcript is durable even if the stream errors. We capture the
       // returned id so attachment rows can foreign-key to this exact
-      // chat_messages row.
+      // chat_messages row. When the client supplied an idempotencyKey,
+      // a retried request resolves to the same row id rather than
+      // creating a duplicate transcript entry.
       if (threadId) {
         userMessageId = await appendMessage({
           threadId,
           role: "user",
           content: effectiveUserText,
+          ...(idempotencyKey ? { idempotencyKey } : {}),
         });
       }
     }

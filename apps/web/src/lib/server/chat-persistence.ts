@@ -94,6 +94,15 @@ export async function appendMessage(params: {
   role: "user" | "assistant" | "system";
   content: string;
   metadata?: Record<string, unknown>;
+  /**
+   * Optional client-supplied dedup key. When two requests race with the
+   * same `(threadId, idempotencyKey)` pair, the partial unique index
+   * `idx_chat_messages_thread_idem` rejects the second insert with
+   * Postgres `23505` and we recover by returning the id of the row that
+   * already landed. Lets the client safely retry a failed send (network
+   * blip, double-click) without producing two transcript rows.
+   */
+  idempotencyKey?: string;
 }): Promise<string | null> {
   // Allow empty content when an attachment is the user's only payload.
   // (Empty assistant rows are still skipped — the streaming path only calls
@@ -111,16 +120,53 @@ export async function appendMessage(params: {
   if (params.metadata && Object.keys(params.metadata).length > 0) {
     insertRow["metadata"] = params.metadata;
   }
+  if (params.idempotencyKey) {
+    insertRow["idempotency_key"] = params.idempotencyKey;
+  }
   const { data, error } = await db
     .from("chat_messages")
     .insert(insertRow)
     .select("id")
     .single();
-  if (error || !data) {
+  if (error) {
+    // 23505 = unique_violation. Only the partial unique index on
+    // (thread_id, idempotency_key) can produce one for a chat_messages
+    // insert, so when the caller supplied a key we treat it as a replay:
+    // look up the original row and hand its id back to the caller. The
+    // attachment writer downstream depends on this so that attachments
+    // foreign-key to the *first* user message, not a duplicate.
+    if (error.code === "23505" && params.idempotencyKey) {
+      const { data: existing, error: lookupError } = await db
+        .from("chat_messages")
+        .select("id")
+        .eq("thread_id", params.threadId)
+        .eq("idempotency_key", params.idempotencyKey)
+        .maybeSingle();
+      if (!lookupError && existing) {
+        // Include the key in the replay log so ops can correlate a retry
+        // storm to a specific client request — the key is opaque and not
+        // a secret (it's client-minted; the partial unique index is the
+        // only thing that gives it meaning).
+        logServerEvent("info", "chat message idempotent replay", {
+          threadId: params.threadId,
+          role: params.role,
+          idempotencyKey: params.idempotencyKey,
+        });
+        return (existing as { id: string }).id;
+      }
+    }
     logServerEvent("error", "chat message insert failed", {
       threadId: params.threadId,
       role: params.role,
-      error: error?.message ?? "no row",
+      error: error.message,
+    });
+    return null;
+  }
+  if (!data) {
+    logServerEvent("error", "chat message insert failed", {
+      threadId: params.threadId,
+      role: params.role,
+      error: "no row",
     });
     return null;
   }
