@@ -205,6 +205,72 @@ export async function persistPlantImageUpload(params: {
   };
 }
 
+/**
+ * Mint a fresh signed download URL for a single plant image.
+ *
+ * Used by the `<SignedImage>` client component's refresh path: when a
+ * previously-rendered signed URL expires (Supabase 403), the component
+ * calls `/api/uploads/refresh`, which calls this. Ownership is
+ * enforced two ways:
+ *
+ *   1. `getAuthorizedPlantContext` checks the caller actually owns /
+ *      is a member of the grow that contains the plant.
+ *   2. The `plant_images` lookup is bounded by `plant_id = context.plantId`
+ *      so a caller who owns plant A cannot pass image B (belonging to
+ *      plant B) and harvest a fresh URL.
+ *
+ * Returns `null` whenever auth or lookup fails. The caller maps that
+ * to a 404 so the existence (or non-existence) of an image id is not
+ * disclosed to unauthorised parties.
+ */
+export async function signPlantImageUrl(params: {
+  plantId: string;
+  imageId: string;
+  /** TTL for the new signed URL, in seconds. Capped at 1 hour. */
+  expiresInSeconds?: number;
+}): Promise<{ signedUrl: string; expiresAt: string } | null> {
+  const context = await getAuthorizedPlantContext(params.plantId);
+  if (!context) {
+    return null;
+  }
+
+  const db = getDbClient();
+  const { data: image, error: imageError } = await db
+    .from("plant_images")
+    .select("storage_path")
+    .eq("id", params.imageId)
+    .eq("plant_id", context.plantId)
+    .maybeSingle();
+  if (imageError) {
+    throw new Error(`Failed to load image for signing: ${imageError.message}`);
+  }
+  if (!image) {
+    return null;
+  }
+
+  // Clamp the TTL so a misbehaving client can't request a year-long
+  // signed URL. 60s minimum prevents thrashing if a client retries on
+  // every error.
+  const requested = params.expiresInSeconds ?? 600;
+  const expiresIn = Math.max(60, Math.min(3600, Math.floor(requested)));
+
+  const storage = getStorageClient().from("plant-images");
+  const { data, error } = await storage.createSignedUrl(
+    (image as { storage_path: string }).storage_path,
+    expiresIn,
+  );
+  if (error || !data?.signedUrl) {
+    throw new Error(
+      `Failed to sign plant image URL: ${error?.message ?? "no url"}`,
+    );
+  }
+
+  return {
+    signedUrl: data.signedUrl,
+    expiresAt: new Date(Date.now() + expiresIn * 1000).toISOString(),
+  };
+}
+
 export async function getLatestPlantAnalysis(
   plantId: string,
 ): Promise<AnalysisResponse | null> {

@@ -39,6 +39,7 @@ import {
   persistPlantImageUpload,
   preparePlantImageUpload,
   runAndPersistPlantAnalysis,
+  signPlantImageUrl,
 } from "../plants";
 
 const PLANT_CONTEXT = {
@@ -233,6 +234,126 @@ describe("plants server helpers", () => {
         requestId: "req-1",
       }),
     ).rejects.toThrow("Failed to create signed upload URL: bucket unavailable");
+  });
+
+  // ───────────────────────────────────────────────────────────────────────
+  // signPlantImageUrl — Phase 1.4 (signed-URL auto-refresh)
+  // ───────────────────────────────────────────────────────────────────────
+
+  it("signPlantImageUrl returns null when the caller isn't authorized for the plant", async () => {
+    getAuthorizedPlantContext.mockResolvedValue(null);
+    await expect(
+      signPlantImageUrl({ plantId: "plant-1", imageId: "image-1" }),
+    ).resolves.toBeNull();
+    expect(getDbClient).not.toHaveBeenCalled();
+    expect(getStorageClient).not.toHaveBeenCalled();
+  });
+
+  it("signPlantImageUrl returns null when the imageId doesn't belong to the plant", async () => {
+    // Critical defense: the auth check covers the plant, but a caller
+    // who owns plant A must not be able to refresh an image belonging
+    // to plant B by passing B's id. Bounding the SELECT by plant_id
+    // is the seal.
+    const maybeSingle = vi.fn().mockResolvedValue({ data: null, error: null });
+    const eqPlant = vi.fn(() => ({ maybeSingle }));
+    const eqId = vi.fn(() => ({ eq: eqPlant }));
+    const select = vi.fn(() => ({ eq: eqId }));
+    getDbClient.mockReturnValue({ from: vi.fn(() => ({ select })) });
+
+    await expect(
+      signPlantImageUrl({
+        plantId: "plant-1",
+        imageId: "image-from-other-plant",
+      }),
+    ).resolves.toBeNull();
+    expect(eqId).toHaveBeenCalledWith("id", "image-from-other-plant");
+    expect(eqPlant).toHaveBeenCalledWith("plant_id", "plant-1");
+    expect(getStorageClient).not.toHaveBeenCalled();
+  });
+
+  it("signPlantImageUrl returns a fresh URL with an iso expiresAt on success", async () => {
+    vi.spyOn(Date, "now").mockReturnValue(1_800_000_000_000);
+    const maybeSingle = vi
+      .fn()
+      .mockResolvedValue({
+        data: { storage_path: "plant-1/x.jpg" },
+        error: null,
+      });
+    const eqPlant = vi.fn(() => ({ maybeSingle }));
+    const eqId = vi.fn(() => ({ eq: eqPlant }));
+    const select = vi.fn(() => ({ eq: eqId }));
+    getDbClient.mockReturnValue({ from: vi.fn(() => ({ select })) });
+
+    const createSignedUrl = vi.fn().mockResolvedValue({
+      data: { signedUrl: "https://example.com/x.jpg?token=fresh" },
+      error: null,
+    });
+    getStorageClient.mockReturnValue({
+      from: vi.fn(() => ({ createSignedUrl })),
+    });
+
+    const result = await signPlantImageUrl({
+      plantId: "plant-1",
+      imageId: "image-1",
+      expiresInSeconds: 600,
+    });
+    expect(result).toEqual({
+      signedUrl: "https://example.com/x.jpg?token=fresh",
+      expiresAt: new Date(1_800_000_000_000 + 600_000).toISOString(),
+    });
+    expect(createSignedUrl).toHaveBeenCalledWith("plant-1/x.jpg", 600);
+  });
+
+  it("signPlantImageUrl clamps expiresInSeconds to [60, 3600]", async () => {
+    const maybeSingle = vi
+      .fn()
+      .mockResolvedValue({ data: { storage_path: "p/x" }, error: null });
+    const select = vi.fn(() => ({
+      eq: vi.fn(() => ({ eq: vi.fn(() => ({ maybeSingle })) })),
+    }));
+    getDbClient.mockReturnValue({ from: vi.fn(() => ({ select })) });
+    const createSignedUrl = vi.fn().mockResolvedValue({
+      data: { signedUrl: "https://example.com/x" },
+      error: null,
+    });
+    getStorageClient.mockReturnValue({
+      from: vi.fn(() => ({ createSignedUrl })),
+    });
+
+    await signPlantImageUrl({
+      plantId: "plant-1",
+      imageId: "image-1",
+      expiresInSeconds: 1, // below floor
+    });
+    expect(createSignedUrl).toHaveBeenLastCalledWith("p/x", 60);
+
+    await signPlantImageUrl({
+      plantId: "plant-1",
+      imageId: "image-1",
+      expiresInSeconds: 999_999, // above ceiling
+    });
+    expect(createSignedUrl).toHaveBeenLastCalledWith("p/x", 3600);
+  });
+
+  it("signPlantImageUrl throws when Supabase returns a sign error", async () => {
+    const maybeSingle = vi
+      .fn()
+      .mockResolvedValue({ data: { storage_path: "p/x" }, error: null });
+    const select = vi.fn(() => ({
+      eq: vi.fn(() => ({ eq: vi.fn(() => ({ maybeSingle })) })),
+    }));
+    getDbClient.mockReturnValue({ from: vi.fn(() => ({ select })) });
+    const createSignedUrl = vi.fn().mockResolvedValue({
+      data: null,
+      error: { message: "bucket unavailable" },
+    });
+    getStorageClient.mockReturnValue({
+      from: vi.fn(() => ({ createSignedUrl })),
+    });
+
+    await expect(
+      signPlantImageUrl({ plantId: "plant-1", imageId: "image-1" }),
+    ).rejects.toThrow("Failed to sign plant image URL: bucket unavailable");
   });
 
   it("returns null for finalized image persistence when the plant is not authorized", async () => {
