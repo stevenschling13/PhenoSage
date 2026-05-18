@@ -128,13 +128,13 @@ export async function callAnalysisService<T = unknown>(
     return await breaker.run(() =>
       withResilience<T>(
         async (_attempt, signal) => {
-          const headers = withRequestIdHeader(
+          const headers = new Headers(withRequestIdHeader(
             {
               "Content-Type": "application/json",
               Authorization: `Bearer ${apiKey}`,
             },
             effectiveRequestId,
-          );
+          ));
           // Forward W3C `traceparent` so the analysis service can
           // continue the trace on its side. We pass the value
           // through verbatim — the route handler is the span owner
