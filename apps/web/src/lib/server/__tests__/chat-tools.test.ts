@@ -2636,20 +2636,66 @@ describe("chat-tools — compare_plants", () => {
     expect(from).not.toHaveBeenCalled();
   });
 
-  it("returns per-plant summary with counts from each table", async () => {
-    const { client } = makeTableRouterMock({
+  it("returns per-plant summary with counts derived from batched plant_id rows", async () => {
+    // Post-refactor, each table fan-in returns ROWS (one per
+    // event/observation/finding/task) with `plant_id`. The tool
+    // groups by plant_id in-memory to produce the per-plant counts.
+    // The shape below encodes the same outcome the old `count: 7`
+    // mocks did, but in the new contract: 5 events for p-1, 2 for
+    // p-2 → totals match {7 events visible across both plants}.
+    const { client, calls } = makeTableRouterMock({
       plants: {
-        data: { id: "p-1", name: "Mother", strain: "NL" },
+        data: [
+          { id: "p-1", name: "Mother", strain: "NL" },
+          { id: "p-2", name: "Clone", strain: "NL" },
+        ],
         error: null,
       },
       plant_analyses: {
-        data: { id: "a-1", overall_health_score: 0.9, summary: "ok" },
+        data: [
+          {
+            id: "a-1",
+            plant_id: "p-1",
+            overall_health_score: 0.9,
+            summary: "ok",
+            analyzed_at: "2026-05-10T00:00:00Z",
+          },
+          // Older analysis for p-1 — must be ignored, the DESC order
+          // means the first row per plant is the latest.
+          {
+            id: "a-0",
+            plant_id: "p-1",
+            overall_health_score: 0.5,
+            summary: "older",
+            analyzed_at: "2026-04-10T00:00:00Z",
+          },
+        ],
         error: null,
       },
-      grow_events: { data: [], error: null, count: 7 },
-      plant_observations: { data: [], error: null, count: 3 },
-      plant_findings: { data: [], error: null, count: 1 },
-      grow_tasks: { data: [], error: null, count: 2 },
+      grow_events: {
+        data: [
+          { plant_id: "p-1" },
+          { plant_id: "p-1" },
+          { plant_id: "p-1" },
+          { plant_id: "p-1" },
+          { plant_id: "p-1" },
+          { plant_id: "p-2" },
+          { plant_id: "p-2" },
+        ],
+        error: null,
+      },
+      plant_observations: {
+        data: [{ plant_id: "p-1" }, { plant_id: "p-1" }, { plant_id: "p-1" }],
+        error: null,
+      },
+      plant_findings: {
+        data: [{ plant_id: "p-1" }],
+        error: null,
+      },
+      grow_tasks: {
+        data: [{ plant_id: "p-1" }, { plant_id: "p-1" }],
+        error: null,
+      },
     });
     createSupabaseServerClient.mockResolvedValue(client);
 
@@ -2662,26 +2708,92 @@ describe("chat-tools — compare_plants", () => {
     expect(result.ok).toBe(true);
     if (result.ok) {
       const data = result.data as {
-        plants: Array<{ counts: Record<string, number> }>;
+        plants: Array<{
+          plantId: string;
+          plant: unknown;
+          latestAnalysis: { id: string } | null;
+          counts: Record<string, number>;
+        }>;
       };
       expect(data.plants).toHaveLength(2);
+      // Per-plant order matches the inbound plantIds — refactor must
+      // not silently reorder by something else (e.g. db sort).
+      expect(data.plants[0]?.plantId).toBe("p-1");
+      expect(data.plants[1]?.plantId).toBe("p-2");
       expect(data.plants[0]?.counts).toEqual({
-        events: 7,
+        events: 5,
         observations: 3,
         unresolvedFindings: 1,
         openTasks: 2,
       });
+      expect(data.plants[1]?.counts).toEqual({
+        events: 2,
+        observations: 0,
+        unresolvedFindings: 0,
+        openTasks: 0,
+      });
+      // Latest-analysis selection picks the first row per plant_id
+      // because the query is ordered analyzed_at DESC.
+      expect(data.plants[0]?.latestAnalysis?.id).toBe("a-1");
+      // p-2 had no analyses → null, NOT the older p-1 row.
+      expect(data.plants[1]?.latestAnalysis).toBeNull();
     }
+
+    // Window-filter regression seals: a future refactor that drops
+    // either of these `.gte(...)` chains would silently bring back
+    // the perf regression (analyses) or break the dimension's
+    // window semantics (events / observations / findings). Tasks
+    // are intentionally NOT date-filtered — see the comment in
+    // chat-tools.ts — so we assert the inverse for that table.
+    const analysisGte = calls["plant_analyses"]?.find(
+      (c) => c.method === "gte" && c.args[0] === "analyzed_at",
+    );
+    expect(analysisGte).toBeDefined();
+    const eventsGte = calls["grow_events"]?.find(
+      (c) => c.method === "gte" && c.args[0] === "occurred_at",
+    );
+    expect(eventsGte).toBeDefined();
+    const tasksGte = calls["grow_tasks"]?.find((c) => c.method === "gte");
+    expect(tasksGte).toBeUndefined();
+  });
+
+  it("issues a constant 6 round-trips regardless of plant count (no N+1)", async () => {
+    // Pins the perf contract of the batched refactor: previously this
+    // path was 6 queries × N plants. Going back to per-plant
+    // fan-out (e.g. via a future tweak) would silently re-introduce
+    // the regression — this test catches that by asserting on
+    // `from.mock.calls.length`.
+    const { client, from } = makeTableRouterMock({
+      plants: { data: [], error: null },
+      plant_analyses: { data: [], error: null },
+      grow_events: { data: [], error: null },
+      plant_observations: { data: [], error: null },
+      plant_findings: { data: [], error: null },
+      grow_tasks: { data: [], error: null },
+    });
+    createSupabaseServerClient.mockResolvedValue(client);
+
+    const result = await executeChatTool(
+      "compare_plants",
+      { plantIds: ["p-1", "p-2", "p-3", "p-4"] },
+      CTX_AUTHED,
+    );
+
+    expect(result.ok).toBe(true);
+    // Six `from(...)` calls regardless of how many plantIds the
+    // caller supplied. The pre-refactor version would have made 24
+    // calls (6 × 4 plants).
+    expect(from).toHaveBeenCalledTimes(6);
   });
 
   it("clamps sinceDays to a max of 90", async () => {
     const { client } = makeTableRouterMock({
-      plants: { data: null, error: null },
-      plant_analyses: { data: null, error: null },
-      grow_events: { data: [], error: null, count: 0 },
-      plant_observations: { data: [], error: null, count: 0 },
-      plant_findings: { data: [], error: null, count: 0 },
-      grow_tasks: { data: [], error: null, count: 0 },
+      plants: { data: [], error: null },
+      plant_analyses: { data: [], error: null },
+      grow_events: { data: [], error: null },
+      plant_observations: { data: [], error: null },
+      plant_findings: { data: [], error: null },
+      grow_tasks: { data: [], error: null },
     });
     createSupabaseServerClient.mockResolvedValue(client);
 
@@ -2698,14 +2810,18 @@ describe("chat-tools — compare_plants", () => {
     }
   });
 
-  it("degrades gracefully when one of the per-plant reads fails", async () => {
+  it("degrades gracefully when one of the batched reads fails", async () => {
+    // The plants table fan-in fails — the tool must still return the
+    // other dimensions for the remaining plants, with `plant: null`
+    // for the failed lookup. Same per-source-degradation contract as
+    // before the refactor.
     const { client } = makeTableRouterMock({
       plants: { data: null, error: { message: "rls" } },
-      plant_analyses: { data: null, error: null },
-      grow_events: { data: [], error: null, count: 0 },
-      plant_observations: { data: [], error: null, count: 0 },
-      plant_findings: { data: [], error: null, count: 0 },
-      grow_tasks: { data: [], error: null, count: 0 },
+      plant_analyses: { data: [], error: null },
+      grow_events: { data: [], error: null },
+      plant_observations: { data: [], error: null },
+      plant_findings: { data: [], error: null },
+      grow_tasks: { data: [], error: null },
     });
     createSupabaseServerClient.mockResolvedValue(client);
 
@@ -2719,6 +2835,7 @@ describe("chat-tools — compare_plants", () => {
     if (result.ok) {
       const data = result.data as { plants: Array<{ plant: unknown }> };
       expect(data.plants[0]?.plant).toBeNull();
+      expect(data.plants[1]?.plant).toBeNull();
     }
   });
 });

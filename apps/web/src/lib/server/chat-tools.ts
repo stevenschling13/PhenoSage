@@ -917,87 +917,170 @@ export async function executeChatTool(
             Date.now() - sinceDays * 24 * 60 * 60 * 1000,
           ).toISOString();
 
-          // Fan out the per-plant reads in parallel. Each plant gets:
-          //   - plant row (name, strain, grow_id)
-          //   - latest plant_analyses row
-          //   - event count in window
-          //   - observation count in window
-          //   - unresolved finding count in window
-          //   - open task count
-          // Promise.allSettled so one RLS denial or missing row degrades
-          // that plant's summary rather than failing the whole call.
-          const perPlant = await Promise.all(
-            args.plantIds.map(async (plantId) => {
-              const [
-                plantRes,
-                analysisRes,
-                eventCountRes,
-                observationCountRes,
-                findingCountRes,
-                taskCountRes,
-              ] = await Promise.allSettled([
-                supabase
-                  .from("plants")
-                  .select("id,grow_id,name,strain,batch_label,is_archived")
-                  .eq("id", plantId)
-                  .maybeSingle(),
-                supabase
-                  .from("plant_analyses")
-                  .select(
-                    "id,overall_health_score,summary,comparison_summary,analyzed_at,model_version",
-                  )
-                  .eq("plant_id", plantId)
-                  .order("analyzed_at", { ascending: false })
-                  .limit(1)
-                  .maybeSingle(),
-                supabase
-                  .from("grow_events")
-                  .select("id", { count: "exact", head: true })
-                  .eq("plant_id", plantId)
-                  .gte("occurred_at", since),
-                supabase
-                  .from("plant_observations")
-                  .select("id", { count: "exact", head: true })
-                  .eq("plant_id", plantId)
-                  .gte("observed_at", since),
-                supabase
-                  .from("plant_findings")
-                  .select("id", { count: "exact", head: true })
-                  .eq("plant_id", plantId)
-                  .is("resolved_at", null)
-                  .gte("created_at", since),
-                supabase
-                  .from("grow_tasks")
-                  .select("id", { count: "exact", head: true })
-                  .eq("plant_id", plantId)
-                  .in("status", ["open", "in_progress"]),
-              ]);
+          // Batched fan-in: previously this issued 6 queries PER PLANT
+          // (plant row, latest analysis, plus 4 aggregate counts). With
+          // the plantIds cap of 4 that was up to 24 round-trips. Six
+          // parallel queries with `.in("plant_id", plantIds)` collapse
+          // to a constant 6 round-trips regardless of how many plants
+          // the caller asked about. Counts that previously used
+          // `select("id", { count: 'exact', head: true })` are replaced
+          // with raw-row fetches (just `plant_id`) so the count can be
+          // partitioned per plant in memory — the window is capped at
+          // 90 days and the plant count at 4, so the row volume stays
+          // tiny (low thousands at most). Promise.allSettled is
+          // preserved so one RLS denial / missing table degrades that
+          // source rather than failing the whole call.
+          const [
+            plantsRes,
+            analysesRes,
+            eventsRes,
+            observationsRes,
+            findingsRes,
+            tasksRes,
+          ] = await Promise.allSettled([
+            supabase
+              .from("plants")
+              .select("id,grow_id,name,strain,batch_label,is_archived")
+              .in("id", args.plantIds),
+            // Order DESC + group-by-plant-id-in-JS gives "latest per
+            // plant" without needing a Postgres window function. The
+            // `.gte("analyzed_at", since)` bound serves two purposes:
+            //   1. Caps the fetched row volume to the configured
+            //      window, so the in-memory dedup stays cheap even
+            //      for plants with long analysis histories.
+            //   2. Aligns the surfaced result with the window
+            //      semantics — "compare these plants over the last N
+            //      days" shouldn't surface a year-old analysis. A
+            //      plant with no analysis in the window correctly
+            //      gets `latestAnalysis: null` (the LLM can then ask
+            //      the user to capture a fresh image).
+            supabase
+              .from("plant_analyses")
+              .select(
+                "id,plant_id,overall_health_score,summary,comparison_summary,analyzed_at,model_version",
+              )
+              .in("plant_id", args.plantIds)
+              .gte("analyzed_at", since)
+              .order("analyzed_at", { ascending: false }),
+            supabase
+              .from("grow_events")
+              .select("plant_id")
+              .in("plant_id", args.plantIds)
+              .gte("occurred_at", since),
+            supabase
+              .from("plant_observations")
+              .select("plant_id")
+              .in("plant_id", args.plantIds)
+              .gte("observed_at", since),
+            supabase
+              .from("plant_findings")
+              .select("plant_id")
+              .in("plant_id", args.plantIds)
+              .is("resolved_at", null)
+              .gte("created_at", since),
+            // Tasks are filtered by status ONLY — no `.gte(created_at,
+            // since)` here. An open task is still open regardless of
+            // when it was created; a 6-month-old "watch for spider
+            // mites" task is still actionable today. Filtering by
+            // creation date would silently drop long-running open
+            // tasks from the count, a real behaviour regression.
+            // This is intentionally different from the events /
+            // observations / findings dimensions, where "what
+            // happened recently" is the relevant slice.
+            supabase
+              .from("grow_tasks")
+              .select("plant_id")
+              .in("plant_id", args.plantIds)
+              .in("status", ["open", "in_progress"]),
+          ]);
 
-              const pickCount = (
-                r: PromiseSettledResult<{ count: number | null }>,
-              ): number =>
-                r.status === "fulfilled" ? (r.value.count ?? 0) : 0;
+          /** Unwrap a settled query into `data` rows, or `[]` on
+           * RLS / transient failure. Each source degrades independently
+           * — same contract as the previous per-plant variant. */
+          function rowsOf<T>(
+            settled: PromiseSettledResult<{
+              data: T[] | null;
+              error: { message: string } | null;
+            }>,
+          ): T[] {
+            if (settled.status !== "fulfilled") return [];
+            if (settled.value.error) return [];
+            return settled.value.data ?? [];
+          }
 
-              const plant =
-                plantRes.status === "fulfilled" ? plantRes.value.data : null;
-              const analysis =
-                analysisRes.status === "fulfilled"
-                  ? analysisRes.value.data
-                  : null;
+          type PlantRow = {
+            id: string;
+            grow_id: string;
+            name: string;
+            strain: string | null;
+            batch_label: string | null;
+            is_archived: boolean;
+          };
+          type AnalysisRow = {
+            id: string;
+            plant_id: string;
+            overall_health_score: number | null;
+            summary: string | null;
+            comparison_summary: string | null;
+            analyzed_at: string;
+            model_version: string | null;
+          };
 
-              return {
-                plantId,
-                plant,
-                latestAnalysis: analysis,
-                counts: {
-                  events: pickCount(eventCountRes),
-                  observations: pickCount(observationCountRes),
-                  unresolvedFindings: pickCount(findingCountRes),
-                  openTasks: pickCount(taskCountRes),
-                },
-              };
-            }),
+          const plantsById = new Map<string, PlantRow>();
+          for (const row of rowsOf<PlantRow>(plantsRes)) {
+            plantsById.set(row.id, row);
+          }
+
+          // Analyses came back ordered analyzed_at DESC; the FIRST
+          // entry per plant_id is therefore the latest. Skip
+          // subsequent rows so we surface exactly one per plant —
+          // identical to the previous per-plant `.limit(1)` shape.
+          const latestAnalysisByPlant = new Map<string, AnalysisRow>();
+          for (const row of rowsOf<AnalysisRow>(analysesRes)) {
+            if (!latestAnalysisByPlant.has(row.plant_id)) {
+              latestAnalysisByPlant.set(row.plant_id, row);
+            }
+          }
+
+          /** Bucket plant_id counts from a `{ plant_id }` row list. */
+          function countByPlant(
+            rows: { plant_id: string }[],
+          ): Map<string, number> {
+            const m = new Map<string, number>();
+            for (const row of rows) {
+              m.set(row.plant_id, (m.get(row.plant_id) ?? 0) + 1);
+            }
+            return m;
+          }
+
+          const eventCounts = countByPlant(
+            rowsOf<{ plant_id: string }>(eventsRes),
           );
+          const observationCounts = countByPlant(
+            rowsOf<{ plant_id: string }>(observationsRes),
+          );
+          const findingCounts = countByPlant(
+            rowsOf<{ plant_id: string }>(findingsRes),
+          );
+          const taskCounts = countByPlant(
+            rowsOf<{ plant_id: string }>(tasksRes),
+          );
+
+          // Preserve the inbound plantIds order so the caller's intent
+          // (which plant they want compared first / last) survives the
+          // batching. Plants that the lookup denied / didn't return
+          // surface as `plant: null`, same as the previous variant.
+          const perPlant = args.plantIds.map((plantId) => ({
+            plantId,
+            plant: plantsById.get(plantId) ?? null,
+            latestAnalysis: latestAnalysisByPlant.get(plantId) ?? null,
+            counts: {
+              events: eventCounts.get(plantId) ?? 0,
+              observations: observationCounts.get(plantId) ?? 0,
+              unresolvedFindings: findingCounts.get(plantId) ?? 0,
+              openTasks: taskCounts.get(plantId) ?? 0,
+            },
+          }));
 
           return {
             ok: true,
