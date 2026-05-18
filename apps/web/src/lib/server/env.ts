@@ -13,6 +13,14 @@
 type Rule = {
   name: string;
   required: boolean;
+  /**
+   * When set, this rule is also treated as `required` whenever
+   * `NEXT_PUBLIC_APP_ENV === "production"`. Used for variables that
+   * are optional in dev/preview (so contributors don't have to set
+   * them) but mandatory in prod (so the deploy fails fast on the
+   * platform health check rather than silently in user traffic).
+   */
+  requiredInProduction?: boolean;
   pattern?: RegExp;
   hint?: string;
 };
@@ -40,6 +48,19 @@ const SERVER_RULES: Rule[] = [
     hint: "AIza...  (from https://aistudio.google.com/app/apikey)",
   },
   { name: "NEXT_PUBLIC_APP_URL", required: true, pattern: /^https?:\/\// },
+  {
+    // Optional in dev/preview, REQUIRED in production. Without a DSN the
+    // app would deploy successfully but operate blind — no crash reports,
+    // no perf traces, no error-rate dashboards. The cost of letting
+    // production go dark is much higher than the cost of failing the
+    // deploy. Hint matches the public DSN shape Sentry issues
+    // (`https://<key>@<orgId>.ingest.sentry.io/<projectId>`).
+    name: "SENTRY_DSN",
+    required: false,
+    requiredInProduction: true,
+    pattern: /^https:\/\/[^@/]+@[^/]+\/[0-9]+$/,
+    hint: "https://<publicKey>@<orgId>.ingest.sentry.io/<projectId>",
+  },
 ];
 
 const PUBLIC_RULES: Rule[] = SERVER_RULES.filter((r) =>
@@ -54,11 +75,18 @@ export class EnvValidationError extends Error {
 }
 
 function validate(rules: Rule[], env: NodeJS.ProcessEnv): string[] {
+  // "production" gating is opt-in via the public APP_ENV var so that
+  // VERCEL_ENV / NODE_ENV quirks (Vercel preview deploys both have
+  // NODE_ENV=production at build time) can't accidentally trigger
+  // strict checks where they aren't intended.
+  const isProduction = env["NEXT_PUBLIC_APP_ENV"] === "production";
   const errors: string[] = [];
   for (const rule of rules) {
     const value = env[rule.name];
+    const effectivelyRequired =
+      rule.required || (isProduction && rule.requiredInProduction === true);
     if (!value) {
-      if (rule.required) {
+      if (effectivelyRequired) {
         errors.push(
           `${rule.name} is required${rule.hint ? ` (e.g. ${rule.hint})` : ""}`,
         );
