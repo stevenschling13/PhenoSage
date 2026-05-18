@@ -91,6 +91,75 @@ def test_assess_image_quality_rejects_empty_input() -> None:
 
 
 # ---------------------------------------------------------------------------
+# Magic-bytes pre-decode guard (Phase 5.2)
+#
+# These tests pin the defence-in-depth contract: bytes whose prefix doesn't
+# match a known image format never reach Pillow's parsers. Pillow / libjpeg
+# / libwebp have shipped parser CVEs in the past — cutting off non-image
+# payloads at the boundary keeps the attack surface narrow.
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    ("label", "payload"),
+    [
+        # A PDF labelled image/png in transit. Common mislabelling /
+        # attack-staging pattern: PDFs have a complex parser surface
+        # of their own and shouldn't be fed to an image decoder.
+        ("pdf", b"%PDF-1.7\n%abc\n"),
+        # ZIP archives (and the Office formats built on them).
+        ("zip", b"PK\x03\x04abcdefghijkl"),
+        # ELF binaries — would only appear in an active exploit
+        # attempt but worth proving we refuse them.
+        ("elf", b"\x7fELF\x02\x01\x01\x00\x00\x00\x00\x00"),
+        # Plain text mislabelled as image/png.
+        ("text", b"hello world this is not an image"),
+        # 11 bytes — below the 12-byte minimum the sniffer needs.
+        ("too_short", b"\xff\xd8\xff" + b"\x00" * 8),
+    ],
+)
+def test_assess_image_quality_rejects_non_image_magic_bytes(
+    label: str, payload: bytes
+) -> None:
+    """Pre-decode magic-bytes check refuses bytes that aren't a known image."""
+    _ = label  # kept in the parametrize label for diagnostic output
+    with pytest.raises(ImageQualityInconclusive) as exc_info:
+        image_quality.assess_image_quality(payload)
+    assert exc_info.value.reason == "image_decode_failed"
+
+
+def test_magic_bytes_accepts_jpeg_signature() -> None:
+    # The full image would still need to pass the other quality
+    # heuristics (size, luminance, edge variance) to reach the
+    # vision model — we only assert that the magic-bytes layer
+    # doesn't block a real JPEG prefix here. Pillow's decoder will
+    # legitimately raise UnidentifiedImageError / OSError on the
+    # truncated payload, which collapses to the same
+    # `image_decode_failed` reason; the test below confirms the
+    # signature itself is recognised by exercising the private
+    # helper directly so we're not coupled to Pillow's behaviour.
+    assert image_quality._looks_like_known_image(b"\xff\xd8\xff" + b"\x00" * 12)
+
+
+def test_magic_bytes_accepts_each_supported_format() -> None:
+    """Pin every format the upload route declares we accept."""
+    # JPEG SOI marker.
+    assert image_quality._looks_like_known_image(b"\xff\xd8\xff\xe0" + b"\x00" * 10)
+    # PNG fixed 8-byte signature.
+    assert image_quality._looks_like_known_image(
+        b"\x89PNG\r\n\x1a\n" + b"\x00" * 8
+    )
+    # WebP: RIFF + 4-byte length + WEBP.
+    assert image_quality._looks_like_known_image(b"RIFF\x00\x00\x00\x00WEBP")
+    # HEIC ftyp brands the upload route claims to accept. The 4-byte
+    # box-size prefix is whatever — Pillow validates that downstream.
+    for brand in (b"heic", b"heix", b"hevc", b"hevx", b"mif1", b"msf1"):
+        assert image_quality._looks_like_known_image(
+            b"\x00\x00\x00\x18ftyp" + brand
+        ), brand
+
+
+# ---------------------------------------------------------------------------
 # Size guard
 # ---------------------------------------------------------------------------
 
@@ -195,7 +264,10 @@ def test_assess_image_quality_rejects_decompression_bomb(
 
     We monkeypatch Image.open to raise the error rather than constructing a
     genuine bomb-sized image, which would be slow and might hit resource limits
-    in CI.
+    in CI. The payload prefix below is a valid PNG signature so it passes
+    the magic-bytes pre-decode guard and actually reaches the monkey-patched
+    ``Image.open`` — using arbitrary bytes here would short-circuit on the
+    signature check and never exercise the decompression-bomb path.
     """
     from PIL import Image as _PILImage
 
@@ -204,7 +276,8 @@ def test_assess_image_quality_rejects_decompression_bomb(
 
     monkeypatch.setattr(image_quality.Image, "open", _raise)
 
+    payload = b"\x89PNG\r\n\x1a\n" + b"fake-bytes"
     with pytest.raises(ImageQualityInconclusive) as exc_info:
-        image_quality.assess_image_quality(b"fake-image-bytes")
+        image_quality.assess_image_quality(payload)
     assert exc_info.value.reason == "image_too_large"
     assert exc_info.value.code == "IMAGE_QUALITY_INCONCLUSIVE"

@@ -1,21 +1,24 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { z, ZodError } from "zod";
 import type { NextRequest } from "next/server";
-import { parseJsonBody } from "../validate";
+import { DEFAULT_MAX_JSON_BYTES, parseJsonBody } from "../validate";
 
 const Schema = z.object({ foo: z.string().min(1) });
 
 function makeRequest({
   contentType,
+  contentLength,
   body,
   invalidJson,
 }: {
   contentType?: string | null;
+  contentLength?: string | null;
   body?: unknown;
   invalidJson?: boolean;
 }): NextRequest {
   const headers = new Headers();
   if (contentType != null) headers.set("content-type", contentType);
+  if (contentLength != null) headers.set("content-length", contentLength);
   return {
     headers,
     json: async () => {
@@ -109,5 +112,98 @@ describe("parseJsonBody", () => {
     );
     expect(r.ok).toBe(true);
     if (r.ok) expect(r.data).toEqual({ foo: "bar" });
+  });
+
+  // ─── Content-Length cap (Phase 5.3) ──────────────────────────────────────
+
+  it("returns 413 when declared content-length exceeds the default cap", async () => {
+    // 64 KiB default; declare 1 MB.
+    const req = makeRequest({
+      contentType: "application/json",
+      contentLength: String(1_000_000),
+      body: { foo: "bar" },
+    });
+    // Spy on the body reader to prove we short-circuited BEFORE
+    // reading. Without this assertion the test would still pass if
+    // the cap fired after json() ran — that defeats the purpose
+    // (memory pressure from parsing a huge body would already be
+    // applied).
+    const spy = vi.spyOn(req, "json");
+    const r = await parseJsonBody(req, Schema);
+    expect(r.ok).toBe(false);
+    if (!r.ok) {
+      expect(r.status).toBe(413);
+      expect(r.error).toMatch(/exceed/i);
+    }
+    expect(spy).not.toHaveBeenCalled();
+  });
+
+  it("respects an explicit maxBytes override (tighter than default)", async () => {
+    const req = makeRequest({
+      contentType: "application/json",
+      contentLength: "100",
+      body: { foo: "bar" },
+    });
+    const r = await parseJsonBody(req, Schema, { maxBytes: 64 });
+    expect(r.ok).toBe(false);
+    if (!r.ok) {
+      expect(r.status).toBe(413);
+      // Error message includes the configured cap so an operator
+      // grepping for the limit value sees the truth, not the
+      // default.
+      expect(r.error).toContain("64");
+    }
+  });
+
+  it("respects an explicit maxBytes override (looser than default)", async () => {
+    const req = makeRequest({
+      contentType: "application/json",
+      contentLength: String(DEFAULT_MAX_JSON_BYTES + 1),
+      body: { foo: "bar" },
+    });
+    // The default would reject; an explicit larger cap accepts.
+    const r = await parseJsonBody(req, Schema, {
+      maxBytes: DEFAULT_MAX_JSON_BYTES * 2,
+    });
+    expect(r.ok).toBe(true);
+  });
+
+  it("accepts a body whose content-length is exactly at the cap", async () => {
+    // Off-by-one regression seal: the cap is "must be <= maxBytes",
+    // not "must be < maxBytes". A request at exactly the limit
+    // passes.
+    const req = makeRequest({
+      contentType: "application/json",
+      contentLength: String(DEFAULT_MAX_JSON_BYTES),
+      body: { foo: "bar" },
+    });
+    const r = await parseJsonBody(req, Schema);
+    expect(r.ok).toBe(true);
+  });
+
+  it("accepts a body when content-length header is absent (chunked transfer)", async () => {
+    // Under chunked transfer encoding the client may omit
+    // content-length entirely. The cap is best-effort against the
+    // common "honest big JSON" case, not a hard guarantee — we
+    // accept and let the framework's own body-size limits take over.
+    const req = makeRequest({
+      contentType: "application/json",
+      body: { foo: "bar" },
+    });
+    const r = await parseJsonBody(req, Schema);
+    expect(r.ok).toBe(true);
+  });
+
+  it("accepts a body when content-length header is malformed", async () => {
+    // A non-numeric content-length is the client's bug, not an
+    // attack signature on its own. We log nothing, accept, and let
+    // the body parser reveal the real shape.
+    const req = makeRequest({
+      contentType: "application/json",
+      contentLength: "not-a-number",
+      body: { foo: "bar" },
+    });
+    const r = await parseJsonBody(req, Schema);
+    expect(r.ok).toBe(true);
   });
 });
