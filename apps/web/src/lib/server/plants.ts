@@ -334,11 +334,43 @@ export async function getLatestPlantAnalysis(
   return mapAnalysisFromRow(persisted, findings);
 }
 
-export async function getPlantTimeline(plantId: string) {
+/**
+ * Default per-source row cap. Conservative: the page shows the most
+ * recent events first and most users only ever look at the top of
+ * the list. 50 covers the high-frequency case (image-per-day grower
+ * over ~7 weeks) without ever shipping a multi-megabyte response.
+ */
+export const DEFAULT_TIMELINE_LIMIT = 50;
+
+/**
+ * Hard ceiling on the per-source row cap. Higher values are rejected
+ * at the route handler boundary so a runaway client can't request a
+ * 10k-row dump as a DOS / scraping vector. The cap is per source, so
+ * the merged response can carry up to 2× this many items.
+ */
+export const MAX_TIMELINE_LIMIT = 200;
+
+export async function getPlantTimeline(
+  plantId: string,
+  options: { limit?: number } = {},
+) {
   const context = await getAuthorizedPlantContext(plantId);
   if (!context) {
     return null;
   }
+
+  // Cap the per-source row count so a plant with thousands of
+  // historical entries never ships an unbounded JSON. We fetch one
+  // extra row beyond `limit` so the merged response can carry a
+  // `hasMore` flag without an extra COUNT round-trip — if the query
+  // returns `limit + 1` rows, there's at least one more page worth
+  // of data behind it.
+  const requested = options.limit ?? DEFAULT_TIMELINE_LIMIT;
+  const limit = Math.max(
+    1,
+    Math.min(MAX_TIMELINE_LIMIT, Math.floor(requested)),
+  );
+  const fetchSize = limit + 1;
 
   const db = getDbClient();
   // Run the four reads independently so a missing table, RLS denial, or
@@ -350,17 +382,24 @@ export async function getPlantTimeline(plantId: string) {
         .from("plant_images")
         .select("*")
         .eq("plant_id", context.plantId)
-        .order("created_at", { ascending: false }),
+        .order("created_at", { ascending: false })
+        .limit(fetchSize),
       db
         .from("plant_observations")
         .select("*")
         .eq("plant_id", context.plantId)
-        .order("observed_at", { ascending: false }),
+        .order("observed_at", { ascending: false })
+        .limit(fetchSize),
       db
         .from("plant_analyses")
         .select("*")
         .eq("plant_id", context.plantId)
-        .order("analyzed_at", { ascending: false }),
+        .order("analyzed_at", { ascending: false })
+        // Analyses are joined to images by image_id; we don't cap
+        // them independently because the in-memory map is keyed by
+        // the (capped) image set. Capping here would risk losing an
+        // analysis row whose image IS in the visible page.
+        .limit(fetchSize),
       db
         .from("plant_findings")
         .select("*")
@@ -411,6 +450,21 @@ export async function getPlantTimeline(plantId: string) {
     findingsSettled,
   );
 
+  // Drop the sentinel "+1" row before returning so the visible item
+  // count never exceeds the requested limit. `hasMore` reflects
+  // whether ANY source overflowed — the UI can use that to render a
+  // "load more" affordance even though we don't yet support actual
+  // cursor pagination across heterogeneous sources.
+  const imagesOverflowed = imageRows.length > limit;
+  const observationsOverflowed = observationRows.length > limit;
+  const cappedImageRows = imagesOverflowed
+    ? imageRows.slice(0, limit)
+    : imageRows;
+  const cappedObservationRows = observationsOverflowed
+    ? observationRows.slice(0, limit)
+    : observationRows;
+  const hasMore = imagesOverflowed || observationsOverflowed;
+
   const findingsByImage = new Map<string, AnalysisFinding[]>();
   for (const row of findingRows) {
     if (!row.image_id) {
@@ -429,7 +483,7 @@ export async function getPlantTimeline(plantId: string) {
     );
   }
 
-  const imageItems = imageRows.map((row) => ({
+  const imageItems = cappedImageRows.map((row) => ({
     type: "image" as const,
     id: row.id,
     createdAt: row.created_at,
@@ -441,7 +495,7 @@ export async function getPlantTimeline(plantId: string) {
     findings: findingsByImage.get(row.id) ?? [],
   }));
 
-  const observationItems = observationRows.map((row) => ({
+  const observationItems = cappedObservationRows.map((row) => ({
     type: "observation" as const,
     id: row.id,
     observedAt: row.observed_at,
@@ -465,6 +519,8 @@ export async function getPlantTimeline(plantId: string) {
   return {
     plantId: context.plantId,
     items,
+    limit,
+    hasMore,
   };
 }
 

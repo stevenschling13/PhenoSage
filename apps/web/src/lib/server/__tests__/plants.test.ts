@@ -56,13 +56,28 @@ const PLANT_CONTEXT = {
 };
 
 function makeSelectOrderResult(data: unknown[] | null, message?: string) {
-  const order = vi.fn().mockResolvedValue({
+  // `order(...)` returns a thenable that is ALSO callable with
+  // `.limit(N)` — supabase-js builders are both awaitable and
+  // chainable, and the production code may or may not append a
+  // `.limit()` after `.order()` (the timeline helper caps images /
+  // observations / analyses but NOT findings). The fixture mirrors
+  // that shape so both call styles work against the same mock.
+  const result = {
     data,
     error: message ? { message } : null,
-  });
+  };
+  const limit = vi.fn().mockResolvedValue(result);
+  const orderReturn: PromiseLike<typeof result> & {
+    limit: typeof limit;
+  } = {
+    limit,
+    then: (onFulfilled?, onRejected?) =>
+      Promise.resolve(result).then(onFulfilled, onRejected),
+  } as PromiseLike<typeof result> & { limit: typeof limit };
+  const order = vi.fn(() => orderReturn);
   const eq = vi.fn(() => ({ order }));
   const select = vi.fn(() => ({ eq }));
-  return { eq, order, select };
+  return { eq, limit, order, select };
 }
 
 function makeImagesLimitResult(data: unknown[] | null, message?: string) {
@@ -629,6 +644,96 @@ describe("plants server helpers", () => {
     });
   });
 
+  // ───────────────────────────────────────────────────────────────────────
+  // getPlantTimeline pagination — Phase 3.3
+  // ───────────────────────────────────────────────────────────────────────
+
+  it("getPlantTimeline applies the default limit when none is supplied", async () => {
+    const helpers = {
+      plant_images: makeSelectOrderResult([]),
+      plant_observations: makeSelectOrderResult([]),
+      plant_analyses: makeSelectOrderResult([]),
+      plant_findings: makeSelectOrderResult([]),
+    };
+    const from = vi.fn(
+      (table: keyof typeof helpers) =>
+        ({ select: helpers[table].select }) as { select: unknown },
+    );
+    getDbClient.mockReturnValue({ from });
+
+    const timeline = await getPlantTimeline("plant-1");
+    expect(timeline?.limit).toBe(50); // DEFAULT_TIMELINE_LIMIT
+    expect(timeline?.hasMore).toBe(false);
+    // Each capped source asked for limit+1 (= 51) so we can detect
+    // overflow without a separate count query.
+    expect(helpers.plant_images.limit).toHaveBeenCalledWith(51);
+    expect(helpers.plant_observations.limit).toHaveBeenCalledWith(51);
+    expect(helpers.plant_analyses.limit).toHaveBeenCalledWith(51);
+    // Findings are NOT capped — they're joined to images by image_id
+    // and capping them independently would risk losing a finding
+    // whose image IS visible.
+    expect(helpers.plant_findings.limit).not.toHaveBeenCalled();
+  });
+
+  it("getPlantTimeline clamps limit to [1, MAX_TIMELINE_LIMIT]", async () => {
+    const helpers = {
+      plant_images: makeSelectOrderResult([]),
+      plant_observations: makeSelectOrderResult([]),
+      plant_analyses: makeSelectOrderResult([]),
+      plant_findings: makeSelectOrderResult([]),
+    };
+    const from = vi.fn(
+      (table: keyof typeof helpers) =>
+        ({ select: helpers[table].select }) as { select: unknown },
+    );
+    getDbClient.mockReturnValue({ from });
+
+    // Way over the ceiling — clamp to 200.
+    const overshoot = await getPlantTimeline("plant-1", { limit: 9999 });
+    expect(overshoot?.limit).toBe(200);
+    expect(helpers.plant_images.limit).toHaveBeenLastCalledWith(201);
+
+    // Zero / negative — clamp to the floor (1).
+    await getPlantTimeline("plant-1", { limit: 0 });
+    expect(helpers.plant_images.limit).toHaveBeenLastCalledWith(2);
+    await getPlantTimeline("plant-1", { limit: -5 });
+    expect(helpers.plant_images.limit).toHaveBeenLastCalledWith(2);
+  });
+
+  it("getPlantTimeline reports hasMore when any capped source overflows", async () => {
+    // Return limit+1 image rows so the sentinel "+1" trips the
+    // overflow flag — and the visible items must be capped at
+    // `limit`, not `limit+1`.
+    const oversizeImages = Array.from({ length: 3 }, (_, i) => ({
+      created_at: `2026-05-0${i + 1}T00:00:00Z`,
+      grow_id: "grow-1",
+      id: `image-${i + 1}`,
+      notes: null,
+      plant_id: "plant-1",
+      source: "upload",
+      storage_path: `plant-1/image-${i + 1}.jpg`,
+      taken_at: `2026-05-0${i + 1}T00:00:00Z`,
+      user_id: "user-1",
+    }));
+    const helpers = {
+      plant_images: makeSelectOrderResult(oversizeImages),
+      plant_observations: makeSelectOrderResult([]),
+      plant_analyses: makeSelectOrderResult([]),
+      plant_findings: makeSelectOrderResult([]),
+    };
+    const from = vi.fn(
+      (table: keyof typeof helpers) =>
+        ({ select: helpers[table].select }) as { select: unknown },
+    );
+    getDbClient.mockReturnValue({ from });
+
+    // limit=2 → fetchSize=3 → 3 rows returned → overflowed → cap at 2.
+    const timeline = await getPlantTimeline("plant-1", { limit: 2 });
+    expect(timeline?.items).toHaveLength(2);
+    expect(timeline?.hasMore).toBe(true);
+    expect(timeline?.limit).toBe(2);
+  });
+
   it("combines image and observation timeline items in user-visible order", async () => {
     const tableResults: Record<string, unknown[]> = {
       plant_analyses: [
@@ -783,9 +888,15 @@ describe("plants server helpers", () => {
       ],
       plant_observations: null,
     };
-    const rejectedOrder = vi
-      .fn()
-      .mockRejectedValue(new Error("plant images timeout"));
+    // The rejected-source branch: `.order(...)` returns an object
+    // that exposes a `.limit(...)` which rejects. Production code
+    // calls `.order(...).limit(...)` since the Phase 3.3 cap, so
+    // returning a plain rejected promise from `order` would fail
+    // with "limit is not a function" before the rejection ever
+    // reached `Promise.allSettled`. Mock the chain shape exactly.
+    const rejectedError = new Error("plant images timeout");
+    const rejectedLimit = vi.fn().mockRejectedValue(rejectedError);
+    const rejectedOrder = vi.fn(() => ({ limit: rejectedLimit }));
     const observations = makeSelectOrderResult(null, "observations denied");
     const from = vi.fn((table: string) => {
       if (table === "plant_images") {
@@ -806,7 +917,15 @@ describe("plants server helpers", () => {
 
     const timeline = await getPlantTimeline("plant-1");
 
-    expect(timeline).toEqual({ plantId: "plant-1", items: [] });
+    // After the Phase 3.3 cap, the timeline also reports `limit` and
+    // `hasMore`. Failed sources contribute zero items, so `hasMore`
+    // is false here — there's nothing to be "more" of.
+    expect(timeline).toEqual({
+      plantId: "plant-1",
+      items: [],
+      limit: 50,
+      hasMore: false,
+    });
     expect(logServerEvent).toHaveBeenCalledWith(
       "error",
       "plant timeline query rejected",
