@@ -57,4 +57,49 @@ describe("env validation", () => {
       expect((err as EnvValidationError).violations).toHaveLength(2);
     }
   });
+
+  // ───────────────────────────────────────────────────────────────────────
+  // Conditional production rules (Phase 2.1)
+  // ───────────────────────────────────────────────────────────────────────
+
+  it("does NOT require SENTRY_DSN outside production", () => {
+    // Dev / preview deploys (or the empty default) should be unaffected
+    // so contributors don't need to mint a Sentry project to run the
+    // app locally.
+    const env = baseValidEnv();
+    delete env["SENTRY_DSN"];
+    delete env["NEXT_PUBLIC_APP_ENV"];
+    expect(getServerEnvErrors(env)).toEqual([]);
+
+    env["NEXT_PUBLIC_APP_ENV"] = "preview";
+    expect(getServerEnvErrors(env)).toEqual([]);
+  });
+
+  it("requires SENTRY_DSN when NEXT_PUBLIC_APP_ENV=production", () => {
+    // The cost of letting prod go dark (no error tracking, no perf
+    // traces) is much higher than the cost of failing the deploy. This
+    // test pins that "fail-the-deploy-fast" contract so a future
+    // refactor doesn't quietly relax it.
+    const env = baseValidEnv();
+    delete env["SENTRY_DSN"];
+    env["NEXT_PUBLIC_APP_ENV"] = "production";
+    const errs = getServerEnvErrors(env);
+    expect(errs.some((e) => e.includes("SENTRY_DSN"))).toBe(true);
+  });
+
+  it("validates SENTRY_DSN shape when supplied (any environment)", () => {
+    // A typo'd or pasted-wrong DSN must surface immediately rather
+    // than fail silently inside Sentry's SDK init.
+    const env = baseValidEnv();
+    env["SENTRY_DSN"] = "definitely-not-a-dsn";
+    const errs = getServerEnvErrors(env);
+    expect(errs.some((e) => e.includes("SENTRY_DSN"))).toBe(true);
+  });
+
+  it("accepts a well-formed SENTRY_DSN in production", () => {
+    const env = baseValidEnv();
+    env["NEXT_PUBLIC_APP_ENV"] = "production";
+    env["SENTRY_DSN"] = "https://abc123@o4504.ingest.sentry.io/12345";
+    expect(getServerEnvErrors(env)).toEqual([]);
+  });
 });
