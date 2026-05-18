@@ -1,6 +1,10 @@
 import "server-only";
 import type { NextRequest } from "next/server";
-import { getOrCreateRequestId, logServerEvent } from "./request-id";
+import {
+  getOrCreateRequestId,
+  logServerEvent,
+  REQUEST_ID_HEADER,
+} from "./request-id";
 
 /**
  * Higher-order wrapper that emits a structured `request completed` log
@@ -48,35 +52,69 @@ export type LoggedHandler<Args extends unknown[]> = (
   ..._rest: Args
 ) => Promise<Response>;
 
+/**
+ * Map an HTTP status to the structured log level we want to surface
+ * it at. The bands let dashboards / alerts filter sanely:
+ *
+ *   - `5xx` → `error` so the on-call pipeline pages on real outages.
+ *   - `4xx` → `warn` because client errors are worth flagging
+ *     (spike of 401s → leaked-token suspicion, spike of 422s → bad
+ *     client deploy) but should not page.
+ *   - everything else → `info`.
+ *
+ * `else → info` includes 2xx and 3xx; 1xx isn't a real terminal
+ * response shape our routes produce so it's not special-cased.
+ */
+function levelForStatus(status: number): "error" | "warn" | "info" {
+  if (status >= 500) return "error";
+  if (status >= 400) return "warn";
+  return "info";
+}
+
 export function withRouteLogging<Args extends unknown[]>(
   routeName: string,
   handler: LoggedHandler<Args>,
 ): LoggedHandler<Args> {
   return async (req, ...rest) => {
-    const requestId = getOrCreateRequestId(req);
-    const started = Date.now();
+    // `performance.now()` is monotonic and sub-ms; immune to NTP
+    // adjustments mid-request that could make `Date.now()` go
+    // backwards and yield a negative durationMs.
+    const started = performance.now();
     const method = req.method;
     try {
       const response = await handler(req, ...rest);
-      logServerEvent("info", "request completed", {
+      // Prefer the requestId the handler actually attached to the
+      // response. When the inbound request has no `x-request-id`
+      // header, both the wrapper and the handler would otherwise
+      // mint INDEPENDENT UUIDs via `getOrCreateRequestId`, and the
+      // log line would carry a different id than the client sees.
+      // Reading the header back closes that correlation gap.
+      const requestId =
+        response.headers.get(REQUEST_ID_HEADER) || getOrCreateRequestId(req);
+      logServerEvent(levelForStatus(response.status), "request completed", {
         route: routeName,
         method,
         status: response.status,
         requestId,
-        durationMs: Date.now() - started,
+        durationMs: Math.round(performance.now() - started),
       });
       return response;
     } catch (err) {
-      // Log the failure envelope first, then re-throw so the
-      // framework's error handling (default 500, Sentry capture if
-      // wired) still runs unchanged. We deliberately don't catch
-      // here — the wrapper's only job is to record the envelope.
+      // On uncaught throw we can't read the response headers (none
+      // exist yet), so we fall back to deriving the requestId from
+      // the inbound header alone. This means a request that arrived
+      // WITHOUT `x-request-id` and threw before producing a response
+      // will get a fresh UUID here that doesn't match any subsequent
+      // handler-side log. Memoising `getOrCreateRequestId` per
+      // request (e.g. via a WeakMap keyed on the NextRequest) is a
+      // worthwhile follow-up — out of scope here.
+      const requestId = getOrCreateRequestId(req);
       logServerEvent("error", "request failed", {
         route: routeName,
         method,
         status: 500,
         requestId,
-        durationMs: Date.now() - started,
+        durationMs: Math.round(performance.now() - started),
         error: err instanceof Error ? err.message : "unknown_error",
       });
       throw err;
