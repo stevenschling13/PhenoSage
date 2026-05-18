@@ -139,11 +139,13 @@ export default async function PlantPage({ params }: Props) {
       score: item.analysis!.overallHealthScore,
     }));
 
+  // The initial signed URLs rendered into the page have a 10-minute
+  // TTL; if the user keeps the tab open past that window the embedded
+  // `<SignedImage>` falls back to `/api/uploads/refresh` to re-sign
+  // exactly once on the first 403, keyed by `(plantId, imageId)`.
   let comparisonImages: {
-    afterImage: string;
-    afterLabel: string;
-    beforeImage: string;
-    beforeLabel: string;
+    after: { imageId: string; signedUrl: string; label: string };
+    before: { imageId: string; signedUrl: string; label: string };
   } | null = null;
 
   if (latestImage && previousImage) {
@@ -156,10 +158,16 @@ export default async function PlantPage({ params }: Props) {
 
     if (latestSigned?.signedUrl && previousSigned?.signedUrl) {
       comparisonImages = {
-        afterImage: latestSigned.signedUrl,
-        afterLabel: formatDateTime(latestImage.takenAt),
-        beforeImage: previousSigned.signedUrl,
-        beforeLabel: formatDateTime(previousImage.takenAt),
+        after: {
+          imageId: latestImage.id,
+          signedUrl: latestSigned.signedUrl,
+          label: formatDateTime(latestImage.takenAt),
+        },
+        before: {
+          imageId: previousImage.id,
+          signedUrl: previousSigned.signedUrl,
+          label: formatDateTime(previousImage.takenAt),
+        },
       };
     }
   }
@@ -443,10 +451,9 @@ export default async function PlantPage({ params }: Props) {
             <CardContent>
               {comparisonImages ? (
                 <ImageComparison
-                  afterImage={comparisonImages.afterImage}
-                  afterLabel={comparisonImages.afterLabel}
-                  beforeImage={comparisonImages.beforeImage}
-                  beforeLabel={comparisonImages.beforeLabel}
+                  after={comparisonImages.after}
+                  before={comparisonImages.before}
+                  plantId={plantId}
                 />
               ) : (
                 <EmptyState
