@@ -42,19 +42,33 @@ export type AuthRateLimitResult =
   | { ok: false; message: string; retryAfterSeconds: number };
 
 /**
- * Read the client IP from the incoming request headers, preferring the
- * left-most `x-forwarded-for` entry (the original client when Vercel /
- * a reverse proxy is in front). Falls back to `x-real-ip`, then a
- * sentinel string so we still bucket missing-IP requests together
- * instead of skipping the limit entirely.
+ * Read the client IP from the incoming request headers.
+ *
+ * `x-real-ip` is checked first because Vercel's edge sets it by
+ * **replacement** — any client-supplied value is overwritten with the
+ * actual TCP source IP, making it spoof-resistant. `x-forwarded-for` is
+ * the documented fallback for non-Vercel environments and for the
+ * unusual case where a deploy sits behind an additional proxy that
+ * strips `x-real-ip`; we take the left-most entry there (the original
+ * client when a proxy chain is in play). A final sentinel groups
+ * missing-IP requests under one bucket instead of skipping the limit.
+ *
+ * Note: the wider repo's `rateLimitKeyFromRequest` (rate-limit.ts) uses
+ * `x-forwarded-for` first for historical reasons on non-auth surfaces.
+ * Auth is intentionally stricter — the cost of a spoofed bypass on a
+ * sign-in attempt is much higher than the cost of a missed bucket on
+ * a read endpoint, so we accept the small code divergence here.
  */
 async function readClientIp(): Promise<string> {
   const h = await headers();
+  const real = h.get("x-real-ip");
+  if (real) {
+    const trimmed = real.trim();
+    if (trimmed) return trimmed;
+  }
   const forwarded = h.get("x-forwarded-for") ?? "";
   const first = forwarded.split(",")[0]?.trim();
   if (first) return first;
-  const real = h.get("x-real-ip");
-  if (real) return real.trim();
   return "no-ip";
 }
 
@@ -76,6 +90,16 @@ function emailKeyDigest(email: string): string {
 function secondsUntil(resetAt: number): number {
   const delta = Math.ceil((resetAt - Date.now()) / 1000);
   return delta > 0 ? delta : 1;
+}
+
+/** Render a `Too many attempts` message with a correct singular/plural. */
+function blockMessage(retrySeconds: number): string {
+  const unit = retrySeconds === 1 ? "second" : "seconds";
+  // Phrased identically for both IP-block and email-block dimensions so
+  // an attacker can't infer which bucket they tripped from response
+  // text, and so the wording is correct for any attemptKind (sign-in,
+  // sign-up, magic link) — "attempts" instead of "sign-in attempts".
+  return `Too many attempts. Please wait ${retrySeconds} ${unit} and try again.`;
 }
 
 export async function applyAuthRateLimit(opts: {
@@ -103,15 +127,17 @@ export async function applyAuthRateLimit(opts: {
     });
     return {
       ok: false,
-      message:
-        "Too many sign-in attempts from this network. " +
-        `Please wait ${retry} second${retry === 1 ? "" : "s"} and try again.`,
+      message: blockMessage(retry),
       retryAfterSeconds: retry,
     };
   }
 
+  // Email key is scoped by attemptKind so an attacker spraying
+  // /sign-up or /otp with a victim's email cannot drain that victim's
+  // /sign-in bucket and lock them out. Each kind keeps its own
+  // independent 5-per-15-min budget per email.
   const emailResult: RateLimitResult = await rateLimit({
-    key: `auth:em:${emailDigest}`,
+    key: `auth:em:${opts.attemptKind}:${emailDigest}`,
     limit: EMAIL_LIMIT,
     windowMs: AUTH_WINDOW_MS,
     failClosed: true,
@@ -125,11 +151,7 @@ export async function applyAuthRateLimit(opts: {
     });
     return {
       ok: false,
-      // Phrase the message identically to the IP variant so an attacker
-      // can't distinguish IP-blocked from email-blocked through the UX.
-      message:
-        "Too many sign-in attempts. " +
-        `Please wait ${retry} second${retry === 1 ? "" : "s"} and try again.`,
+      message: blockMessage(retry),
       retryAfterSeconds: retry,
     };
   }
