@@ -194,6 +194,33 @@ describe("withRouteLogging", () => {
     expect(fields).not.toHaveProperty("parentSpanId");
   });
 
+  it("applies Cache-Control: private, no-store by default", async () => {
+    // Authed routes wrapped by withRouteLogging carry session-scoped
+    // data; the wrapper supplies the baseline cache header so each
+    // route doesn't have to remember it. A regression here would let
+    // intermediate proxies hold onto per-user responses.
+    const handler = vi.fn(async () => NextResponse.json({ ok: true }));
+    const wrapped = withRouteLogging("/api/test", handler);
+    const res = await wrapped(req("GET"));
+    expect(res.headers.get("cache-control")).toBe("private, no-store");
+  });
+
+  it("does not overwrite a Cache-Control header the handler already set", async () => {
+    // The streaming chat route uses `no-store, no-transform` because
+    // a transforming proxy would corrupt SSE framing. The wrapper
+    // must not clobber that more-specific policy.
+    const handler = vi.fn(
+      async () =>
+        new Response("ok", {
+          status: 200,
+          headers: { "cache-control": "no-store, no-transform" },
+        }),
+    );
+    const wrapped = withRouteLogging("/api/stream", handler);
+    const res = await wrapped(req("GET"));
+    expect(res.headers.get("cache-control")).toBe("no-store, no-transform");
+  });
+
   it("emits the same trace context on the error-log path", async () => {
     // A thrown handler should still produce a log line tagged with
     // the right trace id, otherwise a crashing request becomes an

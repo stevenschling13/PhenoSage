@@ -50,4 +50,17 @@ describe("GET /api/health", () => {
     const body = await GET().json();
     expect(body.commit).toBe("unknown");
   });
+
+  it("emits a public Cache-Control header with a stale-while-revalidate window", async () => {
+    // `/api/health` is a liveness signal with no per-user data, so a
+    // short shared cache is desirable — a burst of monitor hits and
+    // edge-network probes shouldn't each fan out to a fresh function
+    // invocation. The exact numbers (60s + 5min SWR) match the
+    // policy in the route's source; if you bump them there, update
+    // here too.
+    const res = GET();
+    expect(res.headers.get("cache-control")).toBe(
+      "public, max-age=60, stale-while-revalidate=300",
+    );
+  });
 });
