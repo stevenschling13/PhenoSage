@@ -187,4 +187,90 @@ describe("useActionWithRecovery", () => {
     expect(result.current.state.status).toBe("idle");
     expect(result.current.state.message).toBeUndefined();
   });
+
+  it("surfaces a generic message when a non-Error value is thrown", async () => {
+    const { result } = renderHook(() => useActionWithRecovery<R>(INITIAL));
+    const action = vi.fn().mockRejectedValue("string failure");
+
+    await act(async () => {
+      await expect(result.current.run(action)).rejects.toBeDefined();
+    });
+
+    expect(result.current.state.status).toBe("error");
+    expect(result.current.state.message).toMatch(/something went wrong/i);
+  });
+
+  it("stale-run guard: a later run() supersedes an in-flight earlier one", async () => {
+    const { result } = renderHook(() => useActionWithRecovery<R>(INITIAL));
+
+    let resolveFirst!: (_value: R) => void;
+    const firstAction = vi.fn(
+      () =>
+        new Promise<R>((resolve) => {
+          resolveFirst = resolve;
+        }),
+    );
+    const secondAction = vi
+      .fn()
+      .mockResolvedValue({ status: "success", message: "second" } as R);
+
+    let firstPromise!: Promise<R>;
+    act(() => {
+      firstPromise = result.current.run(firstAction);
+    });
+
+    await act(async () => {
+      await result.current.run(secondAction);
+    });
+    expect(result.current.state.message).toBe("second");
+
+    // Resolving the first (stale) call must NOT regress state.
+    await act(async () => {
+      resolveFirst({ status: "error", message: "first (stale)" } as R);
+      await firstPromise;
+    });
+
+    expect(result.current.state.message).toBe("second");
+  });
+
+  it("reset() bumps the run id so an in-flight call's result is ignored", async () => {
+    const { result } = renderHook(() => useActionWithRecovery<R>(INITIAL));
+
+    let resolvePending!: (_value: R) => void;
+    const pendingAction = vi.fn(
+      () =>
+        new Promise<R>((resolve) => {
+          resolvePending = resolve;
+        }),
+    );
+
+    let runPromise!: Promise<R>;
+    act(() => {
+      runPromise = result.current.run(pendingAction);
+    });
+    expect(result.current.isPending).toBe(true);
+
+    // Reset BEFORE the action settles. This is the contract reset() owes
+    // callers — if the user navigates away or dismisses the form mid-
+    // flight, the late result must not overwrite the freshly-reset state.
+    act(() => {
+      result.current.reset();
+    });
+    expect(result.current.state.status).toBe("idle");
+    expect(result.current.isPending).toBe(false);
+
+    await act(async () => {
+      resolvePending({
+        status: "success",
+        redirectTo: "/somewhere",
+        message: "late winner",
+      } as R);
+      await runPromise;
+    });
+
+    // State stayed at the post-reset idle shape; router.push was suppressed.
+    expect(result.current.state.status).toBe("idle");
+    expect(result.current.state.message).toBeUndefined();
+    expect(push).not.toHaveBeenCalled();
+  });
 });
