@@ -11,6 +11,7 @@ import {
   isNextNotFoundError,
   isNextRedirectError,
 } from "@/lib/server/auth-errors";
+import { applyAuthRateLimit } from "@/lib/server/auth-rate-limit";
 
 export type AuthFormState = {
   ok: boolean;
@@ -85,6 +86,14 @@ export async function signInAction(
     return fail(email, AUTH_MISCONFIGURED);
   }
 
+  // Fail-closed rate limit BEFORE we call Supabase. Two reasons to do it
+  // here and not after: (1) Supabase's own throttling is generous enough
+  // that a credential-stuffing burst can still get many tries through in
+  // 15 minutes; (2) consuming a Supabase API call per attacker request
+  // wastes our project quota.
+  const rl = await applyAuthRateLimit({ email, attemptKind: "sign-in" });
+  if (!rl.ok) return fail(email, rl.message);
+
   return runAuth(email, async () => {
     const supabase = await createSupabaseServerClient();
     const { error } = await supabase.auth.signInWithPassword({
@@ -108,6 +117,12 @@ export async function signUpAction(
     console.error("[auth] missing env:", getAuthConfigViolations().join(", "));
     return fail(email, AUTH_MISCONFIGURED);
   }
+
+  // Sign-up is also rate-limited: an attacker spraying signups can
+  // exhaust mailer quota and pollute the user table even when the
+  // account never gets confirmed.
+  const rl = await applyAuthRateLimit({ email, attemptKind: "sign-up" });
+  if (!rl.ok) return fail(email, rl.message);
 
   return runAuth(email, async () => {
     const supabase = await createSupabaseServerClient();
@@ -139,6 +154,12 @@ export async function signInWithOtpAction(
     console.error("[auth] missing env:", getAuthConfigViolations().join(", "));
     return fail(email, AUTH_MISCONFIGURED);
   }
+
+  // Magic-link requests are the most aggressive abuse vector here: an
+  // attacker can spam emails without any password guess, so it must
+  // share the same fail-closed envelope as sign-in / sign-up.
+  const rl = await applyAuthRateLimit({ email, attemptKind: "otp" });
+  if (!rl.ok) return fail(email, rl.message);
 
   return runAuth(email, async () => {
     const supabase = await createSupabaseServerClient();

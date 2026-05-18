@@ -159,6 +159,23 @@ describe("rateLimit (distributed backend)", () => {
     expect(r.remaining).toBe(5);
   });
 
+  it("fails closed when failClosed=true and Upstash throws", async () => {
+    // Auth surfaces opt into fail-closed: a Redis outage must not
+    // become an unbounded brute-force window. Returning ok:false is
+    // intentional even though the in-memory fallback would have
+    // allowed the request — the caller is asserting that "no rate
+    // limit" is worse than "temporary denial".
+    limitMock.mockRejectedValue(new Error("ECONNRESET"));
+    const r = await rateLimit({
+      key: "u:1",
+      limit: 5,
+      windowMs: 60_000,
+      failClosed: true,
+    });
+    expect(r.ok).toBe(false);
+    expect(r.remaining).toBe(0);
+  });
+
   it("does not call Upstash when the test `now` override is supplied", async () => {
     const r = await rateLimit({
       key: "u:1",

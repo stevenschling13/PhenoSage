@@ -22,6 +22,18 @@ const mocks = vi.hoisted(() => {
     e.digest = `NEXT_REDIRECT;replace;${path};307;`;
     throw e;
   });
+  // Default to allowing every attempt so the existing test cases below
+  // continue to exercise the supabase-call path. The "blocks when rate
+  // limit denies" cases below override the resolved value explicitly.
+  // The signature is typed as the union of the production return so
+  // mockResolvedValueOnce({ ok: false, ... }) typechecks alongside the
+  // default `{ ok: true }`.
+  type AuthRateLimitResult =
+    | { ok: true }
+    | { ok: false; message: string; retryAfterSeconds: number };
+  const applyAuthRateLimit = vi.fn<() => Promise<AuthRateLimitResult>>(
+    async () => ({ ok: true }),
+  );
   return {
     signInWithPassword,
     signUp,
@@ -29,6 +41,7 @@ const mocks = vi.hoisted(() => {
     signOut,
     createSupabaseServerClient,
     redirect,
+    applyAuthRateLimit,
   };
 });
 
@@ -39,12 +52,16 @@ const {
   signOut,
   createSupabaseServerClient,
   redirect,
+  applyAuthRateLimit,
 } = mocks;
 
 vi.mock("@/lib/server/auth", () => ({
   createSupabaseServerClient: mocks.createSupabaseServerClient,
 }));
 vi.mock("next/navigation", () => ({ redirect: mocks.redirect }));
+vi.mock("@/lib/server/auth-rate-limit", () => ({
+  applyAuthRateLimit: mocks.applyAuthRateLimit,
+}));
 
 import {
   AUTH_INVALID_CREDENTIALS,
@@ -84,6 +101,8 @@ beforeEach(() => {
   signOut.mockReset();
   createSupabaseServerClient.mockClear();
   redirect.mockClear();
+  applyAuthRateLimit.mockClear();
+  applyAuthRateLimit.mockResolvedValue({ ok: true });
   consoleErrorSpy = vi
     .spyOn(console, "error")
     .mockImplementation(() => {}) as unknown as Mock;
@@ -187,6 +206,34 @@ describe("signInAction", () => {
     });
     expect(redirect).toHaveBeenCalledWith("/dashboard");
   });
+
+  it("blocks the attempt when the auth rate limit denies it", async () => {
+    // The rate-limit layer is the first line of defence against
+    // credential stuffing — it must run before any Supabase call so
+    // that an attacker can't burn through our project quota or learn
+    // anything from Supabase's response timing.
+    withGoodEnv();
+    applyAuthRateLimit.mockResolvedValueOnce({
+      ok: false,
+      message:
+        "Too many sign-in attempts from this network. " +
+        "Please wait 42 seconds and try again.",
+      retryAfterSeconds: 42,
+    });
+    const result = await signInAction(
+      null,
+      fd({ email: "a@b.co", password: "longenough" }),
+    );
+    expect(result?.ok).toBe(false);
+    expect(result?.message).toMatch(/wait 42 second/i);
+    expect(applyAuthRateLimit).toHaveBeenCalledWith({
+      email: "a@b.co",
+      attemptKind: "sign-in",
+    });
+    // Supabase must NOT be reached when the limit denies.
+    expect(signInWithPassword).not.toHaveBeenCalled();
+    expect(createSupabaseServerClient).not.toHaveBeenCalled();
+  });
 });
 
 describe("signUpAction", () => {
@@ -225,6 +272,26 @@ describe("signUpAction", () => {
     );
     expect(result?.message).toBe(AUTH_SERVICE_UNREACHABLE);
   });
+
+  it("blocks the attempt when the auth rate limit denies it", async () => {
+    withGoodEnv();
+    applyAuthRateLimit.mockResolvedValueOnce({
+      ok: false,
+      message:
+        "Too many sign-in attempts. Please wait 30 seconds and try again.",
+      retryAfterSeconds: 30,
+    });
+    const result = await signUpAction(
+      null,
+      fd({ email: "a@b.co", password: "longenough" }),
+    );
+    expect(result?.ok).toBe(false);
+    expect(applyAuthRateLimit).toHaveBeenCalledWith({
+      email: "a@b.co",
+      attemptKind: "sign-up",
+    });
+    expect(signUp).not.toHaveBeenCalled();
+  });
 });
 
 describe("signInWithOtpAction", () => {
@@ -240,6 +307,25 @@ describe("signInWithOtpAction", () => {
     withGoodEnv();
     const result = await signInWithOtpAction(null, fd({ email: "x" }));
     expect(result?.ok).toBe(false);
+    expect(signInWithOtp).not.toHaveBeenCalled();
+  });
+
+  it("blocks the attempt when the auth rate limit denies it", async () => {
+    // Magic-link is the most aggressive abuse vector — no password
+    // guess needed — so the rate-limit must run before any mailer call.
+    withGoodEnv();
+    applyAuthRateLimit.mockResolvedValueOnce({
+      ok: false,
+      message:
+        "Too many sign-in attempts. Please wait 60 seconds and try again.",
+      retryAfterSeconds: 60,
+    });
+    const result = await signInWithOtpAction(null, fd({ email: "a@b.co" }));
+    expect(result?.ok).toBe(false);
+    expect(applyAuthRateLimit).toHaveBeenCalledWith({
+      email: "a@b.co",
+      attemptKind: "otp",
+    });
     expect(signInWithOtp).not.toHaveBeenCalled();
   });
 });

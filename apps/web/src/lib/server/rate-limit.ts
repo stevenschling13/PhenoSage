@@ -35,6 +35,18 @@ export interface RateLimitOptions {
   key: string;
   limit: number;
   windowMs: number;
+  /**
+   * When `true` AND the distributed (Upstash) backend is configured AND its
+   * call fails, return `{ ok: false }` instead of fail-open. Use for
+   * sensitive surfaces like authentication where the cost of letting a
+   * brute-force attempt through during a Redis outage outweighs the cost
+   * of temporarily refusing service to legitimate users.
+   *
+   * Has no effect when the in-memory fallback is in use — those calls
+   * cannot fail in the same way. Defaults to `false` to preserve the
+   * existing fail-open behaviour for read paths.
+   */
+  failClosed?: boolean;
   /** Test-only override for `Date.now()`. Only applied to the in-memory backend. */
   now?: number;
 }
@@ -183,7 +195,28 @@ export async function rateLimit(
       resetAt: res.reset,
     };
   } catch (err) {
-    // Fail open. Losing a Redis call must not take down user-facing routes.
+    if (opts.failClosed) {
+      // Auth-style call sites opt into fail-closed: a Redis outage must
+      // not become a brute-force-amplification window. The legitimate-user
+      // impact is bounded because the failure surface is small (auth
+      // attempts only) and Redis outages are typically short.
+      logServerEvent(
+        "warn",
+        "rate-limit distributed call failed; failing closed",
+        {
+          key: opts.key,
+          error: err instanceof Error ? err.message : "unknown_error",
+        },
+      );
+      return {
+        ok: false,
+        remaining: 0,
+        resetAt: Date.now() + opts.windowMs,
+      };
+    }
+    // Default: fail open. Losing a Redis call must not take down user-facing
+    // routes that the audit deemed safe to keep available under degraded
+    // enforcement.
     logServerEvent("warn", "rate-limit distributed call failed; failing open", {
       key: opts.key,
       error: err instanceof Error ? err.message : "unknown_error",
