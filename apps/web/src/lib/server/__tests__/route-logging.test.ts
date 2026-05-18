@@ -163,4 +163,51 @@ describe("withRouteLogging", () => {
     expect(handler).toHaveBeenCalledWith(expect.any(NextRequest), ctx);
     expect(await res.json()).toEqual({ id: "abc" });
   });
+
+  it("continues an inbound W3C trace: preserves traceId, fresh spanId, parentSpanId = inbound", async () => {
+    // End-to-end trace correlation depends on the wrapper carrying
+    // the inbound trace id through into its log lines so a single
+    // trace grep returns both apps/web and apps/analysis output.
+    const handler = vi.fn(async () => NextResponse.json({ ok: true }));
+    const wrapped = withRouteLogging("/api/test", handler);
+    const inbound = "00-0af7651916cd43dd8448eb211c80319c-b7ad6b7169203331-01";
+    await wrapped(req("GET", { traceparent: inbound }));
+    const fields = logServerEvent.mock.calls[0]?.[2] as Record<string, unknown>;
+    expect(fields["traceId"]).toBe("0af7651916cd43dd8448eb211c80319c");
+    expect(fields["parentSpanId"]).toBe("b7ad6b7169203331");
+    // The spanId is NEWLY minted; it must not equal the inbound
+    // parent span — that would collapse the trace tree.
+    expect(fields["spanId"]).not.toBe("b7ad6b7169203331");
+    expect(fields["spanId"]).toMatch(/^[0-9a-f]{16}$/);
+  });
+
+  it("originates a fresh trace and omits parentSpanId when no traceparent inbound", async () => {
+    // Trace-originator hops shouldn't emit a parentSpanId field at
+    // all — including a placeholder would mislead on-call into
+    // grepping for a non-existent upstream span.
+    const handler = vi.fn(async () => NextResponse.json({ ok: true }));
+    const wrapped = withRouteLogging("/api/test", handler);
+    await wrapped(req("GET"));
+    const fields = logServerEvent.mock.calls[0]?.[2] as Record<string, unknown>;
+    expect(fields["traceId"]).toMatch(/^[0-9a-f]{32}$/);
+    expect(fields["spanId"]).toMatch(/^[0-9a-f]{16}$/);
+    expect(fields).not.toHaveProperty("parentSpanId");
+  });
+
+  it("emits the same trace context on the error-log path", async () => {
+    // A thrown handler should still produce a log line tagged with
+    // the right trace id, otherwise a crashing request becomes an
+    // orphan in the trace tree.
+    const handler = vi.fn(async () => {
+      throw new Error("boom");
+    });
+    const wrapped = withRouteLogging("/api/test", handler);
+    const inbound = "00-0af7651916cd43dd8448eb211c80319c-b7ad6b7169203331-01";
+    await expect(
+      wrapped(req("POST", { traceparent: inbound })),
+    ).rejects.toBeTruthy();
+    const fields = logServerEvent.mock.calls[0]?.[2] as Record<string, unknown>;
+    expect(fields["traceId"]).toBe("0af7651916cd43dd8448eb211c80319c");
+    expect(fields["parentSpanId"]).toBe("b7ad6b7169203331");
+  });
 });
