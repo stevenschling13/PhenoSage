@@ -273,12 +273,10 @@ describe("plants server helpers", () => {
 
   it("signPlantImageUrl returns a fresh URL with an iso expiresAt on success", async () => {
     vi.spyOn(Date, "now").mockReturnValue(1_800_000_000_000);
-    const maybeSingle = vi
-      .fn()
-      .mockResolvedValue({
-        data: { storage_path: "plant-1/x.jpg" },
-        error: null,
-      });
+    const maybeSingle = vi.fn().mockResolvedValue({
+      data: { storage_path: "plant-1/x.jpg" },
+      error: null,
+    });
     const eqPlant = vi.fn(() => ({ maybeSingle }));
     const eqId = vi.fn(() => ({ eq: eqPlant }));
     const select = vi.fn(() => ({ eq: eqId }));
@@ -333,6 +331,39 @@ describe("plants server helpers", () => {
       expiresInSeconds: 999_999, // above ceiling
     });
     expect(createSignedUrl).toHaveBeenLastCalledWith("p/x", 3600);
+  });
+
+  it("signPlantImageUrl falls back to default TTL when expiresInSeconds is NaN", async () => {
+    // Defense-in-depth: if a caller upstream of the route handler
+    // (e.g. a future internal cron) hands the helper a NaN, the
+    // clamp must NOT propagate it into `new Date(Date.now() + NaN)`,
+    // which would throw `RangeError: Invalid time value`.
+    const maybeSingle = vi
+      .fn()
+      .mockResolvedValue({ data: { storage_path: "p/x" }, error: null });
+    const select = vi.fn(() => ({
+      eq: vi.fn(() => ({ eq: vi.fn(() => ({ maybeSingle })) })),
+    }));
+    getDbClient.mockReturnValue({ from: vi.fn(() => ({ select })) });
+    const createSignedUrl = vi.fn().mockResolvedValue({
+      data: { signedUrl: "https://example.com/x" },
+      error: null,
+    });
+    getStorageClient.mockReturnValue({
+      from: vi.fn(() => ({ createSignedUrl })),
+    });
+
+    const result = await signPlantImageUrl({
+      plantId: "plant-1",
+      imageId: "image-1",
+      expiresInSeconds: Number.NaN,
+    });
+    // Default of 600s lands inside the [60, 3600] clamp, so that's
+    // the TTL we should see — and crucially, `expiresAt` parses as a
+    // real Date, not "Invalid Date".
+    expect(createSignedUrl).toHaveBeenLastCalledWith("p/x", 600);
+    expect(result).not.toBeNull();
+    expect(Number.isNaN(Date.parse(result!.expiresAt))).toBe(false);
   });
 
   it("signPlantImageUrl throws when Supabase returns a sign error", async () => {

@@ -72,6 +72,19 @@ export async function POST(request: NextRequest) {
       requestId,
     );
   }
+  // `request.json()` succeeds for primitives (`null`, numbers, strings)
+  // and arrays — none of which carry the named fields we expect. Reject
+  // them here so the field-access checks below can rely on `body` being
+  // an actual object, instead of throwing a TypeError → unhandled 500.
+  if (!body || typeof body !== "object" || Array.isArray(body)) {
+    return attachRequestId(
+      NextResponse.json(
+        { error: "Request body must be a JSON object.", requestId },
+        { status: 400 },
+      ),
+      requestId,
+    );
+  }
 
   // Narrow validation here (instead of zod) keeps the route handler
   // self-contained and matches the style of the sibling /sign route.

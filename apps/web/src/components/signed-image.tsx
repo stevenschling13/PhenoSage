@@ -108,7 +108,12 @@ export function SignedImage({
       return;
     }
     refreshedRef.current = true;
-    const result = await refreshFn({ plantId, imageId });
+    // `.catch(() => null)` guarantees a refreshFn that throws — a
+    // test seam that synchronously rejects, a network error not
+    // already caught by `defaultRefresh` — never escapes this async
+    // event handler as an unhandled rejection. A thrown error and a
+    // null return funnel through the same fallback path.
+    const result = await refreshFn({ plantId, imageId }).catch(() => null);
     if (!result) {
       setFailed(true);
       onPermanentFailure?.("initial-and-refresh-failed");

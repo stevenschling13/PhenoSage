@@ -69,6 +69,35 @@ describe("SignedImage", () => {
     });
   });
 
+  it("treats a throwing refreshFn as a refresh failure (no unhandled rejection)", async () => {
+    // `handleError` is async and wired to an event handler, so an
+    // unhandled rejection from `refreshFn` would bubble to the
+    // browser's window.onunhandledrejection (and Sentry, etc).
+    // Wrapping with `.catch(() => null)` funnels the throw through
+    // the same fallback path as a null return.
+    const refreshFn = vi.fn().mockRejectedValue(new Error("network down"));
+    const onPermanentFailure = vi.fn();
+    render(
+      <SignedImage
+        plantId="p1"
+        imageId="i1"
+        initialSrc="https://example.com/a.png?token=expired"
+        alt="leaf"
+        refreshFn={refreshFn}
+        fallback={<span data-testid="placeholder">image unavailable</span>}
+        onPermanentFailure={onPermanentFailure}
+      />,
+    );
+
+    const img = screen.getByAltText("leaf") as HTMLImageElement;
+    fireEvent.error(img);
+
+    await screen.findByTestId("placeholder");
+    expect(onPermanentFailure).toHaveBeenCalledWith(
+      "initial-and-refresh-failed",
+    );
+  });
+
   it("renders the fallback when both the initial URL and the refresh fail", async () => {
     const refreshFn = vi.fn().mockResolvedValue(null);
     const onPermanentFailure = vi.fn();

@@ -84,6 +84,31 @@ describe("POST /api/uploads/refresh", () => {
   });
 
   it.each([
+    ["null", "null"],
+    ["a top-level number", "42"],
+    ["a top-level string", '"hi"'],
+    ["a top-level array", "[1,2,3]"],
+  ])(
+    "returns 400 (not a TypeError 500) when the body is %s",
+    async (_label, raw) => {
+      // request.json() succeeds for any valid JSON value — primitives
+      // and arrays included — but only an object can carry our named
+      // fields. Without the shape guard, body.plantId would throw on
+      // null and the route would return an unhandled 500.
+      getServerSession.mockResolvedValue(SESSION_OK);
+      const req = new NextRequest("http://localhost/api/uploads/refresh", {
+        method: "POST",
+        body: raw,
+        headers: { "content-type": "application/json" },
+      });
+      const res = await POST(req);
+      expect(res.status).toBe(400);
+      expect((await res.json()).error).toMatch(/JSON object/);
+      expect(signPlantImageUrl).not.toHaveBeenCalled();
+    },
+  );
+
+  it.each([
     ["plantId", { imageId: "i1" }],
     ["imageId", { plantId: "p1" }],
   ])("returns 400 when %s is missing", async (_field, body) => {

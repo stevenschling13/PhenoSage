@@ -251,8 +251,17 @@ export async function signPlantImageUrl(params: {
   // Clamp the TTL so a misbehaving client can't request a year-long
   // signed URL. 60s minimum prevents thrashing if a client retries on
   // every error.
+  //
+  // Defense-in-depth: the route handler already filters non-finite
+  // input, but the helper guards itself against `NaN` / `Infinity`
+  // anyway. A NaN here would propagate through the clamp and then
+  // explode at `new Date(Date.now() + NaN).toISOString()` with
+  // `RangeError: Invalid time value`, taking down the whole request.
   const requested = params.expiresInSeconds ?? 600;
-  const expiresIn = Math.max(60, Math.min(3600, Math.floor(requested)));
+  const safeRequested = Number.isFinite(requested)
+    ? Math.floor(requested)
+    : 600;
+  const expiresIn = Math.max(60, Math.min(3600, safeRequested));
 
   const storage = getStorageClient().from("plant-images");
   const { data, error } = await storage.createSignedUrl(
