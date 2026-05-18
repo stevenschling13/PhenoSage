@@ -8,12 +8,22 @@ import {
   withResilience,
   type ResilienceOptions,
 } from "./resilience";
+import { TRACEPARENT_HEADER } from "./trace-context";
 
 interface ProxyOptions {
   endpoint: string;
   method?: "GET" | "POST";
   body?: unknown;
   requestId?: string;
+  /**
+   * W3C `traceparent` value to forward to the analysis service so a
+   * single trace id grep-correlates web logs with analysis logs
+   * end-to-end. When omitted the call still works — the analysis
+   * service will start a fresh trace on its side — but the two
+   * sides won't share a trace id. Route handlers obtain this from
+   * `withRouteLogging`'s trace context (or `traceContextFromRequest`).
+   */
+  traceparent?: string;
   /**
    * Override the default 30s upstream timeout. The browser-facing route
    * handler shouldn't be left hanging on a stuck Railway service —
@@ -99,6 +109,7 @@ export async function callAnalysisService<T = unknown>(
     method = "GET",
     body,
     requestId,
+    traceparent,
     timeoutMs = configuredTimeoutMs || DEFAULT_TIMEOUT_MS,
     resilience,
   } = options;
@@ -117,15 +128,23 @@ export async function callAnalysisService<T = unknown>(
     return await breaker.run(() =>
       withResilience<T>(
         async (_attempt, signal) => {
+          const headers = withRequestIdHeader(
+            {
+              "Content-Type": "application/json",
+              Authorization: `Bearer ${apiKey}`,
+            },
+            effectiveRequestId,
+          );
+          // Forward W3C `traceparent` so the analysis service can
+          // continue the trace on its side. We pass the value
+          // through verbatim — the route handler is the span owner
+          // and built the header; we're just on the wire here.
+          if (traceparent) {
+            headers.set(TRACEPARENT_HEADER, traceparent);
+          }
           const init: RequestInit = {
             method,
-            headers: withRequestIdHeader(
-              {
-                "Content-Type": "application/json",
-                Authorization: `Bearer ${apiKey}`,
-              },
-              effectiveRequestId,
-            ),
+            headers,
             signal,
           };
           if (body !== undefined) {
@@ -341,6 +360,12 @@ export async function analyzeImage(params: {
   previousImageId?: string;
   previousStoragePath?: string;
   requestId?: string;
+  /**
+   * W3C `traceparent` for the analysis-service hop. Pass the value
+   * the calling route built via `traceContextFromRequest(request)`
+   * so the two services share a trace id in their logs.
+   */
+  traceparent?: string;
 }): Promise<AnalysisResponse> {
   const growContext: Record<string, unknown> = {
     grow_id: params.growContext.growId,
@@ -382,6 +407,7 @@ export async function analyzeImage(params: {
     method: "POST",
     body,
     ...(params.requestId ? { requestId: params.requestId } : {}),
+    ...(params.traceparent ? { traceparent: params.traceparent } : {}),
     // POST /analyze is safe to retry: the persistence layer in
     // `runAndPersistPlantAnalysis` upserts on `image_id` (uniqueness
     // enforced by `plant_analyses.image_id UNIQUE` in migration 004) and

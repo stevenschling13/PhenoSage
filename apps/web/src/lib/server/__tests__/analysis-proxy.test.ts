@@ -48,6 +48,24 @@ describe("analysis-proxy", () => {
     expect(new Headers(init.headers).get("Authorization")).toBe(
       "Bearer test-key",
     );
+    // Default call without explicit traceparent: don't smuggle one
+    // onto the wire — the downstream service will start a fresh
+    // trace. Forwarding a blank or generated traceparent here would
+    // collapse traceless calls into a single phantom trace id.
+    expect(new Headers(init.headers).get("traceparent")).toBeNull();
+  });
+
+  it("forwards an explicit traceparent on outbound calls", async () => {
+    // The route handler builds the trace context once (the wrapper)
+    // and threads its `traceparent` through to the proxy so the
+    // analysis service shares the same trace id in its logs. This
+    // is the join key for end-to-end correlation across the two
+    // services.
+    mockOk({ ok: true });
+    const trace = "00-0af7651916cd43dd8448eb211c80319c-b7ad6b7169203331-01";
+    await callAnalysisService({ endpoint: "/status", traceparent: trace });
+    const [, init] = fetchSpy.mock.calls[0] as [string, RequestInit];
+    expect(new Headers(init.headers).get("traceparent")).toBe(trace);
   });
 
   it("serializes the body on POST", async () => {

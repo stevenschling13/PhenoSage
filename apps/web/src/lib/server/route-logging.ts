@@ -5,6 +5,7 @@ import {
   logServerEvent,
   REQUEST_ID_HEADER,
 } from "./request-id";
+import { traceContextFromRequest } from "./trace-context";
 
 /**
  * Higher-order wrapper that emits a structured `request completed` log
@@ -81,6 +82,13 @@ export function withRouteLogging<Args extends unknown[]>(
     // backwards and yield a negative durationMs.
     const started = performance.now();
     const method = req.method;
+    // Build the trace context once at the route boundary. The same
+    // (traceId, spanId, parentSpanId) is then emitted in both the
+    // completion log and the failure log, so a single request always
+    // grep-matches the same trace identifier across every line we
+    // produce. parentSpanId is null when this route is the trace
+    // originator (no upstream traceparent header).
+    const trace = traceContextFromRequest(req);
     try {
       const response = await handler(req, ...rest);
       // Prefer the requestId the handler actually attached to the
@@ -96,6 +104,9 @@ export function withRouteLogging<Args extends unknown[]>(
         method,
         status: response.status,
         requestId,
+        traceId: trace.traceId,
+        spanId: trace.spanId,
+        ...(trace.parentSpanId ? { parentSpanId: trace.parentSpanId } : {}),
         durationMs: Math.round(performance.now() - started),
       });
       return response;
@@ -114,6 +125,9 @@ export function withRouteLogging<Args extends unknown[]>(
         method,
         status: 500,
         requestId,
+        traceId: trace.traceId,
+        spanId: trace.spanId,
+        ...(trace.parentSpanId ? { parentSpanId: trace.parentSpanId } : {}),
         durationMs: Math.round(performance.now() - started),
         error: err instanceof Error ? err.message : "unknown_error",
       });
