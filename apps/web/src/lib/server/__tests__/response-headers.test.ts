@@ -72,4 +72,36 @@ describe("publicCache", () => {
     publicCache(r, { maxAgeSeconds: 30 });
     expect(r.headers.get("cache-control")).toBe("public, max-age=30");
   });
+
+  it("clamps a negative max-age to 0 (RFC 9111 delta-seconds is unsigned)", () => {
+    // Without the clamp, `Math.floor(-10)` would survive into the
+    // header and emit an invalid `max-age=-10`. Cheap guard:
+    // `Math.max(0, ...)` after the floor.
+    const r = new Response(null, { status: 200 });
+    publicCache(r, { maxAgeSeconds: -10 });
+    expect(r.headers.get("cache-control")).toBe("public, max-age=0");
+  });
+
+  it("omits stale-while-revalidate when a fractional value floors to zero", () => {
+    // Regression: previously the `> 0` check on the raw input let
+    // 0.5 slip through, and then `Math.floor(0.5) === 0` produced
+    // `stale-while-revalidate=0` — contradicting the "omit when
+    // zero" contract pinned by the test above. Floor first, then
+    // check.
+    const r = new Response(null, { status: 200 });
+    publicCache(r, {
+      maxAgeSeconds: 60,
+      staleWhileRevalidateSeconds: 0.5,
+    });
+    expect(r.headers.get("cache-control")).toBe("public, max-age=60");
+  });
+
+  it("clamps a negative stale-while-revalidate to omission", () => {
+    const r = new Response(null, { status: 200 });
+    publicCache(r, {
+      maxAgeSeconds: 60,
+      staleWhileRevalidateSeconds: -5,
+    });
+    expect(r.headers.get("cache-control")).toBe("public, max-age=60");
+  });
 });

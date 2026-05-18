@@ -52,14 +52,21 @@ export function publicCache<T extends Response>(
   response: T,
   options: PublicCacheOptions,
 ): T {
-  const parts = [`public`, `max-age=${Math.floor(options.maxAgeSeconds)}`];
-  if (
-    options.staleWhileRevalidateSeconds !== undefined &&
-    options.staleWhileRevalidateSeconds > 0
-  ) {
-    parts.push(
-      `stale-while-revalidate=${Math.floor(options.staleWhileRevalidateSeconds)}`,
-    );
+  // RFC 9111 §1.2.2 requires `delta-seconds` to be a non-negative
+  // integer. Floor first, then clamp at zero so a caller that hands
+  // us a negative or fractional value can never produce an invalid
+  // header.
+  const maxAge = Math.max(0, Math.floor(options.maxAgeSeconds));
+  const parts = [`public`, `max-age=${maxAge}`];
+  if (options.staleWhileRevalidateSeconds !== undefined) {
+    // Same floor-then-clamp dance, then drop the field entirely if
+    // it rounds to zero — `stale-while-revalidate=0` is a no-op
+    // contractually, and emitting it would contradict the omit-when-
+    // zero behaviour the tests pin.
+    const swr = Math.max(0, Math.floor(options.staleWhileRevalidateSeconds));
+    if (swr > 0) {
+      parts.push(`stale-while-revalidate=${swr}`);
+    }
   }
   // Public-cache callers ARE asserting that the response is safe to
   // share, so we overwrite any prior Cache-Control header — the
