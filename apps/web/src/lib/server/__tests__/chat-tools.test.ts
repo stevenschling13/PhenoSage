@@ -2643,7 +2643,7 @@ describe("chat-tools — compare_plants", () => {
     // The shape below encodes the same outcome the old `count: 7`
     // mocks did, but in the new contract: 5 events for p-1, 2 for
     // p-2 → totals match {7 events visible across both plants}.
-    const { client } = makeTableRouterMock({
+    const { client, calls } = makeTableRouterMock({
       plants: {
         data: [
           { id: "p-1", name: "Mother", strain: "NL" },
@@ -2738,6 +2738,23 @@ describe("chat-tools — compare_plants", () => {
       // p-2 had no analyses → null, NOT the older p-1 row.
       expect(data.plants[1]?.latestAnalysis).toBeNull();
     }
+
+    // Window-filter regression seals: a future refactor that drops
+    // either of these `.gte(...)` chains would silently bring back
+    // the perf regression (analyses) or break the dimension's
+    // window semantics (events / observations / findings). Tasks
+    // are intentionally NOT date-filtered — see the comment in
+    // chat-tools.ts — so we assert the inverse for that table.
+    const analysisGte = calls["plant_analyses"]?.find(
+      (c) => c.method === "gte" && c.args[0] === "analyzed_at",
+    );
+    expect(analysisGte).toBeDefined();
+    const eventsGte = calls["grow_events"]?.find(
+      (c) => c.method === "gte" && c.args[0] === "occurred_at",
+    );
+    expect(eventsGte).toBeDefined();
+    const tasksGte = calls["grow_tasks"]?.find((c) => c.method === "gte");
+    expect(tasksGte).toBeUndefined();
   });
 
   it("issues a constant 6 round-trips regardless of plant count (no N+1)", async () => {

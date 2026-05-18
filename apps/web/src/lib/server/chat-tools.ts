@@ -943,16 +943,24 @@ export async function executeChatTool(
               .select("id,grow_id,name,strain,batch_label,is_archived")
               .in("id", args.plantIds),
             // Order DESC + group-by-plant-id-in-JS gives "latest per
-            // plant" without needing a Postgres window function. We
-            // accept fetching up to N analyses per plant in the
-            // window (cheap because there's usually one per image and
-            // we cap the window) to avoid an RPC for now.
+            // plant" without needing a Postgres window function. The
+            // `.gte("analyzed_at", since)` bound serves two purposes:
+            //   1. Caps the fetched row volume to the configured
+            //      window, so the in-memory dedup stays cheap even
+            //      for plants with long analysis histories.
+            //   2. Aligns the surfaced result with the window
+            //      semantics — "compare these plants over the last N
+            //      days" shouldn't surface a year-old analysis. A
+            //      plant with no analysis in the window correctly
+            //      gets `latestAnalysis: null` (the LLM can then ask
+            //      the user to capture a fresh image).
             supabase
               .from("plant_analyses")
               .select(
                 "id,plant_id,overall_health_score,summary,comparison_summary,analyzed_at,model_version",
               )
               .in("plant_id", args.plantIds)
+              .gte("analyzed_at", since)
               .order("analyzed_at", { ascending: false }),
             supabase
               .from("grow_events")
@@ -970,6 +978,15 @@ export async function executeChatTool(
               .in("plant_id", args.plantIds)
               .is("resolved_at", null)
               .gte("created_at", since),
+            // Tasks are filtered by status ONLY — no `.gte(created_at,
+            // since)` here. An open task is still open regardless of
+            // when it was created; a 6-month-old "watch for spider
+            // mites" task is still actionable today. Filtering by
+            // creation date would silently drop long-running open
+            // tasks from the count, a real behaviour regression.
+            // This is intentionally different from the events /
+            // observations / findings dimensions, where "what
+            // happened recently" is the relevant slice.
             supabase
               .from("grow_tasks")
               .select("plant_id")
