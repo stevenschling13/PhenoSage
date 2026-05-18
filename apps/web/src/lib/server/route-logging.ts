@@ -5,6 +5,7 @@ import {
   logServerEvent,
   REQUEST_ID_HEADER,
 } from "./request-id";
+import { noStore } from "./response-headers";
 import { traceContextFromRequest } from "./trace-context";
 
 /**
@@ -91,6 +92,15 @@ export function withRouteLogging<Args extends unknown[]>(
     const trace = traceContextFromRequest(req);
     try {
       const response = await handler(req, ...rest);
+      // Apply the default Cache-Control for authed API responses. The
+      // wrapped routes are all session-scoped today (analyze, upload
+      // sign, upload refresh), so `private, no-store` is the correct
+      // baseline — it prevents intermediate proxies and shared caches
+      // from holding onto per-user data. `noStore` is a no-op when
+      // the handler already set its own Cache-Control (e.g. the
+      // streaming chat route opts into `no-store, no-transform`), so
+      // routes that need a different policy keep control of it.
+      noStore(response);
       // Prefer the requestId the handler actually attached to the
       // response. When the inbound request has no `x-request-id`
       // header, both the wrapper and the handler would otherwise
