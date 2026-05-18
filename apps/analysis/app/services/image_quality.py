@@ -76,16 +76,23 @@ def _looks_like_known_image(image_bytes: bytes) -> bool:
     """
     if len(image_bytes) < 12:
         return False
-    if image_bytes[:3] == b"\xff\xd8\xff":  # JPEG SOI
+    # Use `startswith(prefix, offset)` rather than slice comparison so
+    # each check avoids allocating a temporary bytes object — minor
+    # CPU win and a clearer expression of intent ("does the prefix
+    # match here?").
+    if image_bytes.startswith(b"\xff\xd8\xff"):  # JPEG SOI
         return True
-    if image_bytes[:8] == b"\x89PNG\r\n\x1a\n":  # PNG
+    if image_bytes.startswith(b"\x89PNG\r\n\x1a\n"):  # PNG
         return True
-    if image_bytes[:4] == b"RIFF" and image_bytes[8:12] == b"WEBP":
+    if image_bytes.startswith(b"RIFF") and image_bytes.startswith(b"WEBP", 8):
         return True
     # HEIC / HEIF: `ftyp` box marker followed by a 4-byte brand at
     # offset 8. We don't bother validating the box length field — a
     # malformed length would still trip Pillow's decoder downstream.
-    if image_bytes[4:8] == b"ftyp" and image_bytes[8:12] in {
+    # The set membership on the brand keeps slicing because there's
+    # no "startswith one of these prefixes" primitive — six chained
+    # startswith calls would be noisier than the slice.
+    if image_bytes.startswith(b"ftyp", 4) and image_bytes[8:12] in {
         b"heic",
         b"heix",
         b"hevc",
