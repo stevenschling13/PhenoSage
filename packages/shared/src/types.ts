@@ -201,6 +201,26 @@ export interface ImageComparisonResult {
   requestId?: string;
 }
 
+// Capture coach (`AI Capture Coach` from the executive-summary PDFs).
+// Mirrors `app.errors.IMAGE_QUALITY_REASONS` on the analysis side — keep
+// the two in sync or the UI will fall back to a generic message.
+export type PreflightReason =
+  | "image_decode_failed"
+  | "image_too_large"
+  | "image_too_small"
+  | "too_dark"
+  | "too_bright"
+  | "too_blurry";
+
+export interface ImagePreflightResult {
+  plantId: string;
+  imageId: string;
+  ok: boolean;
+  reason: PreflightReason | null;
+  hint: string;
+  requestId?: string;
+}
+
 // GrowEvent
 export type EventType =
   | "water"

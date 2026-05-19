@@ -178,3 +178,38 @@ class CompareResponse(BaseModel):
     is_fallback: bool = False
     fallback_reason: str | None = None
     request_id: str | None = None
+
+
+class PreflightRequest(BaseModel):
+    """Request body for POST /preflight.
+
+    Carries the storage path of an already-uploaded image so the service
+    can fetch it via the same service-role channel that ``/analyze`` uses.
+    The image is never re-uploaded over the public Internet.
+    """
+
+    plant_id: str
+    image_id: str
+    storage_path: str
+
+    @field_validator("storage_path")
+    @classmethod
+    def _check_storage_path(cls, value: str) -> str:
+        return _validate_storage_path(value)
+
+
+class PreflightResponse(BaseModel):
+    """Structured outcome of the non-destructive capture-quality check.
+
+    ``ok`` true means the image is fit to be sent to the vision model.
+    ``reason`` mirrors :data:`app.errors.IMAGE_QUALITY_REASONS` when ``ok``
+    is false; ``hint`` is a short, user-facing string the UI surfaces
+    above the upload button.
+    """
+
+    plant_id: str
+    image_id: str
+    ok: bool
+    reason: str | None = None
+    hint: str
+    request_id: str | None = None
