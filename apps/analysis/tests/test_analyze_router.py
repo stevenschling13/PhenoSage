@@ -23,8 +23,11 @@ from app.models.analysis import (
     AnalysisFinding,
     AnalyzeRequest,
     AnalyzeResponse,
+    CompareRequest,
+    CompareResponse,
     FindingCategory,
     FindingSeverity,
+    UniformityDelta,
 )
 from app.routers import analyze as analyze_router_module
 
@@ -173,3 +176,92 @@ async def test_router_500s_when_run_analysis_raises(
         )
 
     assert response.status_code == 500
+
+
+def _valid_compare_body(**overrides: object) -> dict[str, object]:
+    body: dict[str, object] = {
+        "plant_id": "plant-xyz",
+        "image_id_current": "img-current",
+        "storage_path_current": "plants/plant-xyz/img-current.jpg",
+        "image_id_previous": "img-previous",
+        "storage_path_previous": "plants/plant-xyz/img-previous.jpg",
+        "grow_context": {
+            "grow_id": "grow-1",
+            "strain": "Blue Dream",
+            "stage": "flower",
+        },
+    }
+    body.update(overrides)
+    return body
+
+
+@pytest.mark.asyncio
+async def test_compare_router_serializes_response(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    captured: dict[str, CompareRequest] = {}
+
+    async def fake_compare(request: CompareRequest) -> CompareResponse:
+        captured["request"] = request
+        return CompareResponse(
+            plant_id=request.plant_id,
+            image_id_current=request.image_id_current,
+            image_id_previous=request.image_id_previous,
+            summary="Visible flower development in the upper canopy.",
+            bullets=[
+                "New flower sites in the top third of the canopy.",
+                "Leaves a touch darker than the prior capture.",
+            ],
+            uniformity_delta=UniformityDelta.improved,
+            confidence=0.78,
+            analyzed_at=datetime(2026, 5, 19, 0, 0, 0, tzinfo=UTC),
+            model_version="gpt-4o-test-1.0",
+            analysis_mode="model",
+            is_fallback=False,
+        )
+
+    monkeypatch.setattr(analyze_router_module, "compare_images", fake_compare)
+
+    async with AsyncClient(
+        transport=ASGITransport(app=app), base_url="http://test"
+    ) as client:
+        response = await client.post(
+            "/compare", headers=_auth_headers(), json=_valid_compare_body()
+        )
+
+    assert response.status_code == 200
+    data = response.json()
+    assert data["plant_id"] == "plant-xyz"
+    assert data["image_id_current"] == "img-current"
+    assert data["image_id_previous"] == "img-previous"
+    assert data["uniformity_delta"] == "improved"
+    assert data["confidence"] == 0.78
+    assert len(data["bullets"]) == 2
+    assert data["is_fallback"] is False
+    assert captured["request"].grow_context.strain == "Blue Dream"
+
+
+@pytest.mark.asyncio
+async def test_compare_router_requires_bearer() -> None:
+    async with AsyncClient(
+        transport=ASGITransport(app=app), base_url="http://test"
+    ) as client:
+        response = await client.post(
+            "/compare",
+            headers={"Authorization": "Bearer wrong-key"},
+            json=_valid_compare_body(),
+        )
+    assert response.status_code == 401
+
+
+@pytest.mark.asyncio
+async def test_compare_router_rejects_invalid_storage_path() -> None:
+    async with AsyncClient(
+        transport=ASGITransport(app=app), base_url="http://test"
+    ) as client:
+        response = await client.post(
+            "/compare",
+            headers=_auth_headers(),
+            json=_valid_compare_body(storage_path_current="../etc/passwd"),
+        )
+    assert response.status_code == 422
