@@ -13,6 +13,7 @@ from PIL import Image
 from app.config import settings
 from app.models.analysis import AnalyzeRequest
 from app.services import image_analysis
+from app.services import storage as storage_service
 
 
 def _valid_png_bytes() -> bytes:
@@ -329,7 +330,10 @@ async def test_fetch_storage_image_returns_bytes_and_content_type(
             captured["headers"] = headers
             return FakeResponse()
 
-    monkeypatch.setattr(image_analysis.httpx, "AsyncClient", FakeClient)
+    # `image_analysis._fetch_storage_image` is an alias for
+    # `app.services.storage.fetch_image`; patching the storage module's
+    # httpx is the only seam that actually intercepts the network call.
+    monkeypatch.setattr(storage_service.httpx, "AsyncClient", FakeClient)
 
     body, content_type = await image_analysis._fetch_storage_image("plants/p/img.jpg")
 

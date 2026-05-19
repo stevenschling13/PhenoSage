@@ -179,6 +179,28 @@ export interface PlantAnalysis extends AnalysisResponse {
   createdAt: string;
 }
 
+// Image comparison — returned by the analysis service's `/compare`
+// endpoint through the Next.js proxy. Powers the "What Changed?" panel on
+// the plant detail page. Wire field names mirror the pydantic model
+// (snake_case → camelCase happens in the proxy normaliser).
+export type UniformityDelta = "improved" | "unchanged" | "declined" | "unknown";
+
+export interface ImageComparisonResult {
+  plantId: string;
+  imageIdCurrent: string;
+  imageIdPrevious: string;
+  summary: string;
+  bullets: string[];
+  uniformityDelta: UniformityDelta;
+  confidence: number; // 0–1
+  analyzedAt: string; // ISO timestamp
+  modelVersion: string;
+  analysisMode?: "fallback" | "model";
+  isFallback?: boolean;
+  fallbackReason?: string;
+  requestId?: string;
+}
+
 // GrowEvent
 export type EventType =
   | "water"

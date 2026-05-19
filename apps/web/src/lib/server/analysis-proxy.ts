@@ -1,5 +1,9 @@
 import "server-only";
-import type { AnalysisResponse } from "@phenosage/shared";
+import type {
+  AnalysisResponse,
+  ImageComparisonResult,
+  UniformityDelta,
+} from "@phenosage/shared";
 import { getAnalysisServiceConfig } from "./analysis-config";
 import { CircuitOpenError, getCircuitBreaker } from "./circuit-breaker";
 import { REQUEST_ID_HEADER, withRequestIdHeader } from "./request-id";
@@ -128,13 +132,15 @@ export async function callAnalysisService<T = unknown>(
     return await breaker.run(() =>
       withResilience<T>(
         async (_attempt, signal) => {
-          const headers = new Headers(withRequestIdHeader(
-            {
-              "Content-Type": "application/json",
-              Authorization: `Bearer ${apiKey}`,
-            },
-            effectiveRequestId,
-          ));
+          const headers = new Headers(
+            withRequestIdHeader(
+              {
+                "Content-Type": "application/json",
+                Authorization: `Bearer ${apiKey}`,
+              },
+              effectiveRequestId,
+            ),
+          );
           // Forward W3C `traceparent` so the analysis service can
           // continue the trace on its side. We pass the value
           // through verbatim — the route handler is the span owner
@@ -421,4 +427,131 @@ export async function analyzeImage(params: {
     },
   });
   return normalizeAnalysisResponse(raw);
+}
+
+// --- Image comparison ("What Changed?") -------------------------------
+
+type RawCompareResponse = {
+  plant_id?: string;
+  plantId?: string;
+  image_id_current?: string;
+  imageIdCurrent?: string;
+  image_id_previous?: string;
+  imageIdPrevious?: string;
+  summary: string;
+  bullets: string[];
+  uniformity_delta?: UniformityDelta;
+  uniformityDelta?: UniformityDelta;
+  confidence: number;
+  analyzed_at?: string;
+  analyzedAt?: string;
+  model_version?: string;
+  modelVersion?: string;
+  analysis_mode?: "fallback" | "model";
+  analysisMode?: "fallback" | "model";
+  is_fallback?: boolean;
+  isFallback?: boolean;
+  fallback_reason?: string | null;
+  fallbackReason?: string | null;
+  request_id?: string;
+  requestId?: string;
+};
+
+function normalizeCompareResponse(
+  payload: RawCompareResponse,
+): ImageComparisonResult {
+  const result: ImageComparisonResult = {
+    plantId: payload.plantId ?? payload.plant_id ?? "",
+    imageIdCurrent: payload.imageIdCurrent ?? payload.image_id_current ?? "",
+    imageIdPrevious: payload.imageIdPrevious ?? payload.image_id_previous ?? "",
+    summary: payload.summary,
+    bullets: Array.isArray(payload.bullets) ? payload.bullets : [],
+    uniformityDelta:
+      payload.uniformityDelta ?? payload.uniformity_delta ?? "unknown",
+    confidence: typeof payload.confidence === "number" ? payload.confidence : 0,
+    analyzedAt:
+      payload.analyzedAt ?? payload.analyzed_at ?? new Date().toISOString(),
+    modelVersion: payload.modelVersion ?? payload.model_version ?? "unknown",
+  };
+  const analysisMode = payload.analysisMode ?? payload.analysis_mode ?? null;
+  if (analysisMode) {
+    result.analysisMode = analysisMode;
+  }
+  if (payload.isFallback ?? payload.is_fallback) {
+    result.isFallback = true;
+  }
+  const fallbackReason =
+    payload.fallbackReason ?? payload.fallback_reason ?? null;
+  if (fallbackReason) {
+    result.fallbackReason = fallbackReason;
+  }
+  const requestId = payload.requestId ?? payload.request_id ?? null;
+  if (requestId) {
+    result.requestId = requestId;
+  }
+  return result;
+}
+
+/**
+ * Compare the two most recent images for a plant and return a structured
+ * "what changed?" payload. Safe to retry: the FastAPI side is idempotent
+ * (no DB writes happen on /compare, only the vision call repeats).
+ */
+export async function compareImages(params: {
+  plantId: string;
+  imageIdCurrent: string;
+  storagePathCurrent: string;
+  imageIdPrevious: string;
+  storagePathPrevious: string;
+  growContext: AnalyzeGrowContext;
+  requestId?: string;
+  traceparent?: string;
+}): Promise<ImageComparisonResult> {
+  const growContext: Record<string, unknown> = {
+    grow_id: params.growContext.growId,
+  };
+  if (params.growContext.strain !== undefined) {
+    growContext["strain"] = params.growContext.strain;
+  }
+  if (params.growContext.stage !== undefined) {
+    growContext["stage"] = params.growContext.stage;
+  }
+  if (params.growContext.medium !== undefined) {
+    growContext["medium"] = params.growContext.medium;
+  }
+  if (params.growContext.lightType !== undefined) {
+    growContext["light_type"] = params.growContext.lightType;
+  }
+  if (params.growContext.daysSinceStart !== undefined) {
+    growContext["days_since_start"] = params.growContext.daysSinceStart;
+  }
+  if (params.growContext.notes !== undefined) {
+    growContext["notes"] = params.growContext.notes;
+  }
+
+  const body: Record<string, unknown> = {
+    plant_id: params.plantId,
+    image_id_current: params.imageIdCurrent,
+    storage_path_current: params.storagePathCurrent,
+    image_id_previous: params.imageIdPrevious,
+    storage_path_previous: params.storagePathPrevious,
+    grow_context: growContext,
+  };
+
+  const raw = await callAnalysisService<RawCompareResponse>({
+    endpoint: "/compare",
+    method: "POST",
+    body,
+    ...(params.requestId ? { requestId: params.requestId } : {}),
+    ...(params.traceparent ? { traceparent: params.traceparent } : {}),
+    // /compare has no persisted side effects on either side — every retry
+    // is identical, idempotent, and safe to attempt again on transient
+    // 5xx/timeouts. We pay a vision call per retry; the bounded
+    // maxAttempts caps that cost.
+    resilience: {
+      maxAttempts: 2,
+      idempotencyKey: `compare:${params.plantId}:${params.imageIdCurrent}:${params.imageIdPrevious}`,
+    },
+  });
+  return normalizeCompareResponse(raw);
 }

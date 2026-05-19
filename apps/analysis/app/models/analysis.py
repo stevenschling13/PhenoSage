@@ -116,3 +116,65 @@ class AnalyzeResponse(BaseModel):
     is_fallback: bool = False
     fallback_reason: str | None = None
     request_id: str | None = None
+
+
+class CompareRequest(BaseModel):
+    """Request body for POST /compare.
+
+    The web proxy sends the two most recent images for a plant. The
+    "current" image is the freshest capture; "previous" is the prior one.
+    Order matters: the model is told to describe how the plant changed
+    *from previous to current*.
+    """
+
+    plant_id: str
+    image_id_current: str
+    storage_path_current: str
+    image_id_previous: str
+    storage_path_previous: str
+    grow_context: GrowContext
+
+    @field_validator("storage_path_current")
+    @classmethod
+    def _check_current(cls, value: str) -> str:
+        return _validate_storage_path(value)
+
+    @field_validator("storage_path_previous")
+    @classmethod
+    def _check_previous(cls, value: str) -> str:
+        return _validate_storage_path(value)
+
+
+class UniformityDelta(StrEnum):
+    """Coarse direction of canopy uniformity / overall health between the two
+    images. Mirrors the ``trend`` vocabulary in the executive-summary spec
+    so the UI can colour-code consistently with the health score."""
+
+    improved = "improved"
+    unchanged = "unchanged"
+    declined = "declined"
+    unknown = "unknown"
+
+
+class CompareResponse(BaseModel):
+    """Structured "what changed" between two plant images.
+
+    The UI's "What Changed?" button renders ``summary`` as a one-liner and
+    ``bullets`` as a list. ``uniformity_delta`` drives the colour token.
+    """
+
+    model_config = ConfigDict(protected_namespaces=())
+
+    plant_id: str
+    image_id_current: str
+    image_id_previous: str
+    summary: str
+    bullets: list[str]
+    uniformity_delta: UniformityDelta = UniformityDelta.unknown
+    confidence: float = Field(default=0.0, ge=0, le=1)
+    analyzed_at: datetime
+    model_version: str
+    analysis_mode: str = "fallback"
+    is_fallback: bool = False
+    fallback_reason: str | None = None
+    request_id: str | None = None

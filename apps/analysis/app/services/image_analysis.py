@@ -3,21 +3,16 @@ from __future__ import annotations
 import base64
 import json
 import logging
-import re
 from datetime import UTC, datetime
-from urllib.parse import quote
-
-import httpx
 
 from app.config import settings
 from app.errors import (
     AnalysisError,
     ConfigurationError,
-    InvalidStoragePath,
     ModelBadResponse,
     ModelRateLimited,
     ModelUnavailable,
-    StorageUnavailable,
+    StorageUnavailable,  # noqa: F401 - re-exported for tests that reference image_analysis.StorageUnavailable
 )
 from app.middleware import get_request_id, log_event
 from app.models.analysis import (
@@ -31,6 +26,7 @@ from app.services.image_quality import assess_image_quality
 from app.services.prompts import SYSTEM_PROMPT, build_analysis_prompt
 from app.services.retry import with_retry
 from app.services.scoring import compute_health_score
+from app.services.storage import fetch_image as _fetch_storage_image
 
 # Bounded retries for transient upstream failures. Storage gets one extra
 # attempt over the model because it is dramatically cheaper to re-run and
@@ -44,62 +40,6 @@ _MODEL_CALL_MAX_ATTEMPTS = 2
 
 MODEL_VERSION = "gpt-4o-mini-vision"
 logger = logging.getLogger(__name__)
-_STORAGE_PATH_PATTERN = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._/-]*$")
-
-
-def _sanitize_storage_path(storage_path: str) -> str:
-    path = storage_path.strip()
-    if (
-        not path
-        or path.startswith("/")
-        or path.startswith(".")
-        or ".." in path
-        or "\\" in path
-        or "?" in path
-        or "#" in path
-        or not _STORAGE_PATH_PATTERN.fullmatch(path)
-    ):
-        raise InvalidStoragePath()
-    return quote(path, safe="/-._~")
-
-
-async def _fetch_storage_image(storage_path: str) -> tuple[bytes, str]:
-    if not settings.supabase_url or not settings.supabase_service_role_key:
-        # Missing creds is a deploy-time misconfiguration, not a transient
-        # failure — never retry.
-        raise ConfigurationError("Supabase storage credentials are not configured")
-
-    safe_storage_path = _sanitize_storage_path(storage_path)
-    base_url = settings.supabase_url.rstrip("/")
-    url = (
-        f"{base_url}/storage/v1/object/authenticated/plant-images/"
-        f"{safe_storage_path}"
-    )
-    headers = {
-        "Authorization": f"Bearer {settings.supabase_service_role_key}",
-        "x-request-id": get_request_id(),
-    }
-
-    try:
-        async with httpx.AsyncClient(timeout=20.0) as client:
-            response = await client.get(url, headers=headers)
-            response.raise_for_status()
-            content_type = response.headers.get("content-type", "image/jpeg")
-            return response.content, content_type
-    except httpx.HTTPStatusError as exc:
-        # 401/403 here means the service-role key is wrong / revoked — that's
-        # a configuration problem, not a transient outage.
-        if exc.response.status_code in (401, 403):
-            raise ConfigurationError(
-                "Supabase rejected the service-role credential."
-            ) from exc
-        raise StorageUnavailable(
-            f"Supabase storage returned HTTP {exc.response.status_code}."
-        ) from exc
-    except (httpx.TimeoutException, httpx.TransportError, ConnectionError) as exc:
-        raise StorageUnavailable(
-            "Supabase storage is unreachable or timed out."
-        ) from exc
 
 
 def _build_fallback_response(

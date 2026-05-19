@@ -24,7 +24,7 @@ import {
 import { EmptyState } from "@/components/ui/empty-state";
 import { PageHeader } from "@/components/ui/page-header";
 import { StatCard } from "@/components/ui/stat-card";
-import { ImageComparison } from "@/components/image-comparison";
+import { WhatChangedPanel } from "@/components/what-changed-panel";
 import { HealthTrendChart } from "@/components/health-trend-chart";
 import { getAuthorizedPlantContext } from "@/lib/server/plant-access";
 import { getLatestPlantAnalysis, getPlantTimeline } from "@/lib/server/plants";
@@ -442,15 +442,16 @@ export default async function PlantPage({ params }: Props) {
 
           <Card>
             <CardHeader>
-              <CardTitle>Comparison workspace</CardTitle>
+              <CardTitle>What changed?</CardTitle>
               <CardDescription>
-                Side-by-side review appears only when this plant has enough real
-                image history.
+                Side-by-side review of the two latest captures, with an
+                on-demand AI summary of the differences when you&rsquo;re ready
+                to look.
               </CardDescription>
             </CardHeader>
             <CardContent>
               {comparisonImages ? (
-                <ImageComparison
+                <WhatChangedPanel
                   after={comparisonImages.after}
                   before={comparisonImages.before}
                   plantId={plantId}
