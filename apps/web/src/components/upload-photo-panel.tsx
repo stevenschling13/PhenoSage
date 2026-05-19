@@ -2,6 +2,7 @@
 
 import { useId, useState } from "react";
 import { useRouter } from "next/navigation";
+import type { ImagePreflightResult } from "@phenosage/shared";
 import { CheckCircleIcon, UploadIcon } from "@/components/icons";
 import { Badge } from "@/components/ui/badge";
 import { Button, buttonStyles } from "@/components/ui/button";
@@ -12,6 +13,17 @@ type UploadNotice = {
   text: string;
 };
 
+// Once the upload + finalize succeeds, the panel transitions into a
+// "captured" state. From there the user either accepts the AI Capture
+// Coach's verdict (auto-analyze on ok=true) or chooses to retake / force
+// analyze when the preflight surfaces a quality issue. The id of the
+// pending image is held in component state so the "Analyze anyway"
+// button can re-fire the analyze call without re-uploading.
+interface CapturedImage {
+  imageId: string;
+  preflight: ImagePreflightResult;
+}
+
 const acceptedTypes = ["image/jpeg", "image/png", "image/webp", "image/heic"];
 const maxFileSize = 15 * 1024 * 1024;
 
@@ -21,9 +33,58 @@ export function UploadPhotoPanel({ plantId }: { plantId: string }) {
   const [file, setFile] = useState<File | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [notice, setNotice] = useState<UploadNotice | null>(null);
+  const [captured, setCaptured] = useState<CapturedImage | null>(null);
+
+  async function triggerAnalyze(imageId: string): Promise<UploadNotice> {
+    const analysisResponse = await fetch("/api/analyze", {
+      body: JSON.stringify({ image_id: imageId, plant_id: plantId }),
+      headers: { "Content-Type": "application/json" },
+      method: "POST",
+    });
+    const analysisPayload = (await analysisResponse.json()) as {
+      data?: { job_id?: string; status?: string };
+      error?: string;
+    };
+    if (!analysisResponse.ok || !analysisPayload.data?.job_id) {
+      return {
+        tone: "warning",
+        text:
+          analysisPayload.error ||
+          "Image uploaded successfully, but analysis is unavailable right now.",
+      };
+    }
+    return {
+      tone: "success",
+      text: "Image uploaded and queued for analysis. Refresh shortly to view the latest result.",
+    };
+  }
+
+  async function analyzeCapturedAnyway() {
+    if (!captured || isSubmitting) return;
+    setIsSubmitting(true);
+    setNotice(null);
+    try {
+      const next = await triggerAnalyze(captured.imageId);
+      setNotice(next);
+      setCaptured(null);
+      router.refresh();
+    } finally {
+      setIsSubmitting(false);
+    }
+  }
+
+  function discardCapture() {
+    // We deliberately leave the storage object + plant_images row in
+    // place. Cleanup is a separate, future feature — and keeping the
+    // capture means the user can still ask the copilot about it later
+    // if they change their mind.
+    setCaptured(null);
+    setNotice(null);
+  }
 
   function handleFileSelection(nextFile: File | null) {
     setNotice(null);
+    setCaptured(null);
 
     if (!nextFile) {
       setFile(null);
@@ -126,35 +187,40 @@ export function UploadPhotoPanel({ plantId }: { plantId: string }) {
         );
       }
 
-      const analysisResponse = await fetch("/api/analyze", {
-        body: JSON.stringify({ image_id: signed.imageId, plant_id: plantId }),
-        headers: {
-          "Content-Type": "application/json",
-        },
-        method: "POST",
-      });
+      // AI Capture Coach: run a non-destructive quality check before
+      // paying for the vision call. We deliberately fail OPEN — if the
+      // preflight service is unreachable, proceed to analyze rather than
+      // stranding the user. The pre-analysis gate on the FastAPI side
+      // still catches genuinely unanalysable images.
+      let preflight: ImagePreflightResult | null = null;
+      try {
+        const preflightResponse = await fetch(
+          `/api/plants/${encodeURIComponent(plantId)}/preflight`,
+          {
+            body: JSON.stringify({ imageId: signed.imageId }),
+            headers: { "Content-Type": "application/json" },
+            method: "POST",
+          },
+        );
+        if (preflightResponse.ok) {
+          const preflightPayload = (await preflightResponse.json()) as {
+            data?: ImagePreflightResult;
+          };
+          preflight = preflightPayload.data ?? null;
+        }
+      } catch {
+        // Network blip — fall through to the analyze step.
+      }
 
-      const analysisPayload = (await analysisResponse.json()) as {
-        data?: { job_id?: string; status?: string };
-        error?: string;
-      };
-
-      if (!analysisResponse.ok || !analysisPayload.data?.job_id) {
-        setNotice({
-          tone: "warning",
-          text:
-            analysisPayload.error ||
-            "Image uploaded successfully, but analysis is unavailable right now.",
-        });
+      if (preflight && !preflight.ok) {
+        setCaptured({ imageId: signed.imageId, preflight });
+        setNotice({ tone: "warning", text: preflight.hint });
         setFile(null);
-        router.refresh();
         return;
       }
 
-      setNotice({
-        tone: "success",
-        text: "Image uploaded and queued for analysis. Refresh shortly to view the latest result.",
-      });
+      const next = await triggerAnalyze(signed.imageId);
+      setNotice(next);
       setFile(null);
       router.refresh();
     } catch (error) {
@@ -239,14 +305,36 @@ export function UploadPhotoPanel({ plantId }: { plantId: string }) {
             </div>
           ) : null}
 
-          <Button
-            aria-busy={isSubmitting || undefined}
-            disabled={!file || isSubmitting}
-            fullWidth
-            onClick={() => void prepareUpload()}
-          >
-            {isSubmitting ? "Uploading photo..." : "Upload photo"}
-          </Button>
+          {captured ? (
+            <div className="flex flex-col gap-2 sm:flex-row">
+              <Button
+                aria-busy={isSubmitting || undefined}
+                disabled={isSubmitting}
+                onClick={() => void analyzeCapturedAnyway()}
+                variant="surface"
+                className="flex-1 justify-center"
+              >
+                {isSubmitting ? "Analyzing..." : "Analyze anyway"}
+              </Button>
+              <Button
+                disabled={isSubmitting}
+                onClick={discardCapture}
+                variant="ghost"
+                className="flex-1 justify-center"
+              >
+                Choose a different photo
+              </Button>
+            </div>
+          ) : (
+            <Button
+              aria-busy={isSubmitting || undefined}
+              disabled={!file || isSubmitting}
+              fullWidth
+              onClick={() => void prepareUpload()}
+            >
+              {isSubmitting ? "Uploading photo..." : "Upload photo"}
+            </Button>
+          )}
         </div>
       </div>
 

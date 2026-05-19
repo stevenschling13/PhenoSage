@@ -100,7 +100,7 @@ describe("UploadPhotoPanel", () => {
     expect(screen.getByRole("button", { name: /upload photo/i })).toBeEnabled();
   });
 
-  it("runs the full happy path: sign → storage upload → finalize → analyze", async () => {
+  it("runs the full happy path: sign → storage upload → finalize → preflight → analyze", async () => {
     fetchSpy
       .mockResolvedValueOnce(
         makeResponse({
@@ -114,6 +114,17 @@ describe("UploadPhotoPanel", () => {
       .mockResolvedValueOnce(makeResponse({}))
       .mockResolvedValueOnce(
         makeResponse({
+          data: {
+            plantId: "plant-1",
+            imageId: "img-1",
+            ok: true,
+            reason: null,
+            hint: "Image looks usable.",
+          },
+        }),
+      )
+      .mockResolvedValueOnce(
+        makeResponse({
           data: { job_id: "job-1", status: "queued" },
         }),
       );
@@ -124,7 +135,7 @@ describe("UploadPhotoPanel", () => {
     await user.upload(input, makeFile("leaf.png", "image/png", 2048));
     await user.click(screen.getByRole("button", { name: /upload photo/i }));
 
-    await waitFor(() => expect(fetchSpy).toHaveBeenCalledTimes(3));
+    await waitFor(() => expect(fetchSpy).toHaveBeenCalledTimes(4));
 
     const [signUrl, signInit] = getFetchCall(0);
     expect(signUrl).toBe("/api/upload/sign");
@@ -143,11 +154,147 @@ describe("UploadPhotoPanel", () => {
     );
 
     expect(getFetchCall(1)[0]).toBe("/api/upload/finalize");
-    expect(getFetchCall(2)[0]).toBe("/api/analyze");
+    expect(getFetchCall(2)[0]).toBe("/api/plants/plant-1/preflight");
+    expect(getFetchCall(3)[0]).toBe("/api/analyze");
 
     const status = await screen.findByRole("status");
     expect(status).toHaveTextContent(/queued for analysis/i);
     expect(refresh).toHaveBeenCalled();
+  });
+
+  it("blocks analyze and shows the AI Capture Coach hint when preflight flags the image", async () => {
+    fetchSpy
+      .mockResolvedValueOnce(
+        makeResponse({
+          data: {
+            imageId: "img-1",
+            storagePath: "plant-1/leaf.png",
+            token: "tok-1",
+          },
+        }),
+      )
+      .mockResolvedValueOnce(makeResponse({}))
+      .mockResolvedValueOnce(
+        makeResponse({
+          data: {
+            plantId: "plant-1",
+            imageId: "img-1",
+            ok: false,
+            reason: "too_dark",
+            hint: "The shot is too dark for confident analysis. Retake.",
+          },
+        }),
+      );
+
+    const user = userEvent.setup();
+    render(<UploadPhotoPanel plantId="plant-1" />);
+    const input = getFileInput();
+    await user.upload(input, makeFile("leaf.png", "image/png", 2048));
+    await user.click(screen.getByRole("button", { name: /upload photo/i }));
+
+    // Sign + finalize + preflight — analyze must NOT fire.
+    await waitFor(() => expect(fetchSpy).toHaveBeenCalledTimes(3));
+    expect(
+      fetchSpy.mock.calls.some(
+        (c: unknown[]) => (c[0] as string) === "/api/analyze",
+      ),
+    ).toBe(false);
+
+    const status = await screen.findByRole("status");
+    expect(status).toHaveTextContent(/too dark/i);
+    // Recovery surfaces are present
+    expect(
+      screen.getByRole("button", { name: /analyze anyway/i }),
+    ).toBeEnabled();
+    expect(
+      screen.getByRole("button", { name: /choose a different photo/i }),
+    ).toBeEnabled();
+    expect(refresh).not.toHaveBeenCalled();
+  });
+
+  it("fires analyze when the user clicks 'Analyze anyway' after a preflight warning", async () => {
+    fetchSpy
+      .mockResolvedValueOnce(
+        makeResponse({
+          data: {
+            imageId: "img-1",
+            storagePath: "plant-1/leaf.png",
+            token: "tok-1",
+          },
+        }),
+      )
+      .mockResolvedValueOnce(makeResponse({}))
+      .mockResolvedValueOnce(
+        makeResponse({
+          data: {
+            plantId: "plant-1",
+            imageId: "img-1",
+            ok: false,
+            reason: "too_blurry",
+            hint: "The image looks blurry.",
+          },
+        }),
+      )
+      .mockResolvedValueOnce(
+        makeResponse({
+          data: { job_id: "job-7", status: "queued" },
+        }),
+      );
+
+    const user = userEvent.setup();
+    render(<UploadPhotoPanel plantId="plant-1" />);
+    const input = getFileInput();
+    await user.upload(input, makeFile("leaf.png", "image/png", 2048));
+    await user.click(screen.getByRole("button", { name: /upload photo/i }));
+
+    const force = await screen.findByRole("button", {
+      name: /analyze anyway/i,
+    });
+    await user.click(force);
+
+    await waitFor(() => expect(fetchSpy).toHaveBeenCalledTimes(4));
+    expect(getFetchCall(3)[0]).toBe("/api/analyze");
+    expect(JSON.parse((getFetchCall(3)[1]?.body as string) ?? "{}")).toEqual({
+      image_id: "img-1",
+      plant_id: "plant-1",
+    });
+    expect(refresh).toHaveBeenCalled();
+  });
+
+  it("falls open to analyze when preflight is unreachable", async () => {
+    // If the preflight hop errors out (Railway down, etc.) the panel
+    // must still let the user reach analyze — the server-side
+    // pre-analysis gate is the hard backstop. Stranding the user here
+    // would be a worse failure mode than running analyze on a possibly
+    // bad image.
+    fetchSpy
+      .mockResolvedValueOnce(
+        makeResponse({
+          data: {
+            imageId: "img-1",
+            storagePath: "plant-1/leaf.png",
+            token: "tok-1",
+          },
+        }),
+      )
+      .mockResolvedValueOnce(makeResponse({}))
+      .mockRejectedValueOnce(new Error("network blip"))
+      .mockResolvedValueOnce(
+        makeResponse({
+          data: { job_id: "job-9", status: "queued" },
+        }),
+      );
+
+    const user = userEvent.setup();
+    render(<UploadPhotoPanel plantId="plant-1" />);
+    const input = getFileInput();
+    await user.upload(input, makeFile("leaf.png", "image/png", 2048));
+    await user.click(screen.getByRole("button", { name: /upload photo/i }));
+
+    await waitFor(() => expect(fetchSpy).toHaveBeenCalledTimes(4));
+    expect(getFetchCall(3)[0]).toBe("/api/analyze");
+    const status = await screen.findByRole("status");
+    expect(status).toHaveTextContent(/queued for analysis/i);
   });
 
   it("surfaces a danger alert when the sign endpoint fails", async () => {
@@ -178,6 +325,17 @@ describe("UploadPhotoPanel", () => {
         }),
       )
       .mockResolvedValueOnce(makeResponse({}))
+      .mockResolvedValueOnce(
+        makeResponse({
+          data: {
+            plantId: "plant-1",
+            imageId: "img-1",
+            ok: true,
+            reason: null,
+            hint: "Image looks usable.",
+          },
+        }),
+      )
       .mockResolvedValueOnce(makeResponse({ error: "Analysis offline." }, 503));
 
     const user = userEvent.setup();
@@ -203,6 +361,17 @@ describe("UploadPhotoPanel", () => {
         }),
       )
       .mockResolvedValueOnce(makeResponse({}))
+      .mockResolvedValueOnce(
+        makeResponse({
+          data: {
+            plantId: "plant-1",
+            imageId: "img-1",
+            ok: true,
+            reason: null,
+            hint: "Image looks usable.",
+          },
+        }),
+      )
       .mockResolvedValueOnce(
         makeResponse({
           data: { job_id: "job-1", status: "queued" },

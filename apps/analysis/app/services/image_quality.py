@@ -42,6 +42,7 @@ good photos.
 from __future__ import annotations
 
 import io
+from dataclasses import dataclass
 
 from PIL import Image, ImageFilter, ImageStat, UnidentifiedImageError
 
@@ -154,10 +155,83 @@ def assess_image_quality(image_bytes: bytes) -> None:
         raise ImageQualityInconclusive(reason="too_blurry")
 
 
+# User-facing capture-coach hints, keyed by `ImageQualityReason`. Authored
+# from the cultivator's POV (verbs they can act on) rather than echoing the
+# internal threshold names. Keep them short — they render inline above the
+# upload button on mobile.
+_REASON_HINTS: dict[str, str] = {
+    "image_decode_failed": (
+        "We couldn't read this file as an image. Try a fresh JPG, PNG, "
+        "WEBP, or HEIC capture from your camera."
+    ),
+    "image_too_large": (
+        "This image is too large to analyse safely. Capture at standard "
+        "resolution or scale down before re-uploading."
+    ),
+    "image_too_small": (
+        "The image is too small to see plant detail. Move closer or "
+        "capture at a higher resolution."
+    ),
+    "too_dark": (
+        "The shot is too dark for confident analysis. Add even, neutral "
+        "light and retake."
+    ),
+    "too_bright": (
+        "The highlights are blown out. Reduce direct light on the canopy "
+        "and retake."
+    ),
+    "too_blurry": (
+        "The image looks blurry or out of focus. Hold steady, move closer "
+        "to the canopy, and retake."
+    ),
+}
+
+_OK_HINT = (
+    "Image looks usable. PhenoSage will compare it to your previous "
+    "capture during analysis."
+)
+
+
+@dataclass(frozen=True)
+class PreflightResult:
+    """Structured outcome of a non-destructive image-quality check.
+
+    Returned by :func:`preflight_image_quality` so the UI can render an
+    actionable hint *before* a vision call is made. ``reason`` is one of
+    :data:`app.errors.IMAGE_QUALITY_REASONS` when ``ok`` is False, else
+    None.
+    """
+
+    ok: bool
+    reason: str | None
+    hint: str
+
+
+def preflight_image_quality(image_bytes: bytes) -> PreflightResult:
+    """Run the same checks as :func:`assess_image_quality` but return a
+    structured result instead of raising.
+
+    Wraps the existing checker so there's a single source of truth — any
+    threshold tuned here is automatically picked up by the pre-analysis
+    gate that prevents bad images from reaching the vision model.
+    """
+    try:
+        assess_image_quality(image_bytes)
+    except ImageQualityInconclusive as exc:
+        return PreflightResult(
+            ok=False,
+            reason=exc.reason,
+            hint=_REASON_HINTS.get(exc.reason, "The image needs to be retaken."),
+        )
+    return PreflightResult(ok=True, reason=None, hint=_OK_HINT)
+
+
 __all__ = [
     "MAX_LUMINANCE",
     "MIN_DIMENSION_PX",
     "MIN_EDGE_VARIANCE",
     "MIN_LUMINANCE",
+    "PreflightResult",
     "assess_image_quality",
+    "preflight_image_quality",
 ]

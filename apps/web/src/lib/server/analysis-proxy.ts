@@ -2,6 +2,8 @@ import "server-only";
 import type {
   AnalysisResponse,
   ImageComparisonResult,
+  ImagePreflightResult,
+  PreflightReason,
   UniformityDelta,
 } from "@phenosage/shared";
 import { getAnalysisServiceConfig } from "./analysis-config";
@@ -554,4 +556,68 @@ export async function compareImages(params: {
     },
   });
   return normalizeCompareResponse(raw);
+}
+
+// --- Capture-quality preflight ---------------------------------------
+
+type RawPreflightResponse = {
+  plant_id?: string;
+  plantId?: string;
+  image_id?: string;
+  imageId?: string;
+  ok: boolean;
+  reason?: PreflightReason | null;
+  hint: string;
+  request_id?: string;
+  requestId?: string;
+};
+
+function normalizePreflightResponse(
+  payload: RawPreflightResponse,
+): ImagePreflightResult {
+  const result: ImagePreflightResult = {
+    plantId: payload.plantId ?? payload.plant_id ?? "",
+    imageId: payload.imageId ?? payload.image_id ?? "",
+    ok: Boolean(payload.ok),
+    reason: payload.reason ?? null,
+    hint: payload.hint,
+  };
+  const requestId = payload.requestId ?? payload.request_id ?? null;
+  if (requestId) {
+    result.requestId = requestId;
+  }
+  return result;
+}
+
+/**
+ * Run the non-destructive capture-quality preflight on an already-uploaded
+ * image. Pure read-side check on the analysis service — no vision model
+ * involvement — so we can opt into a small retry budget without paying
+ * for a vision call on each attempt.
+ */
+export async function preflightImage(params: {
+  plantId: string;
+  imageId: string;
+  storagePath: string;
+  requestId?: string;
+  traceparent?: string;
+}): Promise<ImagePreflightResult> {
+  const body: Record<string, unknown> = {
+    plant_id: params.plantId,
+    image_id: params.imageId,
+    storage_path: params.storagePath,
+  };
+
+  const raw = await callAnalysisService<RawPreflightResponse>({
+    endpoint: "/preflight",
+    method: "POST",
+    body,
+    ...(params.requestId ? { requestId: params.requestId } : {}),
+    ...(params.traceparent ? { traceparent: params.traceparent } : {}),
+    resilience: {
+      maxAttempts: 2,
+      idempotencyKey: `preflight:${params.plantId}:${params.imageId}`,
+    },
+  });
+  return normalizePreflightResponse(raw);
 }
