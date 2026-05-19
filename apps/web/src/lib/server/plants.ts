@@ -365,10 +365,22 @@ export async function getPlantTimeline(
   // `hasMore` flag without an extra COUNT round-trip — if the query
   // returns `limit + 1` rows, there's at least one more page worth
   // of data behind it.
+  //
+  // Defence-in-depth: the route handler already rejects non-finite
+  // / out-of-range inputs, but the helper guards itself anyway so
+  // other internal callers (a future cron, a background job, a
+  // direct call from another service module) can't smuggle a
+  // `NaN` past the database driver. `Number.isFinite` falls back
+  // to the default when the input is NaN, Infinity, or -Infinity;
+  // the clamp then handles the remaining "huge / tiny / fractional"
+  // shapes.
   const requested = options.limit ?? DEFAULT_TIMELINE_LIMIT;
+  const safeRequested = Number.isFinite(requested)
+    ? requested
+    : DEFAULT_TIMELINE_LIMIT;
   const limit = Math.max(
     1,
-    Math.min(MAX_TIMELINE_LIMIT, Math.floor(requested)),
+    Math.min(MAX_TIMELINE_LIMIT, Math.floor(safeRequested)),
   );
   const fetchSize = limit + 1;
 
@@ -394,12 +406,18 @@ export async function getPlantTimeline(
         .from("plant_analyses")
         .select("*")
         .eq("plant_id", context.plantId)
-        .order("analyzed_at", { ascending: false })
-        // Analyses are joined to images by image_id; we don't cap
-        // them independently because the in-memory map is keyed by
-        // the (capped) image set. Capping here would risk losing an
-        // analysis row whose image IS in the visible page.
-        .limit(fetchSize),
+        .order("analyzed_at", { ascending: false }),
+      // `plant_analyses` is intentionally NOT `.limit()`-ed. Each
+      // analysis is 1:1 with an image (UNIQUE constraint on
+      // `image_id` in migration 004), but the two queries sort by
+      // different timestamps — analyses by `analyzed_at`, images by
+      // `created_at`. A re-analysis of an old image makes that
+      // analysis recent by `analyzed_at` while the image stays old
+      // by `created_at`. Capping both at the same N would mean the
+      // top-N analyses set and the top-N images set diverge, so a
+      // visible image could lose the analysis it actually has. The
+      // findings query below is left uncapped for the same reason
+      // (findings are joined to analyses by `image_id`).
       db
         .from("plant_findings")
         .select("*")

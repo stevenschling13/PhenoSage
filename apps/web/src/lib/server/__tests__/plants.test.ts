@@ -664,15 +664,52 @@ describe("plants server helpers", () => {
     const timeline = await getPlantTimeline("plant-1");
     expect(timeline?.limit).toBe(50); // DEFAULT_TIMELINE_LIMIT
     expect(timeline?.hasMore).toBe(false);
-    // Each capped source asked for limit+1 (= 51) so we can detect
-    // overflow without a separate count query.
+    // Images and observations get the cap (limit+1 = 51) so we
+    // can detect overflow without a separate count query.
     expect(helpers.plant_images.limit).toHaveBeenCalledWith(51);
     expect(helpers.plant_observations.limit).toHaveBeenCalledWith(51);
-    expect(helpers.plant_analyses.limit).toHaveBeenCalledWith(51);
-    // Findings are NOT capped — they're joined to images by image_id
-    // and capping them independently would risk losing a finding
-    // whose image IS visible.
+    // `plant_analyses` and `plant_findings` are NOT capped. Both
+    // are joined to images by `image_id`, but their natural sort
+    // (`analyzed_at` / `created_at`) can diverge from the image
+    // sort. A re-analysis of an old image makes that analysis
+    // recent by `analyzed_at` while its image stays old by
+    // `created_at`, so capping both at N risks the top-N sets
+    // diverging and a visible image losing the analysis /
+    // findings it actually has.
+    expect(helpers.plant_analyses.limit).not.toHaveBeenCalled();
     expect(helpers.plant_findings.limit).not.toHaveBeenCalled();
+  });
+
+  it("getPlantTimeline treats NaN / Infinity limit as the default (helper-level defence-in-depth)", async () => {
+    // The route handler already rejects non-finite inputs with a
+    // 400, but the helper is also reachable from internal callers
+    // (future crons, background jobs, direct calls from sibling
+    // server modules). A `NaN` slipping past would propagate to
+    // `.limit(NaN)` on the supabase chain, which is at best a
+    // silent no-op and at worst an opaque DB error. Falling back
+    // to the default is the safe behaviour.
+    const helpers = {
+      plant_images: makeSelectOrderResult([]),
+      plant_observations: makeSelectOrderResult([]),
+      plant_analyses: makeSelectOrderResult([]),
+      plant_findings: makeSelectOrderResult([]),
+    };
+    const from = vi.fn(
+      (table: keyof typeof helpers) =>
+        ({ select: helpers[table].select }) as { select: unknown },
+    );
+    getDbClient.mockReturnValue({ from });
+
+    for (const bad of [
+      Number.NaN,
+      Number.POSITIVE_INFINITY,
+      Number.NEGATIVE_INFINITY,
+    ]) {
+      const timeline = await getPlantTimeline("plant-1", { limit: bad });
+      expect(timeline?.limit).toBe(50);
+      // Last call gets limit+1 = 51 regardless of the bad input.
+      expect(helpers.plant_images.limit).toHaveBeenLastCalledWith(51);
+    }
   });
 
   it("getPlantTimeline clamps limit to [1, MAX_TIMELINE_LIMIT]", async () => {
