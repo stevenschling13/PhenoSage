@@ -377,7 +377,8 @@ export async function getPlantTimeline(
   const requested = options.limit ?? DEFAULT_TIMELINE_LIMIT;
   const safeRequested = Number.isFinite(requested)
     ? requested
-    : DEFAULT_TIMELINE_LIMIT;
+  const requested = options.limit ?? DEFAULT_TIMELINE_LIMIT;
+  const safeRequested = Number.isFinite(requested) ? requested : DEFAULT_TIMELINE_LIMIT;
   const limit = Math.max(
     1,
     Math.min(MAX_TIMELINE_LIMIT, Math.floor(safeRequested)),
