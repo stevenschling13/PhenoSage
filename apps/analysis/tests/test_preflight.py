@@ -24,7 +24,8 @@ from PIL import Image
 from app.config import settings
 from app.main import app
 from app.models.analysis import PreflightRequest, PreflightResponse
-from app.services import image_quality, preflight as preflight_service
+from app.services import image_quality
+from app.services import preflight as preflight_service
 from app.services.image_quality import preflight_image_quality
 
 
