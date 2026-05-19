@@ -165,9 +165,7 @@ export async function POST(request: NextRequest, { params }: RouteParams) {
       const code =
         error.code === "UPSTREAM_RATE_LIMITED"
           ? "UPSTREAM_RATE_LIMITED"
-          : error.code === "UPSTREAM_UNAVAILABLE"
-            ? "UPSTREAM_UNAVAILABLE"
-            : "UPSTREAM_UNAVAILABLE";
+          : "UPSTREAM_UNAVAILABLE";
       return apiError(
         status,
         code,

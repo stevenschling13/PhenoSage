@@ -13,6 +13,7 @@ monitoring rather than masquerading as a low-confidence diagnosis.
 
 from __future__ import annotations
 
+import asyncio
 import base64
 import json
 import logging
@@ -211,15 +212,23 @@ async def compare_images(request: CompareRequest) -> CompareResponse:
     back.
     """
     try:
-        current_bytes, current_content_type = await with_retry(
-            lambda: fetch_image(request.storage_path_current),
-            operation="storage.fetch.current",
-            max_attempts=_STORAGE_FETCH_MAX_ATTEMPTS,
-        )
-        previous_bytes, previous_content_type = await with_retry(
-            lambda: fetch_image(request.storage_path_previous),
-            operation="storage.fetch.previous",
-            max_attempts=_STORAGE_FETCH_MAX_ATTEMPTS,
+        # The two fetches are independent — run them concurrently so the
+        # comparison's wall-clock is one storage round-trip + one model
+        # call instead of two storage round-trips serialised.
+        (
+            (current_bytes, current_content_type),
+            (previous_bytes, previous_content_type),
+        ) = await asyncio.gather(
+            with_retry(
+                lambda: fetch_image(request.storage_path_current),
+                operation="storage.fetch.current",
+                max_attempts=_STORAGE_FETCH_MAX_ATTEMPTS,
+            ),
+            with_retry(
+                lambda: fetch_image(request.storage_path_previous),
+                operation="storage.fetch.previous",
+                max_attempts=_STORAGE_FETCH_MAX_ATTEMPTS,
+            ),
         )
         assess_image_quality(current_bytes)
         assess_image_quality(previous_bytes)
