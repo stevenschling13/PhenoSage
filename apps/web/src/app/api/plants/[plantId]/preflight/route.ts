@@ -132,6 +132,11 @@ export async function POST(request: NextRequest, { params }: RouteParams) {
         code: error.code,
         status: error.status ?? null,
       });
+      // Map upstream error class → HTTP status + code on the SAME pivot
+      // so 502 is always paired with UPSTREAM_BAD_RESPONSE and 503 with
+      // UPSTREAM_UNAVAILABLE. Collapsing the bad-response branch into
+      // UPSTREAM_UNAVAILABLE would mask a Railway-side contract regression
+      // (which is a 502 condition) behind a "service down" signal.
       const status =
         error.code === "UPSTREAM_RATE_LIMITED"
           ? 429
@@ -141,7 +146,9 @@ export async function POST(request: NextRequest, { params }: RouteParams) {
       const code =
         error.code === "UPSTREAM_RATE_LIMITED"
           ? "UPSTREAM_RATE_LIMITED"
-          : "UPSTREAM_UNAVAILABLE";
+          : error.code === "UPSTREAM_UNAVAILABLE"
+            ? "UPSTREAM_UNAVAILABLE"
+            : "UPSTREAM_BAD_RESPONSE";
       return apiError(
         status,
         code,
