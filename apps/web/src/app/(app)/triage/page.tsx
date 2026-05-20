@@ -3,6 +3,7 @@ import Link from "next/link";
 import { redirect } from "next/navigation";
 import { FindingResolutionControls } from "@/components/finding-resolution-controls";
 import { CheckCircleIcon, SparkIcon } from "@/components/icons";
+import { TriageLiveRefresh } from "@/components/triage-live-refresh";
 import { Badge } from "@/components/ui/badge";
 import { buttonStyles } from "@/components/ui/button";
 import {
@@ -43,6 +44,7 @@ export default async function TriagePage() {
 
   return (
     <main className="app-page">
+      <TriageLiveRefresh />
       <PageHeader
         breadcrumbs={[
           { href: "/dashboard", label: "Dashboard" },
