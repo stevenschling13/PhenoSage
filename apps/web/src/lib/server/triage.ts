@@ -131,22 +131,32 @@ export async function getTriageInbox(): Promise<TriageInbox> {
 
   // Per-source soft-degrade: a single failing query never takes down the
   // page. Mirrors the workspace-overview pattern.
+  //
+  // Ordering is delegated to Postgres so the LIMIT below truncates the
+  // *least* urgent rows. `finding_severity` enum order is
+  // info < low < medium < high < critical, and `task_priority` is
+  // low < medium < high < urgent, so DESC puts the most-urgent value
+  // first. A secondary created_at DESC tiebreaks within a severity bucket.
   const [growsSettled, plantsSettled, findingsSettled, tasksSettled] =
     await Promise.allSettled([
       supabase.from("grows").select("id,name"),
-      supabase.from("plants").select("id,name,grow_id").limit(500),
+      supabase.from("plants").select("id,name,grow_id").limit(2000),
       supabase
         .from("plant_findings")
         .select(
           "id,plant_id,grow_id,image_id,category,severity,confidence_score,title,description,recommendation,source,resolution_state,resolution_note,created_at",
         )
         .eq("resolution_state", PENDING_STATE)
+        .order("severity", { ascending: false })
         .order("created_at", { ascending: false })
         .limit(200),
       supabase
         .from("grow_tasks")
-        .select("*")
+        .select(
+          "id,grow_id,plant_id,finding_id,title,description,priority,status,due_at,created_at,updated_at,completed_at",
+        )
         .in("status", ["open", "in_progress"])
+        .order("priority", { ascending: false })
         .order("created_at", { ascending: false })
         .limit(200),
     ]);

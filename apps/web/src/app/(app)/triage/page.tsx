@@ -30,12 +30,12 @@ function formatDateTime(value: string) {
 }
 
 export default async function TriagePage() {
-  // Unauthed users get sent back to login — the rest of the (app) group
+  // Unauthed users get sent back to /auth — the rest of the (app) group
   // already enforces this, but we double-check so a missing session never
   // hits the user-scoped Supabase client below.
   const session = await getServerSession();
   if (!session) {
-    redirect("/login");
+    redirect("/auth?next=/triage");
   }
 
   const { findings, tasks } = await getTriageInbox();
@@ -48,7 +48,7 @@ export default async function TriagePage() {
           { href: "/dashboard", label: "Dashboard" },
           { label: "Triage" },
         ]}
-        description="Pending AI findings and open work items across every grow you have access to. Confirm, reject, or mark false positive inline — the spawned task auto-dismisses on reject/false-positive."
+        description="Pending findings and open work items across every grow you have access to. Confirm, reject, or mark false positive inline — the spawned task auto-dismisses on reject/false-positive."
         eyebrow={<Badge tone="accent">Triage queue</Badge>}
         title="What needs your attention"
       />
@@ -57,7 +57,7 @@ export default async function TriagePage() {
         <StatCard
           detail={
             findings.length === 0
-              ? "Every AI signal has been triaged."
+              ? "Every signal has been triaged."
               : "Confirm or reject below."
           }
           icon={<SparkIcon className="h-5 w-5" />}
@@ -96,7 +96,7 @@ export default async function TriagePage() {
         <CardContent>
           {findings.length === 0 ? (
             <EmptyState
-              description="Every AI-generated finding has been triaged. Upload a new photo to keep the loop going."
+              description="Every pending finding has been triaged. Upload a new photo or log an observation to keep the loop going."
               icon={<SparkIcon className="h-5 w-5" />}
               title="Inbox zero"
             />
