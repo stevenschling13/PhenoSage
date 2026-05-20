@@ -66,12 +66,18 @@ export async function getGrowHealthTrend(
     Date.now() - windowDays * 24 * 60 * 60 * 1000,
   ).toISOString();
 
+  // Fetch newest-first so the `MAX_ANALYSES` cap drops the oldest rows,
+  // not the most recent. Larger grows can produce > 1k analyses inside
+  // the window; the chart already re-sorts ascending before drawing.
+  // A `(grow_id, analyzed_at desc)` index added in
+  // `20260520150000_plant_analyses_grow_analyzed_at_idx.sql` lets
+  // Postgres stream this without a sort.
   const { data, error } = await supabase
     .from("plant_analyses")
     .select("overall_health_score,analyzed_at")
     .eq("grow_id", growId)
     .gte("analyzed_at", since)
-    .order("analyzed_at", { ascending: true })
+    .order("analyzed_at", { ascending: false })
     .limit(MAX_ANALYSES);
 
   if (error) {
@@ -105,12 +111,19 @@ export async function getGrowHealthTrend(
     }
   }
 
-  const points: HealthTrendPoint[] = Array.from(buckets.entries()).map(
-    ([analyzedAt, { sum, count }]) => ({
+  // Emit oldest-first so the helper's contract is independent of the
+  // underlying query order. The chart already re-sorts but anyone else
+  // consuming this helper (sparkline summaries, exports) gets a stable
+  // time-ordered series for free.
+  const points: HealthTrendPoint[] = Array.from(buckets.entries())
+    .map(([analyzedAt, { sum, count }]) => ({
       analyzedAt,
       score: sum / count,
-    }),
-  );
+    }))
+    .sort(
+      (a, b) =>
+        new Date(a.analyzedAt).getTime() - new Date(b.analyzedAt).getTime(),
+    );
 
   return { points, totalAnalyses: rows.length, windowDays };
 }
