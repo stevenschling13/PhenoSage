@@ -83,6 +83,7 @@ describe("shared contract types", () => {
       title: "N deficiency",
       description: "Yellowing lower leaves",
       source: "ai",
+      resolutionState: "pending",
       createdAt: "2026-04-01T00:00:00Z",
     };
     expect(finding.severity).toBe("critical");
@@ -98,9 +99,12 @@ describe("shared contract types", () => {
       title: "Spider mites on lower fan leaves",
       description: "Stippling + webbing observed at lights-on",
       source: "user_reported",
+      resolutionState: "confirmed",
+      resolutionNote: "Found webbing on inspection",
       createdAt: "2026-04-02T00:00:00Z",
     };
     expect(finding.source).toBe("user_reported");
+    expect(finding.resolutionState).toBe("confirmed");
   });
 
   it("accepts a GrowTask covering all priorities and statuses (migration 008)", () => {

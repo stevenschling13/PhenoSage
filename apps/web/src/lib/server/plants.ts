@@ -49,6 +49,9 @@ type PlantFindingRow = {
   title: string;
   description: string;
   recommendation: string | null;
+  source: NonNullable<AnalysisFinding["source"]>;
+  resolution_state: NonNullable<AnalysisFinding["resolutionState"]>;
+  resolution_note: string | null;
   created_at: string;
 };
 
@@ -110,10 +113,13 @@ function mapAnalysisFromRow(
 
 function mapFindingFromRow(row: PlantFindingRow): AnalysisFinding {
   const finding: AnalysisFinding = {
+    id: row.id,
     category: row.category,
     severity: row.severity,
     title: row.title,
     description: row.description,
+    source: row.source,
+    resolutionState: row.resolution_state,
   };
 
   if (row.recommendation) {
@@ -121,6 +127,9 @@ function mapFindingFromRow(row: PlantFindingRow): AnalysisFinding {
   }
   if (row.confidence_score !== null) {
     finding.confidenceScore = row.confidence_score;
+  }
+  if (row.resolution_note) {
+    finding.resolutionNote = row.resolution_note;
   }
 
   return finding;
