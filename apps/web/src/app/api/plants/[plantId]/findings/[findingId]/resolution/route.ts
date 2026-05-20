@@ -101,14 +101,13 @@ export async function PATCH(request: NextRequest, { params }: RouteParams) {
   // User-scoped client → RLS enforces the migration 007 contributor policy.
   // Viewers get a 0-row UPDATE which we surface as 403 below.
   const supabase = await createSupabaseServerClient();
-  const update: { resolution_state: string; resolution_note: string | null } = {
+  const update = {
     resolution_state: parsedBody.data.state,
-    // pending clears any stale note; non-pending preserves an empty note as
-    // null rather than an empty string for cleaner downstream filtering.
+    // pending clears any stale note; otherwise coerce empty / whitespace-only
+    // notes (which Zod's .trim() turns into "") to null via ||, so downstream
+    // filters can rely on null == "no note".
     resolution_note:
-      parsedBody.data.state === "pending"
-        ? null
-        : (parsedBody.data.note ?? null),
+      parsedBody.data.state === "pending" ? null : parsedBody.data.note || null,
   };
 
   const { data, error } = await supabase
