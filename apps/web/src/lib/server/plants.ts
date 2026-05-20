@@ -1,5 +1,9 @@
 import "server-only";
-import type { AnalysisFinding, AnalysisResponse } from "@phenosage/shared";
+import type {
+  AnalysisFinding,
+  AnalysisResponse,
+  GrowTask,
+} from "@phenosage/shared";
 import { analyzeImage, type AnalyzeGrowContext } from "./analysis-proxy";
 import { createSupabaseServerClient } from "./auth";
 import { getAuthorizedPlantContext } from "./plant-access";
@@ -737,4 +741,185 @@ export async function getOrCreateQuickCapturePlant(params: {
     return null;
   }
   return { plantId: (created as { id: string }).id };
+}
+
+// ─── Plant Passport ────────────────────────────────────────────────────────
+//
+// Unified chronological view of everything that has happened to a plant:
+// images (with their findings + analysis), grower observations, and the
+// grow_tasks the AI/user have spawned. Sorted newest-first so the freshest
+// activity is at the top.
+//
+// Reuses `getPlantTimeline` for images + observations rather than
+// duplicating the four-table fetch. Tasks are fetched separately because
+// the existing timeline contract intentionally scopes to images +
+// observations only — extending it would ripple into the plant detail
+// page and the dashboard.
+
+type PassportImageItem = {
+  type: "image";
+  occurredAt: string;
+  id: string;
+  createdAt: string;
+  takenAt: string;
+  source: string;
+  notes?: string;
+  storagePath: string;
+  analysis: AnalysisResponse | null;
+  findings: AnalysisFinding[];
+};
+
+type PassportObservationItem = {
+  type: "observation";
+  occurredAt: string;
+  id: string;
+  observedAt: string;
+  createdAt: string;
+  heightCm?: number;
+  notes?: string;
+};
+
+type PassportTaskItem = {
+  type: "task";
+  occurredAt: string;
+  task: GrowTask;
+};
+
+export type PlantPassportItem =
+  | PassportImageItem
+  | PassportObservationItem
+  | PassportTaskItem;
+
+type GrowTaskRow = {
+  id: string;
+  grow_id: string;
+  plant_id: string | null;
+  finding_id: string | null;
+  title: string;
+  description: string | null;
+  priority: GrowTask["priority"];
+  status: GrowTask["status"];
+  due_at: string | null;
+  created_at: string;
+  updated_at: string;
+  completed_at: string | null;
+};
+
+function mapTaskFromRow(row: GrowTaskRow): GrowTask {
+  const task: GrowTask = {
+    id: row.id,
+    growId: row.grow_id,
+    title: row.title,
+    priority: row.priority,
+    status: row.status,
+    createdAt: row.created_at,
+    updatedAt: row.updated_at,
+  };
+  if (row.plant_id) task.plantId = row.plant_id;
+  if (row.finding_id) task.findingId = row.finding_id;
+  if (row.description) task.description = row.description;
+  if (row.due_at) task.dueAt = row.due_at;
+  if (row.completed_at) task.completedAt = row.completed_at;
+  return task;
+}
+
+export async function getPlantPassport(plantId: string) {
+  const context = await getAuthorizedPlantContext(plantId);
+  if (!context) {
+    return null;
+  }
+
+  // Run both reads concurrently — the timeline already fans out four
+  // queries internally, so we don't gain from sequencing.
+  const db = getDbClient();
+  const [timeline, taskResult] = await Promise.all([
+    getPlantTimeline(plantId),
+    db
+      .from("grow_tasks")
+      .select("*")
+      .eq("plant_id", context.plantId)
+      .order("created_at", { ascending: false }),
+  ]);
+
+  if (!timeline) {
+    return null;
+  }
+
+  let tasks: GrowTask[] = [];
+  if (taskResult.error) {
+    // Soft-degrade: missing tasks don't take down the passport.
+    logServerEvent("error", "plant passport tasks query failed", {
+      plantId: context.plantId,
+      error: taskResult.error.message,
+    });
+  } else {
+    tasks = ((taskResult.data ?? []) as GrowTaskRow[]).map(mapTaskFromRow);
+  }
+
+  // Hoist each timeline item's "occurred at" so we can sort the merged
+  // stream by a single key without re-discriminating on type every loop.
+  // Explicit construction avoids exactOptionalPropertyTypes mismatches when
+  // spreading items whose `notes` is typed `string | undefined`.
+  const fromTimeline: PlantPassportItem[] = timeline.items.map(
+    (item): PlantPassportItem => {
+      if (item.type === "image") {
+        const out: PassportImageItem = {
+          type: "image",
+          occurredAt: item.takenAt,
+          id: item.id,
+          createdAt: item.createdAt,
+          takenAt: item.takenAt,
+          source: item.source,
+          storagePath: item.storagePath,
+          analysis: item.analysis,
+          findings: item.findings,
+        };
+        if (item.notes !== undefined) out.notes = item.notes;
+        return out;
+      }
+      const out: PassportObservationItem = {
+        type: "observation",
+        occurredAt: item.observedAt,
+        id: item.id,
+        observedAt: item.observedAt,
+        createdAt: item.createdAt,
+      };
+      if (item.heightCm !== undefined) out.heightCm = item.heightCm;
+      if (item.notes !== undefined) out.notes = item.notes;
+      return out;
+    },
+  );
+  const fromTasks: PlantPassportItem[] = tasks.map((task) => ({
+    type: "task",
+    occurredAt: task.createdAt,
+    task,
+  }));
+
+  const items = [...fromTimeline, ...fromTasks].sort(
+    (left, right) =>
+      new Date(right.occurredAt).getTime() -
+      new Date(left.occurredAt).getTime(),
+  );
+
+  // Pending = "needs your review"; surfaced as the lead callout so the
+  // grower knows the ledger isn't empty.
+  const pendingFindingCount = timeline.items.reduce((count, item) => {
+    if (item.type !== "image") return count;
+    return (
+      count +
+      item.findings.filter((f) => f.resolutionState === "pending").length
+    );
+  }, 0);
+
+  const openTaskCount = tasks.filter(
+    (t) => t.status === "open" || t.status === "in_progress",
+  ).length;
+
+  return {
+    plantId: context.plantId,
+    plantName: context.plantName,
+    items,
+    pendingFindingCount,
+    openTaskCount,
+  };
 }
