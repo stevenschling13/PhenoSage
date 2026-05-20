@@ -35,6 +35,7 @@ vi.mock("../storage", () => ({
 
 import {
   getLatestPlantAnalysis,
+  getPlantPassport,
   getPlantTimeline,
   persistPlantImageUpload,
   preparePlantImageUpload,
@@ -1171,4 +1172,146 @@ describe("plants server helpers", () => {
       ).rejects.toThrow(message);
     },
   );
+
+  // ───────────────────────────────────────────────────────────────────────
+  // getPlantPassport — chronological feed (images + observations + tasks)
+  // ───────────────────────────────────────────────────────────────────────
+
+  function makePassportDb(params: {
+    images?: unknown[];
+    observations?: unknown[];
+    analyses?: unknown[];
+    findings?: unknown[];
+    tasks?: unknown[];
+    tasksError?: string;
+  }) {
+    const tableData: Record<string, unknown[]> = {
+      plant_images: params.images ?? [],
+      plant_observations: params.observations ?? [],
+      plant_analyses: params.analyses ?? [],
+      plant_findings: params.findings ?? [],
+      grow_tasks: params.tasks ?? [],
+    };
+    const from = vi.fn((table: string) => {
+      if (table === "grow_tasks") {
+        const order = vi.fn().mockResolvedValue({
+          data: params.tasksError ? null : tableData.grow_tasks,
+          error: params.tasksError ? { message: params.tasksError } : null,
+        });
+        const eq = vi.fn(() => ({ order }));
+        const select = vi.fn(() => ({ eq }));
+        return { select };
+      }
+      const order = vi.fn().mockResolvedValue({
+        data: tableData[table] ?? [],
+        error: null,
+      });
+      const eq = vi.fn(() => ({ order }));
+      const select = vi.fn(() => ({ eq }));
+      return { select };
+    });
+    return { from };
+  }
+
+  it("returns null from passport when the plant is not authorized", async () => {
+    getAuthorizedPlantContext.mockResolvedValue(null);
+    await expect(getPlantPassport("plant-1")).resolves.toBeNull();
+  });
+
+  it("interleaves images, observations, and tasks by occurredAt desc", async () => {
+    getDbClient.mockReturnValue(
+      makePassportDb({
+        images: [
+          {
+            id: "img-1",
+            created_at: "2026-05-15T09:00:00Z",
+            taken_at: "2026-05-15T09:00:00Z",
+            source: "upload",
+            storage_path: "plant-1/img-1.jpg",
+            notes: null,
+            plant_id: "plant-1",
+            grow_id: "grow-1",
+            user_id: "user-1",
+          },
+        ],
+        observations: [
+          {
+            id: "obs-1",
+            observed_at: "2026-05-14T18:00:00Z",
+            created_at: "2026-05-14T18:00:00Z",
+            height_cm: 42,
+            notes: "tucked",
+          },
+        ],
+        tasks: [
+          {
+            id: "task-1",
+            grow_id: "grow-1",
+            plant_id: "plant-1",
+            finding_id: "finding-1",
+            title: "Address: N deficiency",
+            description: null,
+            priority: "high",
+            status: "open",
+            due_at: null,
+            created_at: "2026-05-13T10:00:00Z",
+            updated_at: "2026-05-13T10:00:00Z",
+            completed_at: null,
+          },
+        ],
+      }),
+    );
+
+    const passport = await getPlantPassport("plant-1");
+    expect(passport).not.toBeNull();
+    const types = passport!.items.map((i) => i.type);
+    expect(types).toEqual(["image", "observation", "task"]);
+    expect(passport!.openTaskCount).toBe(1);
+    expect(passport!.pendingFindingCount).toBe(0);
+  });
+
+  it("counts pending findings + soft-degrades failed task fetches", async () => {
+    getDbClient.mockReturnValue(
+      makePassportDb({
+        images: [
+          {
+            id: "img-2",
+            created_at: "2026-05-12T09:00:00Z",
+            taken_at: "2026-05-12T09:00:00Z",
+            source: "upload",
+            storage_path: "plant-1/img-2.jpg",
+            notes: null,
+            plant_id: "plant-1",
+            grow_id: "grow-1",
+            user_id: "user-1",
+          },
+        ],
+        findings: [
+          {
+            id: "finding-pending",
+            plant_id: "plant-1",
+            grow_id: "grow-1",
+            image_id: "img-2",
+            category: "nutrient_deficiency",
+            severity: "medium",
+            confidence_score: null,
+            title: "Cal-Mag",
+            description: "Tip burn",
+            recommendation: null,
+            source: "ai",
+            resolution_state: "pending",
+            resolution_note: null,
+            created_at: "2026-05-12T09:01:00Z",
+          },
+        ],
+        tasksError: "rls denied",
+      }),
+    );
+
+    const passport = await getPlantPassport("plant-1");
+    expect(passport!.pendingFindingCount).toBe(1);
+    expect(passport!.openTaskCount).toBe(0);
+    // Tasks failed → no task items in the feed, but images still show.
+    expect(passport!.items.map((i) => i.type)).toEqual(["image"]);
+  });
 });

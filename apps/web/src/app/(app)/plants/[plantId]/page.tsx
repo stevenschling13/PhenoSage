@@ -180,6 +180,12 @@ export default async function PlantPage({ params }: Props) {
           <>
             <Link
               className={buttonStyles({ size: "md", variant: "surface" })}
+              href={`/plants/${plantId}/passport`}
+            >
+              View passport
+            </Link>
+            <Link
+              className={buttonStyles({ size: "md", variant: "surface" })}
               href="/assistant"
             >
               Ask copilot
