@@ -8,6 +8,7 @@ import {
   ChatIcon,
   SettingsIcon,
   ImageIcon,
+  BellIcon,
 } from "@/components/ui/icons";
 import { cn } from "@/lib/cn";
 
@@ -21,6 +22,7 @@ export const NAV_ITEMS: NavItem[] = [
   { href: "/dashboard", label: "Dashboard", Icon: HomeIcon },
   { href: "/grows", label: "Grows", Icon: LeafIcon },
   { href: "/plants", label: "Plants", Icon: ImageIcon },
+  { href: "/triage", label: "Triage", Icon: BellIcon },
   { href: "/assistant", label: "Assistant", Icon: ChatIcon },
   { href: "/settings", label: "Settings", Icon: SettingsIcon },
 ];
@@ -78,7 +80,7 @@ export function MobileBottomNav() {
       className="fixed bottom-3 left-3 right-3 z-30 md:hidden"
       style={{ paddingBottom: "env(safe-area-inset-bottom)" }}
     >
-      <ul className="grid grid-cols-5 gap-1 rounded-full border border-[rgb(var(--ps-line)/var(--ps-line-strength))] bg-[rgb(var(--ps-surface))] p-1.5 shadow-soft">
+      <ul className="grid grid-cols-6 gap-1 rounded-full border border-[rgb(var(--ps-line)/var(--ps-line-strength))] bg-[rgb(var(--ps-surface))] p-1.5 shadow-soft">
         {NAV_ITEMS.map(({ href, label, Icon }) => {
           const active = isActive(pathname, href);
           return (
