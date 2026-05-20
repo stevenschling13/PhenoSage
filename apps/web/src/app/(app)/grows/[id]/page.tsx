@@ -14,7 +14,9 @@ import {
 } from "@/components/ui/card";
 import { EmptyState } from "@/components/ui/empty-state";
 import { PageHeader } from "@/components/ui/page-header";
+import { HealthTrendChart } from "@/components/health-trend-chart";
 import { getServerUser } from "@/lib/server/auth";
+import { getGrowHealthTrend } from "@/lib/server/grow-health-trend";
 import { fetchGrowDetail } from "@/lib/server/workspace-records";
 import { ArchiveButton } from "./archive-button";
 import { DeleteGrowButton } from "./delete-button";
@@ -62,9 +64,10 @@ function titleCase(value: string | null | undefined): string {
 //   * Footer with the Archive / Restore action.
 export default async function GrowDetailPage({ params, searchParams }: Props) {
   const { id } = await params;
-  const [user, detail] = await Promise.all([
+  const [user, detail, healthTrend] = await Promise.all([
     getServerUser(),
     fetchGrowDetail(id),
+    getGrowHealthTrend(id),
   ]);
   if (!detail) {
     notFound();
@@ -138,6 +141,24 @@ export default async function GrowDetailPage({ params, searchParams }: Props) {
           </p>
         </div>
       ) : null}
+
+      <Card>
+        <CardHeader>
+          <CardTitle>Grow health trend</CardTitle>
+          <CardDescription>
+            Daily-averaged overall health score across every plant in this grow
+            over the last {healthTrend.windowDays} days
+            {healthTrend.totalAnalyses > 0
+              ? ` (${healthTrend.totalAnalyses} ${
+                  healthTrend.totalAnalyses === 1 ? "analysis" : "analyses"
+                }).`
+              : "."}
+          </CardDescription>
+        </CardHeader>
+        <CardContent>
+          <HealthTrendChart points={healthTrend.points} />
+        </CardContent>
+      </Card>
 
       <section className="grid gap-6 xl:grid-cols-[minmax(0,1.4fr)_minmax(320px,0.9fr)]">
         <Card>
