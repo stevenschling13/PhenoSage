@@ -109,6 +109,18 @@ export type FindingCategory =
 // insert via the chat `record_image_finding` tool or future manual flows.
 export type FindingSource = "ai" | "user_reported";
 
+// Mirrors the `resolution_state` text+check column added in migration
+// 20260519180000_plant_findings_resolution_state. 'pending' = no user action;
+// 'confirmed' = user agrees with the AI; 'rejected' = user disagrees;
+// 'false_positive' = stronger "the model was wrong" signal used as training
+// data. Rejected and false_positive both auto-dismiss the spawned grow_task
+// (server-side trigger).
+export type FindingResolutionState =
+  | "pending"
+  | "confirmed"
+  | "rejected"
+  | "false_positive";
+
 export interface PlantFinding {
   id: string;
   plantId: string;
@@ -122,6 +134,8 @@ export interface PlantFinding {
   recommendation?: string;
   source: FindingSource;
   resolvedAt?: string;
+  resolutionState: FindingResolutionState;
+  resolutionNote?: string;
   createdAt: string;
 }
 
@@ -147,14 +161,25 @@ export interface ChatMessage {
   createdAt: string;
 }
 
-// AnalysisResponse — returned by the analysis service through the Next.js proxy
+// AnalysisResponse — returned by the analysis service through the Next.js proxy.
+//
+// `id`, `source`, `resolutionState`, and `resolutionNote` are present when the
+// finding was hydrated from the `plant_findings` table (e.g. on the plant page
+// timeline) and absent on wire payloads coming straight from the analysis
+// service — the service doesn't know about persisted state yet. Keeping them
+// optional avoids splitting this into two interfaces while letting the UI
+// render the confidence ledger when the data is there.
 export interface AnalysisFinding {
+  id?: string;
   category: FindingCategory;
   severity: FindingSeverity;
   confidenceScore?: number;
   title: string;
   description: string;
   recommendation?: string;
+  source?: FindingSource;
+  resolutionState?: FindingResolutionState;
+  resolutionNote?: string;
 }
 
 export interface AnalysisResponse {

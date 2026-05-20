@@ -10,6 +10,7 @@ import {
   SparkIcon,
   TimelineIcon,
 } from "@/components/icons";
+import { FindingResolutionControls } from "@/components/finding-resolution-controls";
 import { LiveAnalysisRefresher } from "@/components/live-analysis-refresher";
 import { UploadPhotoPanel } from "@/components/upload-photo-panel";
 import { Badge } from "@/components/ui/badge";
@@ -491,7 +492,9 @@ export default async function PlantPage({ params }: Props) {
                 <div className="space-y-3">
                   {latestAnalysis.findings.map((finding) => (
                     <div
-                      key={`${finding.title}-${finding.description}`}
+                      key={
+                        finding.id ?? `${finding.title}-${finding.description}`
+                      }
                       className="rounded-[1.15rem] border border-border/70 bg-background-subtle/60 px-4 py-4"
                     >
                       <div className="flex flex-wrap items-center gap-2">
@@ -516,6 +519,9 @@ export default async function PlantPage({ params }: Props) {
                             confidence
                           </span>
                         ) : null}
+                        {finding.source === "user_reported" ? (
+                          <Badge tone="info">User reported</Badge>
+                        ) : null}
                       </div>
                       <p className="mt-3 text-sm font-semibold text-foreground">
                         {finding.title}
@@ -527,6 +533,13 @@ export default async function PlantPage({ params }: Props) {
                         <p className="mt-3 text-sm leading-6 text-foreground">
                           {finding.recommendation}
                         </p>
+                      ) : null}
+                      {finding.id && finding.resolutionState ? (
+                        <FindingResolutionControls
+                          findingId={finding.id}
+                          initialState={finding.resolutionState}
+                          plantId={plantId}
+                        />
                       ) : null}
                     </div>
                   ))}
