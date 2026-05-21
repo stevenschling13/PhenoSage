@@ -9,3 +9,11 @@ healthcheckPath = "/health"
 healthcheckTimeout = 30
 restartPolicyType = "ON_FAILURE"
 restartPolicyMaxRetries = 3
+# Graceful shutdown window: the new replica starts and serves traffic for
+# `overlapSeconds` BEFORE the old replica gets SIGTERM, and the old replica
+# then has `drainingSeconds` to finish in-flight /analyze (which can take
+# ~20s for a vision call) before SIGKILL. Without these, Railway's default
+# is 0/0 — uvicorn drops in-flight requests on every deploy. Uvicorn
+# handles SIGTERM gracefully since 0.30.x, so no app-side changes needed.
+overlapSeconds = 10
+drainingSeconds = 30

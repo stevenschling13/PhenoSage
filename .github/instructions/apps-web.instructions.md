@@ -41,4 +41,4 @@ applyTo: "apps/web/**"
 - Importing `src/lib/server/**` from a client component.
 - Calling `https://*.railway.app/...` or `https://*.supabase.co/storage/...`
   from a client component.
-- Adding a `middleware.ts` that proxies to backend services.
+- Adding a `middleware.ts` or `proxy.ts` that proxies to backend services. (Next 16 renamed `middleware` → `proxy`; both are blocked.)

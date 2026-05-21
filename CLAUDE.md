@@ -63,7 +63,7 @@ Any edit here requires `pnpm run validate && pnpm turbo run test`:
 
 See `.github/copilot-instructions.md` for the full list; the load-bearing ones:
 
-1. Don't add a `middleware.ts` to `apps/web`. The boundary lives in Route Handlers.
+1. Don't add a `middleware.ts` or `proxy.ts` to `apps/web`. The boundary lives in Route Handlers. (Next 16 renamed `middleware` → `proxy`; both names are blocked by `scripts/check-route-boundaries.mjs`.)
 2. Don't call the analysis service from a client component. Always go through `apps/web/src/lib/server/analysis-proxy.ts`.
 3. Don't put a secret in a `NEXT_PUBLIC_*` var.
 4. Don't edit existing migrations. Add new ones.

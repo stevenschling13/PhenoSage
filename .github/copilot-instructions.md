@@ -17,7 +17,7 @@ Browser ── HTTPS ──► Vercel (apps/web)  ──► Supabase  (auth/db/p
 - **The browser MUST NEVER call the analysis service or Supabase service-role APIs directly.**
 - All browser-to-backend traffic flows through **same-origin Next.js Route Handlers** under `apps/web/src/app/api/**`.
 - Server-only modules live in `apps/web/src/lib/server/**` and **must** import `"server-only"` at the top.
-- Do **not** introduce a `middleware.ts` to act as a backend proxy. Same-origin Route Handlers are the boundary.
+- Do **not** introduce a `middleware.ts` or `proxy.ts` to act as a backend proxy. Same-origin Route Handlers are the boundary. (Next 16 renamed `middleware` → `proxy`; both are blocked.)
 
 ## 2. Secrets & Environment
 
@@ -54,7 +54,7 @@ The following are **rejected** in PR review and most are blocked by `scripts/che
 - Calling `process.env.ANALYSIS_SERVICE_URL` or `fetch("https://*.railway.app/...")` from any client-side code.
 - Adding a public Supabase Storage bucket for user content.
 - Adding SQLite, a second database, or an unrelated microservice.
-- Creating a `middleware.ts` to proxy to backend services.
+- Creating a `middleware.ts` or `proxy.ts` to proxy to backend services.
 - Adding broad social/community/ecommerce features (out of scope).
 - Adding native mobile code (out of scope; the web app is mobile-compatible).
 - Editing a previously-committed migration in `supabase/migrations/**`.

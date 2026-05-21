@@ -6,7 +6,8 @@
 //   2. Client components ("use client") must NOT import from @/lib/server/**.
 //   3. Route Handlers (apps/web/src/app/api/**/route.ts) must NOT have "use client".
 //   4. No fetch() to *.railway.app from any client-component file.
-//   5. No middleware.ts file (boundary is owned by Route Handlers).
+//   5. No middleware.ts or proxy.ts file (boundary is owned by Route Handlers).
+//      Next 16 renamed `middleware` to `proxy`; both are blocked.
 //
 // Run via `pnpm run check:routes`.
 
@@ -62,16 +63,24 @@ for (const file of walk(WEB_SRC)) {
   }
 }
 
-// 5. No middleware.ts in apps/web
-const middlewarePaths = [
+// 5. No middleware.ts OR proxy.ts in apps/web
+//
+// Next 16 renamed the `middleware` filename to `proxy` (Node-runtime only).
+// Both are equivalent backend-proxy escape hatches that violate the
+// "boundary lives in Route Handlers" rule — block both names so the
+// guardrail keeps working on Next 16+.
+const forbiddenBoundaryFiles = [
   join(WEB_SRC, "middleware.ts"),
   join(WEB_SRC, "middleware.tsx"),
   join(ROOT, "apps", "web", "middleware.ts"),
+  join(WEB_SRC, "proxy.ts"),
+  join(WEB_SRC, "proxy.tsx"),
+  join(ROOT, "apps", "web", "proxy.ts"),
 ];
-for (const mp of middlewarePaths) {
+for (const mp of forbiddenBoundaryFiles) {
   if (existsSync(mp)) {
     errors.push(
-      `Forbidden file: ${relative(ROOT, mp).split(sep).join("/")} — backend boundary lives in Route Handlers, not middleware.`,
+      `Forbidden file: ${relative(ROOT, mp).split(sep).join("/")} — backend boundary lives in Route Handlers, not middleware/proxy.`,
     );
   }
 }
