@@ -45,6 +45,7 @@ export function useLiveAnalysis({ growIds }: { growIds: string[] }) {
     let channels: RealtimeChannel[] = [];
     try {
       supabase = createSupabaseBrowserClient();
+      const client = supabase;
 
       const scheduleRefresh = () => {
         setLastEventAt(Date.now());
@@ -54,8 +55,13 @@ export function useLiveAnalysis({ growIds }: { growIds: string[] }) {
         }, 300);
       };
 
-      channels = growIds.map((growId) => {
-        const channel = supabase!
+      // Build channels with a for-of + push (not `.map`) so that if any
+      // `.subscribe()` throws partway through the list, the channels
+      // array reflects what actually subscribed and the catch block
+      // can clean them up. A `.map` would discard the partial result
+      // on throw and leak the already-subscribed channels.
+      for (const growId of growIds) {
+        const channel = client
           .channel(`live-analysis:${growId}`)
           .on(
             "postgres_changes",
@@ -81,8 +87,8 @@ export function useLiveAnalysis({ growIds }: { growIds: string[] }) {
             scheduleRefresh,
           )
           .subscribe();
-        return channel;
-      });
+        channels.push(channel);
+      }
     } catch (err) {
       if (typeof console !== "undefined") {
         console.warn(

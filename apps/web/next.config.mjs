@@ -26,15 +26,17 @@ function parseOrigin(value) {
 function parseWsOrigin(value) {
   const origin = parseOrigin(value);
   if (!origin) return null;
-  // Supabase Realtime upgrades over `wss://`. Browsers' CSP-3 host-source
-  // matching treats `https://` and `wss://` as the same host, but iOS
-  // Safari (and other webkit variants) have shipped stricter
-  // interpretations that block the WebSocket unless `wss://` is listed
-  // explicitly — surfacing as a page-crashing throw out of
-  // `supabase.channel(...).subscribe()` on the dashboard + grows
-  // surfaces (both render <LiveAnalysisRefresher />). Emit the wss
-  // equivalent so the directive is unambiguous on every engine.
-  return origin.replace(/^https:\/\//, "wss://");
+  // Supabase Realtime upgrades over `wss://` (prod) or `ws://` (local
+  // dev against the Supabase CLI on `http://localhost:54321`).
+  // Browsers' CSP-3 host-source matching treats `https://` and
+  // `wss://` as the same host, but iOS Safari (and other webkit
+  // variants) have shipped stricter interpretations that block the
+  // WebSocket unless the ws scheme is listed explicitly — surfacing
+  // as a page-crashing throw out of `supabase.channel(...).subscribe()`
+  // on the dashboard + grows surfaces (both render <LiveAnalysisRefresher />).
+  // Emit the matching ws/wss equivalent so the directive is unambiguous
+  // on every engine, in both prod and local dev.
+  return origin.replace(/^http/, "ws");
 }
 
 function buildCSP() {
