@@ -226,6 +226,42 @@ handler in `apps/analysis/app/main.py`:
 
 ---
 
+## Observability — Distributed traces
+
+`apps/web/instrumentation.ts` registers `@vercel/otel` at boot. When
+`ANALYSIS_SERVICE_URL` is set, the registration wires Next.js's underlying
+OpenTelemetry runtime so any outgoing `fetch()` call to the analysis service
+carries a W3C `traceparent` header. The analysis service already reads
+`traceparent` (`apps/analysis/app/telemetry.py`) and continues the same trace,
+so a single user request shows as one trace tree across both platforms in any
+OTLP-compatible backend (Honeycomb, Tempo, Vercel's own runtime trace viewer,
+etc).
+
+Configuration:
+
+- **Production**: nothing to do — registration auto-fires because
+  `ANALYSIS_SERVICE_URL` is required. To export traces somewhere other than
+  Vercel's default sink, set `OTEL_EXPORTER_OTLP_ENDPOINT` on the project.
+- **Local dev**: `OTEL_ENABLED=true` force-registers OTel even without
+  `ANALYSIS_SERVICE_URL` so an operator can validate spans against a local
+  OTLP collector.
+- **Sentry coexistence**: the file initializes OTel first, then Sentry if
+  `SENTRY_DSN` is set. `@sentry/nextjs` v8+ composes with `@vercel/otel`
+  cleanly — Sentry attaches as a span processor instead of replacing the
+  TracerProvider.
+
+If `@vercel/otel` is absent (e.g. the package was removed by an audit), the
+instrumentation hook logs a `warn — web OTel register skipped` line and the
+app continues to boot. Traces just stop crossing the Vercel ↔ Railway
+boundary in that case.
+
+Docs (as of 2026-05-21):
+
+- [Vercel OTel instrumentation](https://vercel.com/docs/tracing/instrumentation)
+- [Next.js instrumentation hook](https://nextjs.org/docs/app/building-your-application/optimizing/instrumentation)
+
+---
+
 ## Smoke Checks
 
 After every preview / production deploy, run:
