@@ -347,11 +347,55 @@ export async function getLatestPlantAnalysis(
   return mapAnalysisFromRow(persisted, findings);
 }
 
-export async function getPlantTimeline(plantId: string) {
+/**
+ * Default per-source row cap. Conservative: the page shows the most
+ * recent events first and most users only ever look at the top of
+ * the list. 50 covers the high-frequency case (image-per-day grower
+ * over ~7 weeks) without ever shipping a multi-megabyte response.
+ */
+export const DEFAULT_TIMELINE_LIMIT = 50;
+
+/**
+ * Hard ceiling on the per-source row cap. Higher values are rejected
+ * at the route handler boundary so a runaway client can't request a
+ * 10k-row dump as a DOS / scraping vector. The cap is per source, so
+ * the merged response can carry up to 2× this many items.
+ */
+export const MAX_TIMELINE_LIMIT = 200;
+
+export async function getPlantTimeline(
+  plantId: string,
+  options: { limit?: number } = {},
+) {
   const context = await getAuthorizedPlantContext(plantId);
   if (!context) {
     return null;
   }
+
+  // Cap the per-source row count so a plant with thousands of
+  // historical entries never ships an unbounded JSON. We fetch one
+  // extra row beyond `limit` so the merged response can carry a
+  // `hasMore` flag without an extra COUNT round-trip — if the query
+  // returns `limit + 1` rows, there's at least one more page worth
+  // of data behind it.
+  //
+  // Defence-in-depth: the route handler already rejects non-finite
+  // / out-of-range inputs, but the helper guards itself anyway so
+  // other internal callers (a future cron, a background job, a
+  // direct call from another service module) can't smuggle a
+  // `NaN` past the database driver. `Number.isFinite` falls back
+  // to the default when the input is NaN, Infinity, or -Infinity;
+  // the clamp then handles the remaining "huge / tiny / fractional"
+  // shapes.
+  const requested = options.limit ?? DEFAULT_TIMELINE_LIMIT;
+  const safeRequested = Number.isFinite(requested)
+    ? requested
+    : DEFAULT_TIMELINE_LIMIT;
+  const limit = Math.max(
+    1,
+    Math.min(MAX_TIMELINE_LIMIT, Math.floor(safeRequested)),
+  );
+  const fetchSize = limit + 1;
 
   const db = getDbClient();
   // Run the four reads independently so a missing table, RLS denial, or
@@ -363,17 +407,30 @@ export async function getPlantTimeline(plantId: string) {
         .from("plant_images")
         .select("*")
         .eq("plant_id", context.plantId)
-        .order("created_at", { ascending: false }),
+        .order("created_at", { ascending: false })
+        .limit(fetchSize),
       db
         .from("plant_observations")
         .select("*")
         .eq("plant_id", context.plantId)
-        .order("observed_at", { ascending: false }),
+        .order("observed_at", { ascending: false })
+        .limit(fetchSize),
       db
         .from("plant_analyses")
         .select("*")
         .eq("plant_id", context.plantId)
         .order("analyzed_at", { ascending: false }),
+      // `plant_analyses` is intentionally NOT `.limit()`-ed. Each
+      // analysis is 1:1 with an image (UNIQUE constraint on
+      // `image_id` in migration 004), but the two queries sort by
+      // different timestamps — analyses by `analyzed_at`, images by
+      // `created_at`. A re-analysis of an old image makes that
+      // analysis recent by `analyzed_at` while the image stays old
+      // by `created_at`. Capping both at the same N would mean the
+      // top-N analyses set and the top-N images set diverge, so a
+      // visible image could lose the analysis it actually has. The
+      // findings query below is left uncapped for the same reason
+      // (findings are joined to analyses by `image_id`).
       db
         .from("plant_findings")
         .select("*")
@@ -424,6 +481,21 @@ export async function getPlantTimeline(plantId: string) {
     findingsSettled,
   );
 
+  // Drop the sentinel "+1" row before returning so the visible item
+  // count never exceeds the requested limit. `hasMore` reflects
+  // whether ANY source overflowed — the UI can use that to render a
+  // "load more" affordance even though we don't yet support actual
+  // cursor pagination across heterogeneous sources.
+  const imagesOverflowed = imageRows.length > limit;
+  const observationsOverflowed = observationRows.length > limit;
+  const cappedImageRows = imagesOverflowed
+    ? imageRows.slice(0, limit)
+    : imageRows;
+  const cappedObservationRows = observationsOverflowed
+    ? observationRows.slice(0, limit)
+    : observationRows;
+  const hasMore = imagesOverflowed || observationsOverflowed;
+
   const findingsByImage = new Map<string, AnalysisFinding[]>();
   for (const row of findingRows) {
     if (!row.image_id) {
@@ -442,7 +514,7 @@ export async function getPlantTimeline(plantId: string) {
     );
   }
 
-  const imageItems = imageRows.map((row) => ({
+  const imageItems = cappedImageRows.map((row) => ({
     type: "image" as const,
     id: row.id,
     createdAt: row.created_at,
@@ -454,7 +526,7 @@ export async function getPlantTimeline(plantId: string) {
     findings: findingsByImage.get(row.id) ?? [],
   }));
 
-  const observationItems = observationRows.map((row) => ({
+  const observationItems = cappedObservationRows.map((row) => ({
     type: "observation" as const,
     id: row.id,
     observedAt: row.observed_at,
@@ -478,6 +550,8 @@ export async function getPlantTimeline(plantId: string) {
   return {
     plantId: context.plantId,
     items,
+    limit,
+    hasMore,
   };
 }
 
