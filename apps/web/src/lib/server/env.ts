@@ -53,6 +53,18 @@ const SERVER_RULES: Rule[] = [
     hint: "32+ byte random hex; must match the analysis service",
   },
   {
+    // Shared bearer token used to authenticate Supabase Database
+    // Webhooks posted to /api/internal/webhooks/auth/user-created.
+    // Supabase only supports static headers on Database Webhooks, so
+    // this is a long-lived secret rotated out-of-band rather than an
+    // HMAC per request. Optional in dev/preview; required in
+    // production where signups actually fire callbacks.
+    name: "SUPABASE_AUTH_WEBHOOK_SECRET",
+    required: false,
+    requiredInProduction: true,
+    hint: "32+ byte random hex; must match the Supabase Database Webhook header",
+  },
+  {
     name: "GEMINI_API_KEY",
     required: true,
     pattern: /^AIza[0-9A-Za-z_-]{20,}$/,
