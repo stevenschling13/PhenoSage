@@ -91,19 +91,6 @@ export async function POST(request: NextRequest) {
 
   try {
     const outcome = await seedDefaultGrowForUser({ userId });
-    if (outcome.kind === "user_not_found") {
-      // Treat as success — a delete-then-replay race or a stale event
-      // shouldn't trigger the sender's retry loop. Just log and ack.
-      logServerEvent("info", "auth webhook: user not found, skipping", {
-        requestId,
-        userId,
-      });
-      return apiSuccess(
-        200,
-        { user_id: userId, seeded: false, reason: "user_not_found" },
-        requestId,
-      );
-    }
     if (outcome.kind === "already_has_grow") {
       logServerEvent("info", "auth webhook: user already onboarded", {
         requestId,
