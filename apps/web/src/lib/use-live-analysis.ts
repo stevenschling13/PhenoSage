@@ -30,67 +30,97 @@ export function useLiveAnalysis({ growIds }: { growIds: string[] }) {
 
   useEffect(() => {
     if (growIds.length === 0) return;
-    // `createSupabaseBrowserClient` throws when the public env vars
-    // aren't bundled (e.g. a Vercel deploy that built before the
-    // Supabase integration synced its keys). Swallow that throw so a
-    // live-update side-effect can never take the entire dashboard
-    // page down via React's error boundary — losing realtime is a
-    // graceful degradation; losing the page isn't.
-    let supabase;
+
+    // Realtime is a non-critical UX nicety: losing it should degrade to
+    // "no auto-refresh" — never to "the whole page crashed into the
+    // workspace error boundary." Wrap the entire setup body in
+    // try/catch so any synchronous throw from supabase-js (env vars
+    // missing, breaking API change in `.channel().on().subscribe()`,
+    // malformed filter string) becomes a console.warn instead of
+    // taking the dashboard or grows surface down via React's error
+    // boundary on hydration.
+    type SupabaseBrowserClient = ReturnType<typeof createSupabaseBrowserClient>;
+    type RealtimeChannel = ReturnType<SupabaseBrowserClient["channel"]>;
+    let supabase: SupabaseBrowserClient | undefined;
+    let channels: RealtimeChannel[] = [];
     try {
       supabase = createSupabaseBrowserClient();
+      const client = supabase;
+
+      const scheduleRefresh = () => {
+        setLastEventAt(Date.now());
+        if (debounceRef.current) clearTimeout(debounceRef.current);
+        debounceRef.current = setTimeout(() => {
+          router.refresh();
+        }, 300);
+      };
+
+      // Build channels with a for-of + push (not `.map`) so that if any
+      // `.subscribe()` throws partway through the list, the channels
+      // array reflects what actually subscribed and the catch block
+      // can clean them up. A `.map` would discard the partial result
+      // on throw and leak the already-subscribed channels.
+      for (const growId of growIds) {
+        const channel = client
+          .channel(`live-analysis:${growId}`)
+          .on(
+            "postgres_changes",
+            {
+              event: "INSERT",
+              schema: "public",
+              table: "plant_analyses",
+              filter: `grow_id=eq.${growId}`,
+            },
+            scheduleRefresh,
+          )
+          .on(
+            "postgres_changes",
+            {
+              event: "INSERT",
+              schema: "public",
+              table: "plant_findings",
+              // plant_findings has no grow_id column; we just listen
+              // for any insert and let the upstream debounce + RLS
+              // handle the rest. RLS ensures we only receive findings
+              // for plants in grows the user can read.
+            },
+            scheduleRefresh,
+          )
+          .subscribe();
+        channels.push(channel);
+      }
     } catch (err) {
       if (typeof console !== "undefined") {
         console.warn(
-          "useLiveAnalysis: browser supabase client unavailable, realtime disabled",
+          "useLiveAnalysis: realtime setup failed, live updates disabled",
           err,
         );
+      }
+      // Best-effort cleanup of anything that did get subscribed before
+      // the throw.
+      if (supabase) {
+        for (const ch of channels) {
+          try {
+            void supabase.removeChannel(ch);
+          } catch {
+            // ignore
+          }
+        }
       }
       return;
     }
 
-    const scheduleRefresh = () => {
-      setLastEventAt(Date.now());
-      if (debounceRef.current) clearTimeout(debounceRef.current);
-      debounceRef.current = setTimeout(() => {
-        router.refresh();
-      }, 300);
-    };
-
-    const channels = growIds.map((growId) => {
-      const channel = supabase
-        .channel(`live-analysis:${growId}`)
-        .on(
-          "postgres_changes",
-          {
-            event: "INSERT",
-            schema: "public",
-            table: "plant_analyses",
-            filter: `grow_id=eq.${growId}`,
-          },
-          scheduleRefresh,
-        )
-        .on(
-          "postgres_changes",
-          {
-            event: "INSERT",
-            schema: "public",
-            table: "plant_findings",
-            // plant_findings has no grow_id column; we just listen for
-            // any insert and let the upstream debounce + RLS handle the
-            // rest. RLS ensures we only receive findings for plants in
-            // grows the user can read.
-          },
-          scheduleRefresh,
-        )
-        .subscribe();
-      return channel;
-    });
-
     return () => {
       if (debounceRef.current) clearTimeout(debounceRef.current);
+      if (!supabase) return;
       for (const ch of channels) {
-        void supabase.removeChannel(ch);
+        try {
+          void supabase.removeChannel(ch);
+        } catch (err) {
+          if (typeof console !== "undefined") {
+            console.warn("useLiveAnalysis: channel teardown failed", err);
+          }
+        }
       }
     };
   }, [growIds, router]);
