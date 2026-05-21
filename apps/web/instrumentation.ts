@@ -1,4 +1,4 @@
-import { registerOTel } from "@vercel/otel";
+const SERVICE_NAME = process.env["OTEL_SERVICE_NAME"] ?? "phenosage-web";
 
 export async function register() {
   // 1. OpenTelemetry trace propagation.
@@ -9,15 +9,25 @@ export async function register() {
   // so spans on both sides correlate end-to-end without anyone having to
   // copy trace IDs by hand.
   //
-  // Graceful skip when `ANALYSIS_SERVICE_URL` is unset — local dev runs
-  // without the analysis service and we shouldn't fail boot for that.
+  // Dynamic import so the file boots even if `@vercel/otel` is absent
+  // (e.g. removed by a security audit) — matches the Sentry pattern
+  // below. Graceful skip when `ANALYSIS_SERVICE_URL` is unset AND
+  // `OTEL_ENABLED` is not "true" so local dev doesn't try to register a
+  // tracer it has no use for.
   const analysisUrl = process.env["ANALYSIS_SERVICE_URL"]?.trim();
   const otelEnabled =
     (process.env["OTEL_ENABLED"] ?? "").toLowerCase() === "true";
   if (analysisUrl || otelEnabled) {
     try {
-      registerOTel({
-        serviceName: process.env["OTEL_SERVICE_NAME"] ?? "phenosage-web",
+      const dynamicImport = new Function(
+        "specifier",
+        "return import(specifier)",
+      ) as (_specifier: string) => Promise<{
+        registerOTel?: (_options: Record<string, unknown>) => void;
+      }>;
+      const otel = await dynamicImport("@vercel/otel");
+      otel.registerOTel?.({
+        serviceName: SERVICE_NAME,
         ...(analysisUrl
           ? {
               instrumentationConfig: {
@@ -31,7 +41,7 @@ export async function register() {
         JSON.stringify({
           level: "warn",
           message: "web OTel register skipped",
-          service: "phenosage-web",
+          service: SERVICE_NAME,
           reason: error instanceof Error ? error.message : "unknown_error",
         }),
       );
@@ -68,7 +78,7 @@ export async function register() {
       JSON.stringify({
         level: "warn",
         message: "web instrumentation init skipped",
-        service: "phenosage-web",
+        service: SERVICE_NAME,
         reason: error instanceof Error ? error.message : "unknown_error",
       }),
     );
