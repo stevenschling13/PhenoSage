@@ -75,6 +75,16 @@ const SERVER_RULES: Rule[] = [
     hint: "32+ byte random hex; must match the storage.objects Database Webhook header",
   },
   {
+    // GitHub webhook signing secret. The receiver verifies
+    // X-Hub-Signature-256 against this value before forwarding merge /
+    // workflow / release events to Discord. Optional everywhere — when
+    // unset the route returns 503 but the rest of the app boots fine
+    // (the forwarder is operator-channel polish, not user-facing).
+    name: "GITHUB_WEBHOOK_SECRET",
+    required: false,
+    hint: "Random string; must match the secret set on the GitHub webhook",
+  },
+  {
     name: "GEMINI_API_KEY",
     required: true,
     pattern: /^AIza[0-9A-Za-z_-]{20,}$/,
