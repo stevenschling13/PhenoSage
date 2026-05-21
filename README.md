@@ -1,5 +1,10 @@
 # PhenoSage
 
+[![Live deploy](https://img.shields.io/badge/live-pheno--sage--web.vercel.app-1f2937?logo=vercel&logoColor=white)](https://pheno-sage-web.vercel.app/)
+[![Readiness](https://img.shields.io/badge/dynamic/json?label=readiness&query=$.status&url=https%3A%2F%2Fpheno-sage-web.vercel.app%2Fapi%2Fready&color=10b981)](https://pheno-sage-web.vercel.app/api/ready)
+
+**Live:** https://pheno-sage-web.vercel.app/ — production tracks `main`.
+
 AI-powered cannabis grow operating system. Web-first, mobile-compatible, with secure image upload, persisted plant analyses, timeline tracking, and a grow-aware chatbot that keeps its own thread history.
 
 ## What is PhenoSage?
