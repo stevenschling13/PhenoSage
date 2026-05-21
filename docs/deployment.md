@@ -34,20 +34,38 @@ Set these in Vercel project settings → Environment Variables.
 
 Mark server-only variables as **Server** exposure only (not Preview/Production client-side).
 
-| Variable                        | Exposure        | Description                                                       |
-| ------------------------------- | --------------- | ----------------------------------------------------------------- |
-| `NEXT_PUBLIC_SUPABASE_URL`      | Public          | Supabase project URL                                              |
-| `NEXT_PUBLIC_SUPABASE_ANON_KEY` | Public          | Supabase anon/public key                                          |
-| `NEXT_PUBLIC_APP_URL`           | Public          | App base URL (e.g. `https://phenosage.vercel.app`)                |
-| `SUPABASE_SERVICE_ROLE_KEY`     | **Server only** | Supabase service role — bypasses RLS                              |
-| `ANALYSIS_SERVICE_URL`          | **Server only** | Railway analysis service base URL                                 |
-| `ANALYSIS_SERVICE_API_KEY`      | **Server only** | Shared secret for proxy auth                                      |
-| `ANALYSIS_SERVICE_TIMEOUT_MS`   | **Server only** | Optional Railway proxy timeout override in milliseconds           |
-| `READINESS_PROBE_SECRET`        | **Server only** | Protects `/api/internal/ready` readiness checks                   |
-| `GEMINI_API_KEY`                | **Server only** | Google Gemini API key (chat) — free tier from aistudio.google.com |
-| `CRON_SECRET`                   | **Server only** | Protects `/api/internal/cron/*` endpoints                         |
-| `SENTRY_DSN`                    | **Server only** | Optional Sentry DSN for web error reporting                       |
-| `SENTRY_TRACES_SAMPLE_RATE`     | **Server only** | Optional trace sample rate                                        |
+The **Sensitive?** column flags secrets that must also be created with Vercel's [Sensitive Environment Variables](https://vercel.com/docs/environment-variables/sensitive-environment-variables) toggle on. A sensitive value is unreadable from the Vercel dashboard, the CLI, or API after creation — only its existence is exposed. This is the production-safe default for any secret that, if leaked from a compromised `VERCEL_TOKEN`, would let an attacker forge requests against PhenoSage or its upstreams. Public `NEXT_PUBLIC_*` vars and non-secret config like `ANALYSIS_SERVICE_URL` do not need the toggle.
+
+| Variable                          | Exposure        | Sensitive? | Description                                                                 |
+| --------------------------------- | --------------- | ---------- | --------------------------------------------------------------------------- |
+| `NEXT_PUBLIC_SUPABASE_URL`        | Public          | —          | Supabase project URL                                                        |
+| `NEXT_PUBLIC_SUPABASE_ANON_KEY`   | Public          | —          | Supabase anon/public key                                                    |
+| `NEXT_PUBLIC_APP_URL`             | Public          | —          | App base URL (e.g. `https://phenosage.vercel.app`)                          |
+| `NEXT_PUBLIC_APP_ENV`             | Public          | —          | `production` / `preview` / `development` (gates `requiredInProduction` env) |
+| `SUPABASE_SERVICE_ROLE_KEY`       | **Server only** | **Yes**    | Supabase service role — bypasses RLS                                        |
+| `ANALYSIS_SERVICE_URL`            | **Server only** | —          | Railway analysis service base URL (not a secret; URL only)                  |
+| `ANALYSIS_SERVICE_API_KEY`        | **Server only** | **Yes**    | Shared secret for proxy auth                                                |
+| `ANALYSIS_SERVICE_TIMEOUT_MS`     | **Server only** | —          | Optional Railway proxy timeout override in milliseconds                     |
+| `ANALYSIS_WEBHOOK_SECRET`         | **Server only** | **Yes**    | HMAC key for analysis-complete callback (Railway → web)                     |
+| `SUPABASE_AUTH_WEBHOOK_SECRET`    | **Server only** | **Yes**    | Bearer for Supabase Database Webhook on `auth.users` INSERT                 |
+| `SUPABASE_STORAGE_WEBHOOK_SECRET` | **Server only** | **Yes**    | Bearer for Supabase Database Webhook on `storage.objects` INSERT            |
+| `GITHUB_WEBHOOK_SECRET`           | **Server only** | **Yes**    | HMAC key for GitHub repo webhook → Discord forwarder                        |
+| `DISCORD_WEBHOOK_URL`             | **Server only** | **Yes**    | Discord channel webhook URL (target for GitHub event forwarder)             |
+| `READINESS_PROBE_SECRET`          | **Server only** | **Yes**    | Protects `/api/internal/ready` readiness checks                             |
+| `GEMINI_API_KEY`                  | **Server only** | **Yes**    | Google Gemini API key (chat) — free tier from aistudio.google.com           |
+| `CRON_SECRET`                     | **Server only** | **Yes**    | Protects `/api/internal/cron/*` endpoints                                   |
+| `SENTRY_DSN`                      | **Server only** | —          | Optional Sentry DSN — not a write credential                                |
+| `SENTRY_AUTH_TOKEN`               | **Server only** | **Yes**    | Source-map upload token; required for the Sentry release-tag CI step        |
+| `SENTRY_TRACES_SAMPLE_RATE`       | **Server only** | —          | Optional trace sample rate                                                  |
+
+**How to mark an existing var Sensitive** (operator action — can't be done in code):
+
+1. Vercel → `pheno-sage-web` → Settings → Environment Variables.
+2. Find the secret → … menu → **Delete**.
+3. Re-add the same name + value, ticking **Sensitive** before save. Note: Vercel restricts Sensitive variables to the **Production** environment only — they cannot be enabled for Preview or Development. Preview and Development continue to use plain env vars, and the env contract validator (`apps/web/src/lib/env.ts`) keeps preview deploys honest via the `requiredInProduction` gate.
+4. Redeploy to pick up the new env binding.
+
+Doing this for the 11 rows tagged **Yes** above closes the agent-flagged Vercel hardening gap from the 2026-05-21 deployment best-practices review.
 
 ### apps/analysis (Railway)
 
@@ -402,7 +420,7 @@ All five listed secrets, including `VERCEL_PROTECTION_BYPASS`, are safe
 to leave unset — any workflow that depends on one will skip that step and
 log a warning instead of failing the deploy.
 
-### Enabling Vercel Rolling Releases
+### Enabling Vercel Rolling Releases (operator action)
 
 Rolling Releases gradually shift traffic from the previous production
 deploy to the new one (e.g. 5% → 25% → 100%) instead of cutting over
@@ -410,15 +428,30 @@ instantly. A bad deploy then affects only the canary cohort, and you
 can use Vercel's built-in **Instant Rollback** to revert before more
 users hit it.
 
+**Status as of 2026-05-21: documented but not flipped on.** This is the
+last open item from the May 2026 deployment best-practices review.
+The phase-1 auto-rollback path in `.github/workflows/post-deploy-smoke.yml`
+already calls Vercel's promote API on failure, so enabling Rolling Releases
+narrows the blast radius of any deploy that slips past smoke.
+
 To enable:
 
 1. Vercel → `pheno-sage-web` → Settings → Rolling Releases → Enable.
 2. Start with a single stage: **5% canary for 10 min, then 100%**.
-3. Over time, layer Speed Insights / Sentry comparisons into the
+3. In **Settings → General**, confirm **Skew Protection** is on
+   (Next 14.1.4+ enables it for free; double-check the toggle is on
+   for this project). Without it, an in-flight `/api/...` request from
+   a canary client can land on the previous deploy and fail because
+   chunk hashes don't match.
+4. Over time, layer Speed Insights / Sentry comparisons into the
    promotion gate (see `docs/runbooks/slo.md` for the SLO numbers
    that should drive auto-promote vs auto-rollback decisions).
 
-Docs: https://vercel.com/docs/rolling-releases · https://vercel.com/docs/instant-rollback
+Docs (as of 2026-05-21):
+
+- [Vercel Rolling Releases](https://vercel.com/docs/rolling-releases)
+- [Vercel Instant Rollback](https://vercel.com/docs/instant-rollback)
+- [Vercel Skew Protection](https://vercel.com/docs/skew-protection)
 
 ## Pre-deploy readiness
 
