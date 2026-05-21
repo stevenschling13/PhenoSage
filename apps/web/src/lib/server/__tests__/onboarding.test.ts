@@ -6,7 +6,7 @@ vi.mock("../db", () => ({
   getDbClient: (...args: unknown[]) => getDbClient(...args),
 }));
 
-import { seedDefaultGrowForUser } from "../onboarding";
+import { reconcileOnboarding, seedDefaultGrowForUser } from "../onboarding";
 
 const USER_ID = "11111111-1111-4111-8111-111111111111";
 
@@ -87,5 +87,116 @@ describe("seedDefaultGrowForUser", () => {
     await expect(seedDefaultGrowForUser({ userId: USER_ID })).rejects.toThrow(
       /Failed to seed default grow: insert boom/,
     );
+  });
+});
+
+describe("reconcileOnboarding", () => {
+  function makeReconcileClient(opts: {
+    rpcResult: { data: unknown; error: { message: string } | null };
+    perUserCounts?: Array<{
+      count: number | null;
+      error: { message: string } | null;
+    }>;
+    perUserInserts?: Array<{
+      data: { id: string } | null;
+      error: { message: string } | null;
+    }>;
+  }) {
+    const rpc = vi.fn().mockResolvedValue(opts.rpcResult);
+
+    let countCall = 0;
+    let insertCall = 0;
+
+    const growsCountEq = vi.fn().mockImplementation(() => {
+      const result = opts.perUserCounts?.[countCall] ?? {
+        count: 0,
+        error: null,
+      };
+      countCall++;
+      return Promise.resolve(result);
+    });
+    const growsSelect = vi.fn(() => ({ eq: growsCountEq }));
+
+    const insertSingle = vi.fn().mockImplementation(() => {
+      const result = opts.perUserInserts?.[insertCall] ?? {
+        data: { id: `grow-${insertCall}` },
+        error: null,
+      };
+      insertCall++;
+      return Promise.resolve(result);
+    });
+    const insertSelect = vi.fn(() => ({ single: insertSingle }));
+    const insert = vi.fn(() => ({ select: insertSelect }));
+
+    const from = vi.fn(() => ({ select: growsSelect, insert }));
+    return { from, rpc };
+  }
+
+  it("returns zeros when the RPC reports no orphans", async () => {
+    const db = makeReconcileClient({ rpcResult: { data: [], error: null } });
+    getDbClient.mockReturnValue(db);
+    const report = await reconcileOnboarding();
+    expect(report).toEqual({ scanned: 0, seeded: 0, errored: 0 });
+    expect(db.rpc).toHaveBeenCalledWith("find_users_without_default_grow", {
+      p_limit: 200,
+    });
+  });
+
+  it("throws when the RPC returns an error", async () => {
+    const db = makeReconcileClient({
+      rpcResult: { data: null, error: { message: "rpc boom" } },
+    });
+    getDbClient.mockReturnValue(db);
+    await expect(reconcileOnboarding()).rejects.toThrow(
+      /Failed to enumerate orphan users: rpc boom/,
+    );
+  });
+
+  it("seeds each orphan and reports counts", async () => {
+    const orphans = ["u1", "u2", "u3"];
+    const db = makeReconcileClient({
+      rpcResult: { data: orphans, error: null },
+    });
+    getDbClient.mockReturnValue(db);
+    const report = await reconcileOnboarding();
+    expect(report).toEqual({ scanned: 3, seeded: 3, errored: 0 });
+  });
+
+  it("counts a per-user insert failure as errored, not abort", async () => {
+    const orphans = ["u1", "u2"];
+    const db = makeReconcileClient({
+      rpcResult: { data: orphans, error: null },
+      perUserCounts: [
+        { count: 0, error: null },
+        { count: 0, error: null },
+      ],
+      perUserInserts: [
+        { data: null, error: { message: "insert boom" } },
+        { data: { id: "g2" }, error: null },
+      ],
+    });
+    getDbClient.mockReturnValue(db);
+    const report = await reconcileOnboarding();
+    expect(report).toEqual({ scanned: 2, seeded: 1, errored: 1 });
+  });
+
+  it("treats a webhook race (user gained a grow between enumerate and seed) as no-op", async () => {
+    const orphans = ["u1"];
+    const db = makeReconcileClient({
+      rpcResult: { data: orphans, error: null },
+      perUserCounts: [{ count: 1, error: null }],
+    });
+    getDbClient.mockReturnValue(db);
+    const report = await reconcileOnboarding();
+    expect(report).toEqual({ scanned: 1, seeded: 0, errored: 0 });
+  });
+
+  it("accepts row-object shape from the RPC ({ id })", async () => {
+    const db = makeReconcileClient({
+      rpcResult: { data: [{ id: "u1" }, { id: "u2" }], error: null },
+    });
+    getDbClient.mockReturnValue(db);
+    const report = await reconcileOnboarding();
+    expect(report.scanned).toBe(2);
   });
 });
