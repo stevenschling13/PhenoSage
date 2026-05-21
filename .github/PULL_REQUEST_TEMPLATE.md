@@ -42,7 +42,7 @@ Confirm none of the following were introduced (see `.github/copilot-instructions
 - [ ] No browser code calls the analysis service or Supabase service-role APIs directly
 - [ ] No server-only secrets (`SUPABASE_SERVICE_ROLE_KEY`, `OPENAI_API_KEY`, `ANALYSIS_SERVICE_*`) leaked to client modules or `NEXT_PUBLIC_*`
 - [ ] No client component imports from `apps/web/src/lib/server/**`
-- [ ] No `middleware.ts` added to act as a backend proxy
+- [ ] No `middleware.ts` or `proxy.ts` added to act as a backend proxy
 - [ ] No public Supabase Storage bucket for user content
 - [ ] No edits to previously-committed `supabase/migrations/**` files
 - [ ] No SQLite, second database, or new microservice introduced
