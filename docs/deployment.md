@@ -62,7 +62,7 @@ The **Sensitive?** column flags secrets that must also be created with Vercel's 
 
 1. Vercel → `pheno-sage-web` → Settings → Environment Variables.
 2. Find the secret → … menu → **Delete**.
-3. Re-add the same name + value, ticking **Sensitive** before save. Scope: Production only (also Preview if a feature legitimately needs it, but the default is Production-only).
+3. Re-add the same name + value, ticking **Sensitive** before save. Note: Vercel restricts Sensitive variables to the **Production** environment only — they cannot be enabled for Preview or Development. Preview and Development continue to use plain env vars, and the env contract validator (`apps/web/src/lib/env.ts`) keeps preview deploys honest via the `requiredInProduction` gate.
 4. Redeploy to pick up the new env binding.
 
 Doing this for the 11 rows tagged **Yes** above closes the agent-flagged Vercel hardening gap from the 2026-05-21 deployment best-practices review.
@@ -438,7 +438,7 @@ To enable:
 
 1. Vercel → `pheno-sage-web` → Settings → Rolling Releases → Enable.
 2. Start with a single stage: **5% canary for 10 min, then 100%**.
-3. In the same Advanced settings, confirm **Skew Protection** is on
+3. In **Settings → General**, confirm **Skew Protection** is on
    (Next 14.1.4+ enables it for free; double-check the toggle is on
    for this project). Without it, an in-flight `/api/...` request from
    a canary client can land on the previous deploy and fail because
