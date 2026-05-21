@@ -18,7 +18,11 @@ vi.mock("../db", () => ({
   getDbClient: (...args: unknown[]) => getDbClient(...args),
 }));
 
-import { enqueueAnalysisJob, getAnalysisJob } from "../analysis-jobs";
+import {
+  completeAnalysisJob,
+  enqueueAnalysisJob,
+  getAnalysisJob,
+} from "../analysis-jobs";
 
 const JOB_ROW = {
   id: "job-1",
@@ -247,5 +251,138 @@ describe("getAnalysisJob", () => {
     });
     expect(client.from).toHaveBeenCalledWith("analysis_jobs");
     expect(client.eq).toHaveBeenCalledWith("id", "job-1");
+  });
+});
+
+describe("completeAnalysisJob", () => {
+  type DbRow = {
+    id: string;
+    plant_id: string;
+    image_id: string;
+    grow_id: string;
+    requested_by: string;
+    status: "queued" | "running" | "succeeded" | "failed" | "cancelled";
+    attempt_count: number;
+    max_attempts: number;
+    queued_at: string;
+    started_at: string | null;
+    finished_at: string | null;
+    error_code: string | null;
+    error_message: string | null;
+    result_analysis_id: string | null;
+  };
+  const BASE_ROW: DbRow = { ...JOB_ROW };
+
+  function makeCompleteClient(opts: {
+    loadResult: { data: DbRow | null; error: { message: string } | null };
+    updateResult?: { data: DbRow | null; error: { message: string } | null };
+  }) {
+    const loadMaybeSingle = vi.fn().mockResolvedValue(opts.loadResult);
+    const loadEq = vi.fn(() => ({ maybeSingle: loadMaybeSingle }));
+    const loadSelect = vi.fn(() => ({ eq: loadEq }));
+
+    const updateMaybeSingle = vi
+      .fn()
+      .mockResolvedValue(opts.updateResult ?? { data: null, error: null });
+    const updateSelect = vi.fn(() => ({ maybeSingle: updateMaybeSingle }));
+    const updateEq = vi.fn(() => ({ select: updateSelect }));
+    const update = vi.fn(() => ({ eq: updateEq }));
+
+    const from = vi.fn(() => ({ select: loadSelect, update }));
+    return { from, update, updateEq, loadEq };
+  }
+
+  it("returns not_found when no job row exists", async () => {
+    const db = makeCompleteClient({ loadResult: { data: null, error: null } });
+    getDbClient.mockReturnValue(db);
+    const result = await completeAnalysisJob({
+      jobId: "job-x",
+      status: "succeeded",
+      resultAnalysisId: "analysis-1",
+    });
+    expect(result).toEqual({ kind: "not_found" });
+    expect(db.update).not.toHaveBeenCalled();
+  });
+
+  it("returns already_terminal without updating when the job is already terminal", async () => {
+    const terminalRow: DbRow = { ...BASE_ROW, status: "succeeded" };
+    const db = makeCompleteClient({
+      loadResult: { data: terminalRow, error: null },
+    });
+    getDbClient.mockReturnValue(db);
+    const result = await completeAnalysisJob({
+      jobId: "job-1",
+      status: "succeeded",
+      resultAnalysisId: "analysis-1",
+    });
+    expect(result.kind).toBe("already_terminal");
+    expect(db.update).not.toHaveBeenCalled();
+  });
+
+  it("writes finished_at + result_analysis_id on success", async () => {
+    const updatedRow: DbRow = {
+      ...BASE_ROW,
+      status: "succeeded",
+      finished_at: "2026-05-21T12:00:00Z",
+      result_analysis_id: "analysis-1",
+    };
+    const db = makeCompleteClient({
+      loadResult: { data: BASE_ROW, error: null },
+      updateResult: { data: updatedRow, error: null },
+    });
+    getDbClient.mockReturnValue(db);
+    const result = await completeAnalysisJob({
+      jobId: "job-1",
+      status: "succeeded",
+      resultAnalysisId: "analysis-1",
+      finishedAt: "2026-05-21T12:00:00Z",
+    });
+    expect(result).toEqual({
+      kind: "updated",
+      job: expect.objectContaining({
+        status: "succeeded",
+        resultAnalysisId: "analysis-1",
+        finishedAt: "2026-05-21T12:00:00Z",
+      }),
+    });
+    expect(db.update).toHaveBeenCalledWith(
+      expect.objectContaining({
+        status: "succeeded",
+        finished_at: "2026-05-21T12:00:00Z",
+        result_analysis_id: "analysis-1",
+        error_code: null,
+        error_message: null,
+      }),
+    );
+    expect(db.updateEq).toHaveBeenCalledWith("id", "job-1");
+  });
+
+  it("writes error_code + error_message on failure and clears result_analysis_id", async () => {
+    const updatedRow: DbRow = {
+      ...BASE_ROW,
+      status: "failed",
+      finished_at: "2026-05-21T12:00:00Z",
+      error_code: "ModelTimeout",
+      error_message: "upstream timed out",
+    };
+    const db = makeCompleteClient({
+      loadResult: { data: BASE_ROW, error: null },
+      updateResult: { data: updatedRow, error: null },
+    });
+    getDbClient.mockReturnValue(db);
+    await completeAnalysisJob({
+      jobId: "job-1",
+      status: "failed",
+      errorCode: "ModelTimeout",
+      errorMessage: "upstream timed out",
+    });
+    expect(db.update).toHaveBeenCalledWith(
+      expect.objectContaining({
+        status: "failed",
+        error_code: "ModelTimeout",
+        error_message: "upstream timed out",
+        result_analysis_id: null,
+      }),
+    );
   });
 });

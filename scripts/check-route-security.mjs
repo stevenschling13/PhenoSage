@@ -6,9 +6,10 @@
 //      (a) be a public route listed in PUBLIC_ROUTES, or
 //      (b) reference an auth helper from @/lib/server/auth, or
 //      (c) be an /api/internal/* route, which must instead verify the
-//          Vercel cron secret or readiness secret (header
-//          "Authorization: Bearer ..." against CRON_SECRET,
-//          VERCEL_CRON_SECRET, or READINESS_PROBE_SECRET).
+//          Vercel cron secret, readiness secret, or a webhook signature
+//          (header "Authorization: Bearer ..." against CRON_SECRET,
+//          VERCEL_CRON_SECRET, READINESS_PROBE_SECRET, or HMAC against
+//          ANALYSIS_WEBHOOK_SECRET).
 //   2. State-changing routes (POST/PUT/PATCH/DELETE) must read from the
 //      request body via .json()/.formData() and not blindly trust query params.
 //   3. Route Handlers must not import from "@/components/**" (client leak).
@@ -64,7 +65,7 @@ const HTTP_METHOD_NAMES = new Set(["GET", "POST", "PUT", "PATCH", "DELETE"]);
 const AUTH_IMPORT_RE = /from\s+["']@\/lib\/server\/auth["']/;
 const COMPONENTS_IMPORT_RE = /from\s+["']@\/components\//;
 const CRON_SECRET_RE =
-  /(CRON_SECRET|VERCEL_CRON_SECRET|READINESS_PROBE_SECRET|x-vercel-cron|Vercel-Cron)/;
+  /(CRON_SECRET|VERCEL_CRON_SECRET|READINESS_PROBE_SECRET|ANALYSIS_WEBHOOK_SECRET|x-vercel-cron|Vercel-Cron)/;
 
 let scanned = 0;
 for (const file of walk(API_ROOT)) {

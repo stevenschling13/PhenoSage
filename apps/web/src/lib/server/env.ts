@@ -42,6 +42,17 @@ const SERVER_RULES: Rule[] = [
   },
   { name: "ANALYSIS_SERVICE_API_KEY", required: true },
   {
+    // Shared HMAC secret the analysis service uses to sign
+    // /api/internal/webhooks/analysis-complete callbacks. Optional in
+    // dev/preview (the synchronous /analyze path still works without
+    // it); required in production so async job completions can't be
+    // spoofed by an attacker who guesses the route.
+    name: "ANALYSIS_WEBHOOK_SECRET",
+    required: false,
+    requiredInProduction: true,
+    hint: "32+ byte random hex; must match the analysis service",
+  },
+  {
     name: "GEMINI_API_KEY",
     required: true,
     pattern: /^AIza[0-9A-Za-z_-]{20,}$/,
