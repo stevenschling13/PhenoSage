@@ -21,6 +21,7 @@ vi.mock("../db", () => ({
 import {
   completeAnalysisJob,
   enqueueAnalysisJob,
+  enqueueAnalysisJobByStoragePath,
   getAnalysisJob,
 } from "../analysis-jobs";
 
@@ -384,5 +385,98 @@ describe("completeAnalysisJob", () => {
         result_analysis_id: null,
       }),
     );
+  });
+});
+
+describe("enqueueAnalysisJobByStoragePath", () => {
+  type ImageRow = {
+    id: string;
+    plant_id: string;
+    grow_id: string;
+    user_id: string;
+  };
+
+  function makeClient(opts: {
+    lookup: { data: ImageRow | null; error: { message: string } | null };
+    rpcResult?: { data: unknown; error: { message: string } | null };
+  }) {
+    const maybeSingle = vi.fn().mockResolvedValue(opts.lookup);
+    const eq = vi.fn(() => ({ maybeSingle }));
+    const select = vi.fn(() => ({ eq }));
+    const from = vi.fn(() => ({ select }));
+    const rpc = vi
+      .fn()
+      .mockResolvedValue(opts.rpcResult ?? { data: JOB_ROW, error: null });
+    return { from, rpc, eq, select };
+  }
+
+  it("returns image_not_found when no plant_images row matches", async () => {
+    const db = makeClient({ lookup: { data: null, error: null } });
+    getDbClient.mockReturnValue(db);
+    const result = await enqueueAnalysisJobByStoragePath({
+      storagePath: "plant-1/foo.jpg",
+    });
+    expect(result).toEqual({
+      kind: "image_not_found",
+      storagePath: "plant-1/foo.jpg",
+    });
+    expect(db.rpc).not.toHaveBeenCalled();
+  });
+
+  it("throws when the image lookup errors", async () => {
+    const db = makeClient({
+      lookup: { data: null, error: { message: "lookup boom" } },
+    });
+    getDbClient.mockReturnValue(db);
+    await expect(
+      enqueueAnalysisJobByStoragePath({ storagePath: "plant-1/foo.jpg" }),
+    ).rejects.toThrow(/Failed to look up plant image: lookup boom/);
+  });
+
+  it("throws when the RPC errors", async () => {
+    const db = makeClient({
+      lookup: {
+        data: {
+          id: "image-1",
+          plant_id: "plant-1",
+          grow_id: "grow-1",
+          user_id: "user-1",
+        },
+        error: null,
+      },
+      rpcResult: { data: null, error: { message: "rpc boom" } },
+    });
+    getDbClient.mockReturnValue(db);
+    await expect(
+      enqueueAnalysisJobByStoragePath({ storagePath: "plant-1/foo.jpg" }),
+    ).rejects.toThrow(/Failed to enqueue analysis job: rpc boom/);
+  });
+
+  it("enqueues using the image row's plant/grow/user with a storage-webhook idempotency key", async () => {
+    const db = makeClient({
+      lookup: {
+        data: {
+          id: "image-42",
+          plant_id: "plant-1",
+          grow_id: "grow-1",
+          user_id: "user-1",
+        },
+        error: null,
+      },
+    });
+    getDbClient.mockReturnValue(db);
+    const result = await enqueueAnalysisJobByStoragePath({
+      storagePath: "plant-1/abc.jpg",
+    });
+    expect(result.kind).toBe("enqueued");
+    expect(db.rpc).toHaveBeenCalledWith("enqueue_analysis_job", {
+      p_plant_id: "plant-1",
+      p_image_id: "image-42",
+      p_grow_id: "grow-1",
+      p_requested_by: "user-1",
+      p_idempotency_key: "storage-webhook:image-42",
+      p_max_attempts: 3,
+    });
+    expect(db.eq).toHaveBeenCalledWith("storage_path", "plant-1/abc.jpg");
   });
 });
