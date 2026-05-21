@@ -1348,20 +1348,40 @@ describe("plants server helpers", () => {
       plant_findings: params.findings ?? [],
       grow_tasks: params.tasks ?? [],
     };
+    // The timeline subquery uses `.order(...).limit(...)` after the
+    // Phase 3.3 pagination cap. supabase-js builders are thenable AND
+    // chainable, so the fixture's `order` returns a value that
+    // resolves directly (existing callers) AND exposes `.limit()`
+    // returning the same data (post-3.3 callers).
+    function thenableOrderReturn(
+      data: unknown[] | null,
+      error: { message: string } | null,
+    ) {
+      const result = { data, error };
+      const limit = vi.fn().mockResolvedValue(result);
+      return {
+        limit,
+        then: (
+          _onFulfilled?: (_v: typeof result) => unknown,
+          _onRejected?: (_r: unknown) => unknown,
+        ) => Promise.resolve(result).then(_onFulfilled, _onRejected),
+      } as PromiseLike<typeof result> & { limit: typeof limit };
+    }
     const from = vi.fn((table: string) => {
       if (table === "grow_tasks") {
-        const order = vi.fn().mockResolvedValue({
-          data: params.tasksError ? null : tableData.grow_tasks,
-          error: params.tasksError ? { message: params.tasksError } : null,
-        });
+        const order = vi.fn(() =>
+          thenableOrderReturn(
+            params.tasksError ? null : (tableData.grow_tasks ?? []),
+            params.tasksError ? { message: params.tasksError } : null,
+          ),
+        );
         const eq = vi.fn(() => ({ order }));
         const select = vi.fn(() => ({ eq }));
         return { select };
       }
-      const order = vi.fn().mockResolvedValue({
-        data: tableData[table] ?? [],
-        error: null,
-      });
+      const order = vi.fn(() =>
+        thenableOrderReturn(tableData[table] ?? [], null),
+      );
       const eq = vi.fn(() => ({ order }));
       const select = vi.fn(() => ({ eq }));
       return { select };
