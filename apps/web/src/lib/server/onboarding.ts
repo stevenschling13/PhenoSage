@@ -1,5 +1,6 @@
 import "server-only";
 import { getDbClient } from "./db";
+import { logServerEvent } from "./request-id";
 
 export type SeedDefaultGrowOutcome =
   | { kind: "already_has_grow"; growCount: number }
@@ -10,6 +11,11 @@ interface SeedDefaultGrowInput {
 }
 
 const DEFAULT_GROW_NAME = "My First Grow";
+
+// Cap on how many orphan users a single reconciliation cron tick processes.
+// Sized so a worst-case full sweep still fits inside the 60s Vercel cron
+// function budget at ~1 insert per ms (Supabase is well under that).
+const RECONCILE_BATCH_LIMIT = 1000;
 
 /**
  * Create a starter `grows` row for a freshly signed-up user so the dashboard
@@ -53,4 +59,64 @@ export async function seedDefaultGrowForUser(
   }
 
   return { kind: "seeded", growId: inserted.id };
+}
+
+export interface ReconcileOnboardingReport {
+  scanned: number;
+  seeded: number;
+  errored: number;
+}
+
+/**
+ * Find all `auth.users` rows that have zero `grows` rows and seed a
+ * default grow for each. Defends against the `pg_net`-backed Database
+ * Webhook silently dropping an `auth.users` INSERT — see migration
+ * 20260521190000 for the SECURITY DEFINER function this calls.
+ *
+ * Bounded to `RECONCILE_BATCH_LIMIT` users per tick so a single cron
+ * run can't run past Vercel's function timeout. A persistent backlog
+ * will drain on subsequent daily ticks.
+ */
+export async function reconcileOnboarding(): Promise<ReconcileOnboardingReport> {
+  const db = getDbClient();
+  const { data: rows, error } = await db.rpc(
+    "find_users_without_default_grow",
+    {
+      p_limit: RECONCILE_BATCH_LIMIT,
+    },
+  );
+  if (error) {
+    throw new Error(`Failed to enumerate orphan users: ${error.message}`);
+  }
+
+  const userIds: string[] = Array.isArray(rows)
+    ? rows
+        .map((r) =>
+          typeof r === "string"
+            ? r
+            : r && typeof r === "object" && "id" in r
+              ? String((r as { id: unknown }).id)
+              : null,
+        )
+        .filter((v): v is string => v !== null)
+    : [];
+
+  let seeded = 0;
+  let errored = 0;
+  for (const userId of userIds) {
+    try {
+      const outcome = await seedDefaultGrowForUser({ userId });
+      if (outcome.kind === "seeded") seeded++;
+      // already_has_grow is possible if a webhook delivered between the
+      // enumerate and the seed — counted as a no-op, not an error.
+    } catch (err) {
+      errored++;
+      logServerEvent("error", "reconcile-onboarding: per-user seed failed", {
+        userId,
+        error: err instanceof Error ? err.message : "unknown_error",
+      });
+    }
+  }
+
+  return { scanned: userIds.length, seeded, errored };
 }
