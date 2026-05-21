@@ -122,6 +122,51 @@ const TERMINAL_STATUSES: ReadonlySet<AnalysisJobStatus> = new Set([
   "cancelled",
 ]);
 
+export type EnqueueByStoragePathOutcome =
+  | { kind: "image_not_found"; storagePath: string }
+  | { kind: "enqueued"; job: AnalysisJob };
+
+/**
+ * Enqueue an analysis job for an image identified by its storage path,
+ * with no caller session. Used by the storage webhook receiver: the
+ * plant_images row was already created (and ownership-checked) by the
+ * authenticated `/api/upload/finalize` flow, so we trust the row's
+ * plant_id / grow_id / user_id rather than re-checking auth.uid().
+ *
+ * Idempotent via `idempotency_key = storage-webhook:<imageId>`. Repeated
+ * webhook deliveries for the same upload return the same job row.
+ */
+export async function enqueueAnalysisJobByStoragePath(params: {
+  storagePath: string;
+}): Promise<EnqueueByStoragePathOutcome> {
+  const db = getDbClient();
+  const { data: image, error: imageError } = await db
+    .from("plant_images")
+    .select("id, plant_id, grow_id, user_id")
+    .eq("storage_path", params.storagePath)
+    .maybeSingle();
+  if (imageError) {
+    throw new Error(`Failed to look up plant image: ${imageError.message}`);
+  }
+  if (!image) {
+    return { kind: "image_not_found", storagePath: params.storagePath };
+  }
+
+  const { data, error } = await db.rpc("enqueue_analysis_job", {
+    p_plant_id: image.plant_id,
+    p_image_id: image.id,
+    p_grow_id: image.grow_id,
+    p_requested_by: image.user_id,
+    p_idempotency_key: `storage-webhook:${image.id}`,
+    p_max_attempts: 3,
+  });
+  if (error) {
+    throw new Error(`Failed to enqueue analysis job: ${error.message}`);
+  }
+
+  return { kind: "enqueued", job: mapJob(data as AnalysisJobRow) };
+}
+
 export type CompleteAnalysisJobOutcome =
   | { kind: "not_found" }
   | { kind: "already_terminal"; job: AnalysisJob }

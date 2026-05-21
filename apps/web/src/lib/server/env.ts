@@ -65,6 +65,16 @@ const SERVER_RULES: Rule[] = [
     hint: "32+ byte random hex; must match the Supabase Database Webhook header",
   },
   {
+    // Shared bearer for Supabase Database Webhooks posted to
+    // /api/internal/webhooks/storage/image-uploaded. Auto-analyze on
+    // upload is the production behavior; optional in dev/preview where
+    // an operator may not want every test upload to burn quota.
+    name: "SUPABASE_STORAGE_WEBHOOK_SECRET",
+    required: false,
+    requiredInProduction: true,
+    hint: "32+ byte random hex; must match the storage.objects Database Webhook header",
+  },
+  {
     name: "GEMINI_API_KEY",
     required: true,
     pattern: /^AIza[0-9A-Za-z_-]{20,}$/,

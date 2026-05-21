@@ -102,6 +102,7 @@ describe("env validation", () => {
     env["SENTRY_DSN"] = "https://abc123@o4504.ingest.sentry.io/12345";
     env["ANALYSIS_WEBHOOK_SECRET"] = "prod-webhook-secret";
     env["SUPABASE_AUTH_WEBHOOK_SECRET"] = "prod-auth-secret";
+    env["SUPABASE_STORAGE_WEBHOOK_SECRET"] = "prod-storage-secret";
     expect(getServerEnvErrors(env)).toEqual([]);
   });
 
@@ -139,6 +140,26 @@ describe("env validation", () => {
   it("does NOT require SUPABASE_AUTH_WEBHOOK_SECRET outside production", () => {
     const env = baseValidEnv();
     delete env["SUPABASE_AUTH_WEBHOOK_SECRET"];
+    expect(getServerEnvErrors(env)).toEqual([]);
+    env["NEXT_PUBLIC_APP_ENV"] = "preview";
+    expect(getServerEnvErrors(env)).toEqual([]);
+  });
+
+  it("requires SUPABASE_STORAGE_WEBHOOK_SECRET when NEXT_PUBLIC_APP_ENV=production", () => {
+    const env = baseValidEnv();
+    env["NEXT_PUBLIC_APP_ENV"] = "production";
+    env["SENTRY_DSN"] = "https://abc123@o4504.ingest.sentry.io/12345";
+    env["ANALYSIS_WEBHOOK_SECRET"] = "prod-analysis-secret";
+    env["SUPABASE_AUTH_WEBHOOK_SECRET"] = "prod-auth-secret";
+    const errs = getServerEnvErrors(env);
+    expect(
+      errs.some((e) => e.includes("SUPABASE_STORAGE_WEBHOOK_SECRET")),
+    ).toBe(true);
+  });
+
+  it("does NOT require SUPABASE_STORAGE_WEBHOOK_SECRET outside production", () => {
+    const env = baseValidEnv();
+    delete env["SUPABASE_STORAGE_WEBHOOK_SECRET"];
     expect(getServerEnvErrors(env)).toEqual([]);
     env["NEXT_PUBLIC_APP_ENV"] = "preview";
     expect(getServerEnvErrors(env)).toEqual([]);
