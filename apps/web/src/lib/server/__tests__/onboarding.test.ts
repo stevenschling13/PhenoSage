@@ -138,7 +138,7 @@ describe("reconcileOnboarding", () => {
     const report = await reconcileOnboarding();
     expect(report).toEqual({ scanned: 0, seeded: 0, errored: 0 });
     expect(db.rpc).toHaveBeenCalledWith("find_users_without_default_grow", {
-      p_limit: 1000,
+      p_limit: 200,
     });
   });
 

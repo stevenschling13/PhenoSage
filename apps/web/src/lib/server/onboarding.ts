@@ -2,20 +2,31 @@ import "server-only";
 import { getDbClient } from "./db";
 import { logServerEvent } from "./request-id";
 
+type SupabaseDbClient = ReturnType<typeof getDbClient>;
+
 export type SeedDefaultGrowOutcome =
   | { kind: "already_has_grow"; growCount: number }
   | { kind: "seeded"; growId: string };
 
 interface SeedDefaultGrowInput {
   userId: string;
+  /**
+   * Optional caller-supplied service-role client. Defaults to a fresh
+   * `getDbClient()` per call. Pass an explicit client when looping over
+   * many users (e.g. the reconcile cron) so we don't instantiate a new
+   * Supabase JS client per iteration.
+   */
+  db?: SupabaseDbClient;
 }
 
 const DEFAULT_GROW_NAME = "My First Grow";
 
 // Cap on how many orphan users a single reconciliation cron tick processes.
-// Sized so a worst-case full sweep still fits inside the 60s Vercel cron
-// function budget at ~1 insert per ms (Supabase is well under that).
-const RECONCILE_BATCH_LIMIT = 1000;
+// Each user costs a count + insert round-trip. At ~50ms per pair over the
+// public internet (Vercel → Supabase), 200 users ≈ 10s — comfortably under
+// the 60s Vercel cron budget with plenty of headroom for retries and
+// network jitter. A persistent backlog will drain on subsequent ticks.
+const RECONCILE_BATCH_LIMIT = 200;
 
 /**
  * Create a starter `grows` row for a freshly signed-up user so the dashboard
@@ -33,7 +44,7 @@ const RECONCILE_BATCH_LIMIT = 1000;
 export async function seedDefaultGrowForUser(
   input: SeedDefaultGrowInput,
 ): Promise<SeedDefaultGrowOutcome> {
-  const db = getDbClient();
+  const db = input.db ?? getDbClient();
 
   const { count: existing, error: countErr } = await db
     .from("grows")
@@ -105,7 +116,10 @@ export async function reconcileOnboarding(): Promise<ReconcileOnboardingReport> 
   let errored = 0;
   for (const userId of userIds) {
     try {
-      const outcome = await seedDefaultGrowForUser({ userId });
+      // Reuse the single service-role client across the loop instead of
+      // instantiating a fresh Supabase JS client per user — avoids the
+      // memory + socket overhead of N clients per cron tick.
+      const outcome = await seedDefaultGrowForUser({ userId, db });
       if (outcome.kind === "seeded") seeded++;
       // already_has_grow is possible if a webhook delivered between the
       // enumerate and the seed — counted as a no-op, not an error.
