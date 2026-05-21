@@ -1,0 +1,65 @@
+name: Pre-deploy checklist
+
+# Phase 2 slice (e): enforces the PR template's required checklists before a
+# PR targeting `main` can merge. Parses the PR body and fails the check if
+# any required item under "## Validation", "## Architecture & Forbidden
+# Changes", or "## Rollback" is unchecked.
+#
+# Waivers:
+#   * Draft PRs are skipped (no failure) — checklist is enforced once the PR
+#     is marked ready for review.
+#   * PRs labelled `guardian:approved` are skipped — same waiver pattern as
+#     scripts/pr-guardian.mjs.
+#
+# To make this a required status check, an operator must edit branch
+# protection for `main` in GitHub repo settings:
+#   Settings → Branches → main → Require status checks → add
+#   "Pre-deploy checklist / Verify".
+# That cannot be configured from code.
+
+on:
+  pull_request:
+    types: [opened, edited, synchronize, ready_for_review, labeled, unlabeled]
+    branches: [main]
+
+permissions:
+  contents: read
+  pull-requests: read
+
+concurrency:
+  group: pre-deploy-checklist-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  verify:
+    name: Verify
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    # Skip drafts and waived PRs entirely so the check shows as "skipped"
+    # rather than failing while work is in progress.
+    if: |
+      github.event.pull_request.draft == false &&
+      !contains(github.event.pull_request.labels.*.name, 'guardian:approved')
+    steps:
+      - uses: step-security/harden-runner@ab7a9404c0f3da075243ca237b5fac12c98deaa5 # v2
+        with:
+          egress-policy: audit
+
+      - uses: actions/checkout@v6
+
+      - name: Evaluate checklist
+        uses: actions/github-script@v9
+        with:
+          script: |
+            const { evaluate } = await import(
+              `${process.env.GITHUB_WORKSPACE}/scripts/check-pr-checklist.mjs`
+            );
+            const body = context.payload.pull_request.body ?? '';
+            const result = evaluate(body);
+            core.summary.addRaw(result.summary);
+            await core.summary.write();
+            if (!result.ok) {
+              core.setFailed(result.summary);
+            } else {
+              core.info(result.summary);
+            }

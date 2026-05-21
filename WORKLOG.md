@@ -4,6 +4,88 @@ Handoff log between sessions. Keep entries short. Newest at top.
 
 ---
 
+## 2026-05-17 — Phase 2 slice (e): pre-deploy checklist gate (Copilot)
+
+**Landed on `copilot/phase-2-implementation`** alongside Step 0.
+
+- New `.github/workflows/pre-deploy-checklist.yml`: parses PR body for the
+  template's required sections; fails if any item under **Validation**,
+  **Architecture & Forbidden Changes**, or **Rollback** is unchecked. Skips
+  draft PRs and PRs labelled `guardian:approved`. SHA-pinned
+  `step-security/harden-runner`, minimum-scoped permissions
+  (`contents: read`, `pull-requests: read`), concurrency scoped per-PR.
+- New `scripts/check-pr-checklist.mjs`: pure parser + `evaluate(body)`
+  function exported for the workflow (via `actions/github-script@v9`) and
+  for unit tests.
+- New `scripts/__tests__/check-pr-checklist.test.mjs`: 7 tests, picked up
+  automatically by the existing `check:smoke-script` glob; all pass.
+- `docs/deployment.md` §CI/CD: added "Required status checks for `main`"
+  subsection with operator instructions to flip the new gate to required
+  in branch protection (cannot be configured from code).
+- Validation: `pnpm run validate` ✅ (9/9 smoke + script tests),
+  `pnpm run security:routes` ✅, `pnpm turbo run type-check lint test` ✅
+  (730 tests), CodeQL ✅ (0 alerts).
+- Branch note: the playbook's `copilot/phase2-<slice>` branch-per-slice
+  convention starts with the next slice. This slice rode the existing
+  `copilot/phase-2-implementation` branch because the playbook PR was
+  already open there and the sandbox can only push to the current branch.
+
+**Next slice**
+
+- **(a)** Error-rate probe in `post-deploy-smoke.yml`. Open a fresh
+  session, paste the prompt in §6 of
+  `docs/playbooks/phase2-deploy-hardening-series.md`, swap the slice
+  letter to `a`. Highest user value — closes the load-bearing SLO gap.
+
+---
+
+## 2026-05-17 — Phase 2 deploy-hardening series handoff (Copilot)
+
+**In-flight on `copilot/phase-2-implementation`** (Step 0 only — doc).
+
+- Added `docs/playbooks/phase2-deploy-hardening-series.md`: self-contained
+  6-PR series plan that future agents can find and follow. Modeled on
+  `docs/playbooks/ci-optimization-series.md` and the
+  `docs/playbooks/post-pr-163-followups.md` precedent.
+- Source of truth for scope: PR #184 "What's deliberately deferred (Phase 2
+  items)" + `docs/runbooks/slo.md` lines 68–70 (error-rate probe) and line
+  79 (DORA-CFR → CHANGELOG).
+- Slices, each independently revertable under the `AGENTS.md` size caps:
+  - **(a)** Error-rate probe in `post-deploy-smoke.yml` (reuses Phase 1
+    rollback path).
+  - **(b)** Sentry verification — CI check for DSN/auth-token symmetry +
+    one-shot post-deploy release-tag verifier (issue, not rollback).
+  - **(c)** DORA CFR → `docs/metrics/dora.md` via auto-opened PR, weekly
+    cron.
+  - **(d)** `apps/web/src/app/api/internal/status/route.ts` JSON endpoint
+    gated by `Authorization: Bearer ${CRON_SECRET}` (matches the existing
+    daily-summary cron pattern).
+  - **(e)** Pre-deploy checklist gate parsing the PR template's "Test
+    plan" fence.
+  - **(f)** Vercel Flags server-only scaffold under
+    `apps/web/src/lib/server/flags.ts` — nothing user-facing in this slice.
+- Recommended order: **e → a → c → b → d → f** (rationale in the doc §4).
+- Validation: same gate as the CI-opt series (`pnpm run validate` +
+  `pnpm turbo run type-check lint test` + `pnpm run security:routes`);
+  slice (f) additionally requires `pnpm run build`; slice (a) additionally
+  requires a `workflow_dispatch` dry-run with optional secrets unset to
+  prove graceful degradation.
+- Out-of-scope for the whole series, restated for emphasis: schema /
+  migrations, `packages/shared/src/types.ts`, `apps/analysis/app/models/**`,
+  any browser-facing status page, any `middleware.ts`, any weakening of
+  `harden-runner` / `concurrency` / job-scoped `permissions:`.
+- This branch (`copilot/phase-2-implementation`) is intentionally
+  doc-only. Each slice lands as its own PR off `main` on a branch named
+  `copilot/phase2-<slice>`.
+
+**Next step**
+
+- Open a fresh session per slice, paste the prompt template in §6 of the
+  new doc, swap the slice letter. Start with **(e)** (warm-up) or **(a)**
+  (highest user value).
+
+---
+
 ## 2026-05-16 — CI optimization slice (a) on series PR (Copilot)
 
 **Landed on `copilot/optimize-ci-process`** (slice (a) appended to the series-handoff PR per user direction to follow Option 1 in-place)
