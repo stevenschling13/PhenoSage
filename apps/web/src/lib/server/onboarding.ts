@@ -3,8 +3,7 @@ import { getDbClient } from "./db";
 
 export type SeedDefaultGrowOutcome =
   | { kind: "already_has_grow"; growCount: number }
-  | { kind: "seeded"; growId: string }
-  | { kind: "user_not_found" };
+  | { kind: "seeded"; growId: string };
 
 interface SeedDefaultGrowInput {
   userId: string;
@@ -15,25 +14,20 @@ const DEFAULT_GROW_NAME = "My First Grow";
 /**
  * Create a starter `grows` row for a freshly signed-up user so the dashboard
  * doesn't land them in an empty state. Idempotent: skipped if the user
- * already owns any grow row. Uses the service-role client to bypass RLS
- * — this runs from a server-only webhook handler with no authenticated
- * session to map auth.uid() to.
+ * already owns any grow row.
+ *
+ * Uses the service-role client to bypass RLS. We deliberately do NOT verify
+ * the user exists in `auth.users` first — Supabase's `auth` schema isn't
+ * exposed through PostgREST by default, and the trigger that calls us
+ * already fired AFTER an INSERT into `auth.users`, so the row provably
+ * existed at trigger time. If the user was deleted between insert and
+ * processing (a vanishingly rare race), the `grows.owner_id` FK to
+ * `auth.users(id)` will reject the insert and the caller surfaces a 500.
  */
 export async function seedDefaultGrowForUser(
   input: SeedDefaultGrowInput,
 ): Promise<SeedDefaultGrowOutcome> {
   const db = getDbClient();
-
-  const { data: userRow, error: userErr } = await db
-    .schema("auth")
-    .from("users")
-    .select("id")
-    .eq("id", input.userId)
-    .maybeSingle();
-  if (userErr) {
-    throw new Error(`Failed to look up auth user: ${userErr.message}`);
-  }
-  if (!userRow) return { kind: "user_not_found" };
 
   const { count: existing, error: countErr } = await db
     .from("grows")

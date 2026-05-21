@@ -127,14 +127,6 @@ describe("POST /api/internal/webhooks/auth/user-created", () => {
     expect(body.data.reason).toBe("already_onboarded");
   });
 
-  it("returns 200 with seeded=false when the user no longer exists (stale event)", async () => {
-    seedDefaultGrowForUser.mockResolvedValue({ kind: "user_not_found" });
-    const res = await POST(buildRequest(envelope()));
-    expect(res.status).toBe(200);
-    const body = await res.json();
-    expect(body.data.reason).toBe("user_not_found");
-  });
-
   it("returns 500 when onboarding throws", async () => {
     seedDefaultGrowForUser.mockRejectedValue(new Error("db unavailable"));
     const res = await POST(buildRequest(envelope()));
