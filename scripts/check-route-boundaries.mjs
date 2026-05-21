@@ -63,20 +63,23 @@ for (const file of walk(WEB_SRC)) {
   }
 }
 
-// 5. No middleware.ts OR proxy.ts in apps/web
+// 5. No middleware.* OR proxy.* in apps/web
 //
 // Next 16 renamed the `middleware` filename to `proxy` (Node-runtime only).
 // Both are equivalent backend-proxy escape hatches that violate the
-// "boundary lives in Route Handlers" rule — block both names so the
-// guardrail keeps working on Next 16+.
-const forbiddenBoundaryFiles = [
-  join(WEB_SRC, "middleware.ts"),
-  join(WEB_SRC, "middleware.tsx"),
-  join(ROOT, "apps", "web", "middleware.ts"),
-  join(WEB_SRC, "proxy.ts"),
-  join(WEB_SRC, "proxy.tsx"),
-  join(ROOT, "apps", "web", "proxy.ts"),
-];
+// "boundary lives in Route Handlers" rule. Next resolves these filenames
+// against several extensions (.ts, .tsx, .js, .jsx, .mjs) and looks in
+// either `src/` or the project root — block every combination so the
+// guardrail keeps working on Next 16+ and can't be bypassed by renaming
+// the extension.
+const FORBIDDEN_BOUNDARY_NAMES = ["middleware", "proxy"];
+const FORBIDDEN_BOUNDARY_EXTS = ["ts", "tsx", "js", "jsx", "mjs"];
+const forbiddenBoundaryFiles = FORBIDDEN_BOUNDARY_NAMES.flatMap((name) =>
+  FORBIDDEN_BOUNDARY_EXTS.flatMap((ext) => [
+    join(WEB_SRC, `${name}.${ext}`),
+    join(ROOT, "apps", "web", `${name}.${ext}`),
+  ]),
+);
 for (const mp of forbiddenBoundaryFiles) {
   if (existsSync(mp)) {
     errors.push(
