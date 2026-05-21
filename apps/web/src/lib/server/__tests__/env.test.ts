@@ -100,6 +100,27 @@ describe("env validation", () => {
     const env = baseValidEnv();
     env["NEXT_PUBLIC_APP_ENV"] = "production";
     env["SENTRY_DSN"] = "https://abc123@o4504.ingest.sentry.io/12345";
+    env["ANALYSIS_WEBHOOK_SECRET"] = "prod-webhook-secret";
+    expect(getServerEnvErrors(env)).toEqual([]);
+  });
+
+  it("requires ANALYSIS_WEBHOOK_SECRET when NEXT_PUBLIC_APP_ENV=production", () => {
+    // The webhook is the receive-side of the async analysis loop; a
+    // production deploy without the shared HMAC key can't validate
+    // callbacks. Optional in dev/preview so the synchronous /analyze
+    // path keeps working without a secret.
+    const env = baseValidEnv();
+    env["NEXT_PUBLIC_APP_ENV"] = "production";
+    env["SENTRY_DSN"] = "https://abc123@o4504.ingest.sentry.io/12345";
+    const errs = getServerEnvErrors(env);
+    expect(errs.some((e) => e.includes("ANALYSIS_WEBHOOK_SECRET"))).toBe(true);
+  });
+
+  it("does NOT require ANALYSIS_WEBHOOK_SECRET outside production", () => {
+    const env = baseValidEnv();
+    delete env["ANALYSIS_WEBHOOK_SECRET"];
+    expect(getServerEnvErrors(env)).toEqual([]);
+    env["NEXT_PUBLIC_APP_ENV"] = "preview";
     expect(getServerEnvErrors(env)).toEqual([]);
   });
 });

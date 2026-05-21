@@ -115,3 +115,79 @@ export async function getAnalysisJob(
   }
   return data ? mapJob(data as AnalysisJobRow) : null;
 }
+
+const TERMINAL_STATUSES: ReadonlySet<AnalysisJobStatus> = new Set([
+  "succeeded",
+  "failed",
+  "cancelled",
+]);
+
+export type CompleteAnalysisJobOutcome =
+  | { kind: "not_found" }
+  | { kind: "already_terminal"; job: AnalysisJob }
+  | { kind: "updated"; job: AnalysisJob };
+
+interface CompleteAnalysisJobInput {
+  jobId: string;
+  status: "succeeded" | "failed";
+  resultAnalysisId?: string | null;
+  errorCode?: string | null;
+  errorMessage?: string | null;
+  finishedAt?: string;
+  attemptCount?: number;
+}
+
+/**
+ * Apply a terminal status to an analysis job using the service-role
+ * client. Idempotent: if the job is already in a terminal status the
+ * current row is returned unchanged so the caller can respond 200 to
+ * webhook retries without overwriting prior results.
+ */
+export async function completeAnalysisJob(
+  input: CompleteAnalysisJobInput,
+): Promise<CompleteAnalysisJobOutcome> {
+  const db = getDbClient();
+  const { data: existing, error: loadError } = await db
+    .from("analysis_jobs")
+    .select(
+      "id,plant_id,image_id,grow_id,requested_by,status,attempt_count,max_attempts,queued_at,started_at,finished_at,error_code,error_message,result_analysis_id",
+    )
+    .eq("id", input.jobId)
+    .maybeSingle();
+  if (loadError) {
+    throw new Error(`Failed to load analysis job: ${loadError.message}`);
+  }
+  if (!existing) return { kind: "not_found" };
+  const current = mapJob(existing as AnalysisJobRow);
+  if (TERMINAL_STATUSES.has(current.status)) {
+    return { kind: "already_terminal", job: current };
+  }
+
+  const finishedAt = input.finishedAt ?? new Date().toISOString();
+  const patch: Partial<AnalysisJobRow> = {
+    status: input.status,
+    finished_at: finishedAt,
+    error_code: input.status === "failed" ? (input.errorCode ?? null) : null,
+    error_message:
+      input.status === "failed" ? (input.errorMessage ?? null) : null,
+    result_analysis_id:
+      input.status === "succeeded" ? (input.resultAnalysisId ?? null) : null,
+  };
+  if (typeof input.attemptCount === "number") {
+    patch.attempt_count = input.attemptCount;
+  }
+
+  const { data: updated, error: updateError } = await db
+    .from("analysis_jobs")
+    .update(patch)
+    .eq("id", input.jobId)
+    .select(
+      "id,plant_id,image_id,grow_id,requested_by,status,attempt_count,max_attempts,queued_at,started_at,finished_at,error_code,error_message,result_analysis_id",
+    )
+    .maybeSingle();
+  if (updateError) {
+    throw new Error(`Failed to update analysis job: ${updateError.message}`);
+  }
+  if (!updated) return { kind: "not_found" };
+  return { kind: "updated", job: mapJob(updated as AnalysisJobRow) };
+}
