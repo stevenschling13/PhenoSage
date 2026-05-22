@@ -35,8 +35,7 @@ import { fileURLToPath } from "node:url";
 
 // Release tag format: vYYYY.MM.DD-N. Anchor both ends so a future tag
 // like `v1.0.0-rc1` doesn't accidentally count as a deploy.
-const RELEASE_TAG_RE = /^v\d{4}\.\d{2}\.\d{2}-\d+$/;
-const TAG_DATE_RE = /^v(\d{4})\.(\d{2})\.(\d{2})-\d+$/;
+const TAG_RE = /^v(\d{4})\.(\d{2})\.(\d{2})-\d+$/;
 const REQUIRED_FAILURE_LABELS = ["production", "smoke-test"];
 
 const DOC_VERSION = 1;
