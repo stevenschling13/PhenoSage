@@ -3,6 +3,7 @@ import type { AnalysisJobStatus } from "@phenosage/shared";
 import { createSupabaseServerClient } from "./auth";
 import { getDbClient } from "./db";
 import { getAuthorizedPlantContext } from "./plant-access";
+import { rateLimit } from "./rate-limit";
 
 type AnalysisJobRow = {
   id: string;
@@ -124,7 +125,17 @@ const TERMINAL_STATUSES: ReadonlySet<AnalysisJobStatus> = new Set([
 
 export type EnqueueByStoragePathOutcome =
   | { kind: "image_not_found"; storagePath: string }
+  | { kind: "rate_limited"; userId: string; resetAt: number }
   | { kind: "enqueued"; job: AnalysisJob };
+
+// Per-user ceiling on auto-analyzed uploads. Sized so a grower with a
+// frantic morning photo session can still get every image analyzed, but
+// a runaway script (someone scripting 500 uploads) hits the brake before
+// burning through OpenAI quota. Each analysis job triggers one vision
+// call downstream. Bump this if real users hit the cap in production
+// — see logs for `storage webhook: rate-limited` warnings.
+const ANALYSIS_ENQUEUE_LIMIT_PER_HOUR = 20;
+const ANALYSIS_ENQUEUE_WINDOW_MS = 60 * 60 * 1000;
 
 /**
  * Enqueue an analysis job for an image identified by its storage path,
@@ -135,6 +146,13 @@ export type EnqueueByStoragePathOutcome =
  *
  * Idempotent via `idempotency_key = storage-webhook:<imageId>`. Repeated
  * webhook deliveries for the same upload return the same job row.
+ *
+ * Rate-limited per `plant_images.user_id` at
+ * `ANALYSIS_ENQUEUE_LIMIT_PER_HOUR` (20/hr default). When the cap is
+ * hit, returns `{ kind: "rate_limited" }` — the storage webhook
+ * acknowledges the delivery with 200 so Supabase doesn't retry, and a
+ * subsequent user-triggered `/api/plants/[plantId]/analyze` (which has
+ * its own session-scoped path) still works.
  */
 export async function enqueueAnalysisJobByStoragePath(params: {
   storagePath: string;
@@ -150,6 +168,26 @@ export async function enqueueAnalysisJobByStoragePath(params: {
   }
   if (!image) {
     return { kind: "image_not_found", storagePath: params.storagePath };
+  }
+
+  // Per-user ceiling on auto-enqueued analyses. We rate-limit BEFORE the
+  // RPC so a runaway upload script can't both burn vision quota AND fill
+  // analysis_jobs with rows that will never be drained. The limiter
+  // fails open on a Redis outage (see rateLimit() docstring) — that's
+  // the right tradeoff because the failure mode of fail-closed here is
+  // "growers' uploads silently stop being analyzed", which is worse
+  // than the cost overrun the limiter is defending against.
+  const rate = await rateLimit({
+    key: `analysis-enqueue:${image.user_id}`,
+    limit: ANALYSIS_ENQUEUE_LIMIT_PER_HOUR,
+    windowMs: ANALYSIS_ENQUEUE_WINDOW_MS,
+  });
+  if (!rate.ok) {
+    return {
+      kind: "rate_limited",
+      userId: image.user_id,
+      resetAt: rate.resetAt,
+    };
   }
 
   const { data, error } = await db.rpc("enqueue_analysis_job", {

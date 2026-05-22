@@ -3,6 +3,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 const getAuthorizedPlantContext = vi.fn();
 const createSupabaseServerClient = vi.fn();
 const getDbClient = vi.fn();
+const rateLimit = vi.fn();
 
 vi.mock("../plant-access", () => ({
   getAuthorizedPlantContext: (...args: unknown[]) =>
@@ -16,6 +17,10 @@ vi.mock("../auth", () => ({
 
 vi.mock("../db", () => ({
   getDbClient: (...args: unknown[]) => getDbClient(...args),
+}));
+
+vi.mock("../rate-limit", () => ({
+  rateLimit: (...args: unknown[]) => rateLimit(...args),
 }));
 
 import {
@@ -82,6 +87,14 @@ beforeEach(() => {
   getAuthorizedPlantContext.mockReset();
   createSupabaseServerClient.mockReset();
   getDbClient.mockReset();
+  rateLimit.mockReset();
+  // Default: the rate-limiter allows the call. Tests opt into the
+  // exceeded branch by overriding this in-test.
+  rateLimit.mockResolvedValue({
+    ok: true,
+    remaining: 19,
+    resetAt: Date.now() + 60 * 60 * 1000,
+  });
 });
 
 describe("enqueueAnalysisJob", () => {
@@ -478,5 +491,61 @@ describe("enqueueAnalysisJobByStoragePath", () => {
       p_max_attempts: 3,
     });
     expect(db.eq).toHaveBeenCalledWith("storage_path", "plant-1/abc.jpg");
+  });
+
+  it("rate-limits per user_id with key analysis-enqueue:<userId>", async () => {
+    const db = makeClient({
+      lookup: {
+        data: {
+          id: "image-42",
+          plant_id: "plant-1",
+          grow_id: "grow-1",
+          user_id: "user-1",
+        },
+        error: null,
+      },
+    });
+    getDbClient.mockReturnValue(db);
+    await enqueueAnalysisJobByStoragePath({ storagePath: "plant-1/abc.jpg" });
+    expect(rateLimit).toHaveBeenCalledWith(
+      expect.objectContaining({
+        key: "analysis-enqueue:user-1",
+        limit: 20,
+        windowMs: 60 * 60 * 1000,
+      }),
+    );
+  });
+
+  it("returns rate_limited without enqueueing when the cap is hit", async () => {
+    const resetAt = Date.now() + 30 * 60 * 1000;
+    rateLimit.mockResolvedValue({ ok: false, remaining: 0, resetAt });
+    const db = makeClient({
+      lookup: {
+        data: {
+          id: "image-42",
+          plant_id: "plant-1",
+          grow_id: "grow-1",
+          user_id: "user-1",
+        },
+        error: null,
+      },
+    });
+    getDbClient.mockReturnValue(db);
+    const result = await enqueueAnalysisJobByStoragePath({
+      storagePath: "plant-1/abc.jpg",
+    });
+    expect(result).toEqual({
+      kind: "rate_limited",
+      userId: "user-1",
+      resetAt,
+    });
+    expect(db.rpc).not.toHaveBeenCalled();
+  });
+
+  it("does NOT consume a token when image lookup fails (no row to rate-limit)", async () => {
+    const db = makeClient({ lookup: { data: null, error: null } });
+    getDbClient.mockReturnValue(db);
+    await enqueueAnalysisJobByStoragePath({ storagePath: "plant-1/foo.jpg" });
+    expect(rateLimit).not.toHaveBeenCalled();
   });
 });

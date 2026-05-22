@@ -143,6 +143,27 @@ export async function POST(request: NextRequest) {
         requestId,
       );
     }
+    if (outcome.kind === "rate_limited") {
+      // Per-user analysis ceiling tripped. Ack 200 so Supabase doesn't
+      // retry — the user-triggered /api/plants/[plantId]/analyze path is
+      // still available if they want this specific image analyzed.
+      logServerEvent("warn", "storage webhook: rate-limited", {
+        requestId,
+        storagePath: extracted.storagePath,
+        userId: outcome.userId,
+        resetAt: outcome.resetAt,
+      });
+      return apiSuccess(
+        200,
+        {
+          storage_path: extracted.storagePath,
+          enqueued: false,
+          reason: "rate_limited",
+          reset_at: outcome.resetAt,
+        },
+        requestId,
+      );
+    }
     logServerEvent("info", "storage webhook: enqueued analysis", {
       requestId,
       storagePath: extracted.storagePath,
