@@ -24,6 +24,8 @@ vi.mock("../rate-limit", () => ({
 }));
 
 import {
+  ANALYSIS_ENQUEUE_LIMIT_PER_HOUR,
+  ANALYSIS_ENQUEUE_WINDOW_MS,
   completeAnalysisJob,
   enqueueAnalysisJob,
   enqueueAnalysisJobByStoragePath,
@@ -92,8 +94,8 @@ beforeEach(() => {
   // exceeded branch by overriding this in-test.
   rateLimit.mockResolvedValue({
     ok: true,
-    remaining: 19,
-    resetAt: Date.now() + 60 * 60 * 1000,
+    remaining: ANALYSIS_ENQUEUE_LIMIT_PER_HOUR - 1,
+    resetAt: Date.now() + ANALYSIS_ENQUEUE_WINDOW_MS,
   });
 });
 
@@ -408,19 +410,38 @@ describe("enqueueAnalysisJobByStoragePath", () => {
     grow_id: string;
     user_id: string;
   };
+  type JobRowResult = {
+    data: typeof JOB_ROW | null;
+    error: { message: string } | null;
+  };
 
   function makeClient(opts: {
     lookup: { data: ImageRow | null; error: { message: string } | null };
+    existingJob?: JobRowResult;
     rpcResult?: { data: unknown; error: { message: string } | null };
   }) {
-    const maybeSingle = vi.fn().mockResolvedValue(opts.lookup);
-    const eq = vi.fn(() => ({ maybeSingle }));
-    const select = vi.fn(() => ({ eq }));
-    const from = vi.fn(() => ({ select }));
+    // plant_images lookup: .from("plant_images").select(...).eq(...).maybeSingle()
+    const imageMaybeSingle = vi.fn().mockResolvedValue(opts.lookup);
+    const imageEq = vi.fn(() => ({ maybeSingle: imageMaybeSingle }));
+    const imageSelect = vi.fn(() => ({ eq: imageEq }));
+
+    // analysis_jobs dedup lookup: .from("analysis_jobs").select(...).eq(...).eq(...).maybeSingle()
+    const dedupMaybeSingle = vi
+      .fn()
+      .mockResolvedValue(opts.existingJob ?? { data: null, error: null });
+    const dedupEq2 = vi.fn(() => ({ maybeSingle: dedupMaybeSingle }));
+    const dedupEq1 = vi.fn(() => ({ eq: dedupEq2 }));
+    const dedupSelect = vi.fn(() => ({ eq: dedupEq1 }));
+
+    const from = vi.fn((table: string) => {
+      if (table === "plant_images") return { select: imageSelect };
+      if (table === "analysis_jobs") return { select: dedupSelect };
+      return { select: vi.fn() };
+    });
     const rpc = vi
       .fn()
       .mockResolvedValue(opts.rpcResult ?? { data: JOB_ROW, error: null });
-    return { from, rpc, eq, select };
+    return { from, rpc, eq: imageEq, select: imageSelect, dedupEq1, dedupEq2 };
   }
 
   it("returns image_not_found when no plant_images row matches", async () => {
@@ -510,8 +531,8 @@ describe("enqueueAnalysisJobByStoragePath", () => {
     expect(rateLimit).toHaveBeenCalledWith(
       expect.objectContaining({
         key: "analysis-enqueue:user-1",
-        limit: 20,
-        windowMs: 60 * 60 * 1000,
+        limit: ANALYSIS_ENQUEUE_LIMIT_PER_HOUR,
+        windowMs: ANALYSIS_ENQUEUE_WINDOW_MS,
       }),
     );
   });
@@ -540,6 +561,33 @@ describe("enqueueAnalysisJobByStoragePath", () => {
       resetAt,
     });
     expect(db.rpc).not.toHaveBeenCalled();
+  });
+
+  it("short-circuits to existing job WITHOUT consuming a token on duplicate delivery", async () => {
+    const db = makeClient({
+      lookup: {
+        data: {
+          id: "image-42",
+          plant_id: "plant-1",
+          grow_id: "grow-1",
+          user_id: "user-1",
+        },
+        error: null,
+      },
+      existingJob: { data: JOB_ROW, error: null },
+    });
+    getDbClient.mockReturnValue(db);
+    const result = await enqueueAnalysisJobByStoragePath({
+      storagePath: "plant-1/abc.jpg",
+    });
+    expect(result.kind).toBe("enqueued");
+    expect(rateLimit).not.toHaveBeenCalled();
+    expect(db.rpc).not.toHaveBeenCalled();
+    expect(db.dedupEq1).toHaveBeenCalledWith("image_id", "image-42");
+    expect(db.dedupEq2).toHaveBeenCalledWith(
+      "idempotency_key",
+      "storage-webhook:image-42",
+    );
   });
 
   it("does NOT consume a token when image lookup fails (no row to rate-limit)", async () => {
