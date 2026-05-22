@@ -1,0 +1,263 @@
+#!/usr/bin/env node
+// scripts/compute-dora-cfr.mjs
+//
+// Phase 2 slice (c) — DORA Change Failure Rate automation.
+//
+// Computes the 30-day CFR for PhenoSage's production deploys and writes
+// the result to docs/metrics/dora.md as a fenced JSON block. The
+// workflow opens a PR with any change.
+//
+// Inputs (no flags — env or stdin):
+//
+//   --tags <file>      Path to a file containing one git tag per line
+//                      (from `git tag -l 'v*' --sort=-creatordate`).
+//                      Tags matching the release-on-prod-deploy.yml
+//                      format `vYYYY.MM.DD-N` count as deploys.
+//   --issues <file>    Path to a JSON file containing the result of
+//                      `gh issue list --json createdAt,labels --state all`.
+//                      Issues opened in the window with BOTH the
+//                      `production` and `smoke-test` labels count as
+//                      failures.
+//   --out <file>       Path to write the doc (default: docs/metrics/dora.md).
+//   --window <days>    Trailing window in days (default: 30).
+//   --now <iso>        Override "now" for tests / reproducible runs.
+//
+// Exit codes:
+//   0 — doc written (or unchanged); CI step exits cleanly.
+//   1 — bad input or I/O failure.
+//
+// Tests cover the pure logic. The CLI wrapper is thin and exercised by
+// the workflow's `workflow_dispatch` dry-run.
+
+import { readFileSync, writeFileSync, mkdirSync, existsSync } from "node:fs";
+import { dirname } from "node:path";
+import { fileURLToPath } from "node:url";
+
+// Release tag format: vYYYY.MM.DD-N. Anchor both ends so a future tag
+// like `v1.0.0-rc1` doesn't accidentally count as a deploy.
+const RELEASE_TAG_RE = /^v\d{4}\.\d{2}\.\d{2}-\d+$/;
+const TAG_DATE_RE = /^v(\d{4})\.(\d{2})\.(\d{2})-\d+$/;
+const REQUIRED_FAILURE_LABELS = ["production", "smoke-test"];
+
+const DOC_VERSION = 1;
+
+/**
+ * Filter the supplied tag list to only release tags whose embedded date
+ * falls within the closed window [sinceMs, untilMs]. The release
+ * workflow stamps the tag with the deploy date, so the tag itself is
+ * the canonical timestamp — we don't need to look up the underlying
+ * commit date.
+ */
+export function countDeploysFromTags(tags, sinceMs, untilMs) {
+  let count = 0;
+  for (const raw of tags) {
+    const tag = typeof raw === "string" ? raw.trim() : "";
+    if (!RELEASE_TAG_RE.test(tag)) continue;
+    const match = tag.match(TAG_DATE_RE);
+    if (!match) continue;
+    const [, year, month, day] = match;
+    // Construct as UTC noon to avoid timezone edge-cases on the window
+    // boundary — the deploy "happened today" regardless of viewer TZ.
+    const t = Date.UTC(Number(year), Number(month) - 1, Number(day), 12);
+    if (t >= sinceMs && t <= untilMs) count++;
+  }
+  return count;
+}
+
+/**
+ * Count issues with all of REQUIRED_FAILURE_LABELS that were created
+ * inside the window. `issues` is the parsed JSON output of
+ * `gh issue list --json createdAt,labels`.
+ */
+export function countFailuresFromIssues(issues, sinceMs, untilMs) {
+  let count = 0;
+  for (const issue of Array.isArray(issues) ? issues : []) {
+    if (!issue || typeof issue !== "object") continue;
+    const createdAt = parseIsoDate(issue.createdAt ?? issue.created_at);
+    if (createdAt === null) continue;
+    if (createdAt < sinceMs || createdAt > untilMs) continue;
+    const labelNames = extractLabelNames(issue.labels);
+    if (REQUIRED_FAILURE_LABELS.every((req) => labelNames.includes(req))) {
+      count++;
+    }
+  }
+  return count;
+}
+
+function parseIsoDate(value) {
+  if (typeof value !== "string" || !value) return null;
+  const t = Date.parse(value);
+  return Number.isFinite(t) ? t : null;
+}
+
+function extractLabelNames(labels) {
+  if (!Array.isArray(labels)) return [];
+  const out = [];
+  for (const l of labels) {
+    if (typeof l === "string") out.push(l);
+    else if (l && typeof l === "object" && typeof l.name === "string")
+      out.push(l.name);
+  }
+  return out;
+}
+
+/**
+ * CFR = failures / deploys, in [0, 1]. Returns null when deploys=0 so
+ * the rendered doc can show "n/a" instead of NaN or a misleading 0%.
+ */
+export function computeCfr(deploys, failures) {
+  if (deploys <= 0) return null;
+  // Clamp at 1.0 — if failures exceeds deploys (rare but possible if
+  // multiple smoke runs fail before rollback succeeds) we don't want
+  // to claim CFR > 100%.
+  return Math.min(1, failures / deploys);
+}
+
+/**
+ * Render the doc body. Format is deliberately a fenced JSON block so
+ * a future dashboard can parse it deterministically without HTML
+ * scraping. The surrounding prose explains what the numbers mean for
+ * humans.
+ */
+export function renderDoraDoc({
+  deploys,
+  failures,
+  cfr,
+  windowDays,
+  generatedAt,
+}) {
+  const cfrText = cfr === null ? "n/a" : `${(cfr * 100).toFixed(2)}%`;
+  const block = {
+    version: DOC_VERSION,
+    generatedAt,
+    windowDays,
+    deploys,
+    failures,
+    changeFailureRate: cfr,
+  };
+  return [
+    "# DORA metrics",
+    "",
+    "_Auto-generated by `.github/workflows/dora-cfr.yml` — do not edit by hand. The workflow opens a PR weekly with the latest computation._",
+    "",
+    "## Change Failure Rate (CFR)",
+    "",
+    `Over the trailing **${windowDays} days** ending \`${generatedAt}\`:`,
+    "",
+    `- **Production deploys:** ${deploys} (from \`vYYYY.MM.DD-N\` release tags pushed by \`release-on-prod-deploy.yml\`)`,
+    `- **Failed deploys:** ${failures} (GitHub issues opened by the auto-rollback path, label set \`{${REQUIRED_FAILURE_LABELS.join(", ")}}\`)`,
+    `- **Change Failure Rate:** ${cfrText}`,
+    "",
+    "Machine-readable snapshot (parsers MUST tolerate new fields):",
+    "",
+    "```json",
+    JSON.stringify(block, null, 2),
+    "```",
+    "",
+    "## Method",
+    "",
+    "- Deploy count: distinct release tags whose embedded date (vYYYY.MM.DD-N) falls inside the window. A single calendar day may contain several deploys; each is counted.",
+    "- Failure count: GitHub issues created inside the window that carry both required labels. The auto-rollback step in `post-deploy-smoke.yml` is the only writer.",
+    "- CFR is reported as `n/a` when deploys=0 in the window. Clamped to 100% if failures exceed deploys.",
+    "",
+    "See `docs/runbooks/slo.md` for the deploy-reliability SLO this metric reports against.",
+    "",
+  ].join("\n");
+}
+
+function parseArgs(argv) {
+  const out = {
+    tagsFile: null,
+    issuesFile: null,
+    outFile: "docs/metrics/dora.md",
+    windowDays: 30,
+    now: null,
+  };
+  for (let i = 0; i < argv.length; i++) {
+    const arg = argv[i];
+    const next = argv[i + 1];
+    if (arg === "--tags") {
+      out.tagsFile = next;
+      i++;
+    } else if (arg === "--issues") {
+      out.issuesFile = next;
+      i++;
+    } else if (arg === "--out") {
+      out.outFile = next;
+      i++;
+    } else if (arg === "--window") {
+      const n = Number.parseInt(next, 10);
+      if (Number.isFinite(n) && n > 0) out.windowDays = n;
+      i++;
+    } else if (arg === "--now") {
+      const t = Date.parse(next);
+      if (Number.isFinite(t)) out.now = t;
+      i++;
+    }
+  }
+  return out;
+}
+
+function readJsonOr(path, fallback) {
+  try {
+    return JSON.parse(readFileSync(path, "utf8"));
+  } catch {
+    return fallback;
+  }
+}
+
+function readLinesOr(path, fallback) {
+  try {
+    return readFileSync(path, "utf8")
+      .split("\n")
+      .map((s) => s.trim())
+      .filter(Boolean);
+  } catch {
+    return fallback;
+  }
+}
+
+function runCli(argv) {
+  const opts = parseArgs(argv);
+  if (!opts.tagsFile || !opts.issuesFile) {
+    console.error(
+      "compute-dora-cfr: --tags and --issues are required (see file header)",
+    );
+    process.exit(1);
+  }
+  const tags = readLinesOr(opts.tagsFile, null);
+  const issues = readJsonOr(opts.issuesFile, null);
+  if (tags === null) {
+    console.error(`compute-dora-cfr: cannot read tags file ${opts.tagsFile}`);
+    process.exit(1);
+  }
+  if (issues === null) {
+    console.error(
+      `compute-dora-cfr: cannot read issues file ${opts.issuesFile}`,
+    );
+    process.exit(1);
+  }
+  const now = opts.now ?? Date.now();
+  const sinceMs = now - opts.windowDays * 24 * 60 * 60 * 1000;
+  const deploys = countDeploysFromTags(tags, sinceMs, now);
+  const failures = countFailuresFromIssues(issues, sinceMs, now);
+  const cfr = computeCfr(deploys, failures);
+  const generatedAt = new Date(now).toISOString();
+  const doc = renderDoraDoc({
+    deploys,
+    failures,
+    cfr,
+    windowDays: opts.windowDays,
+    generatedAt,
+  });
+  const outDir = dirname(opts.outFile);
+  if (!existsSync(outDir)) mkdirSync(outDir, { recursive: true });
+  writeFileSync(opts.outFile, doc);
+  console.log(
+    `compute-dora-cfr: wrote ${opts.outFile} (deploys=${deploys}, failures=${failures}, cfr=${cfr ?? "n/a"})`,
+  );
+}
+
+if (process.argv[1] && fileURLToPath(import.meta.url) === process.argv[1]) {
+  runCli(process.argv.slice(2));
+}

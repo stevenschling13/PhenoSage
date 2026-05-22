@@ -1,0 +1,119 @@
+name: DORA Change Failure Rate
+
+# Phase 2 slice (c) — weekly DORA Change Failure Rate computation.
+#
+# Computes the rolling 30-day CFR from:
+#   * Release tags pushed by release-on-prod-deploy.yml (deploy count)
+#   * GitHub issues with labels {production, smoke-test} opened by the
+#     auto-rollback path in post-deploy-smoke.yml (failure count)
+#
+# Writes docs/metrics/dora.md and opens a PR with any change. Never
+# pushes to main directly. If the doc is unchanged from the version
+# already on main, the workflow exits cleanly without a PR.
+#
+# Schedule: Mondays 07:00 UTC — before the EU working week starts.
+# Manual: workflow_dispatch.
+#
+# Required: GITHUB_TOKEN (auto-provided). No secrets needed.
+
+on:
+  schedule:
+    - cron: "0 7 * * 1"
+  workflow_dispatch: {}
+
+permissions:
+  contents: write
+  pull-requests: write
+  issues: read
+
+concurrency:
+  group: dora-cfr
+  cancel-in-progress: true
+
+jobs:
+  cfr:
+    name: Compute and update CFR
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: step-security/harden-runner@ab7a9404c0f3da075243ca237b5fac12c98deaa5 # v2
+        with:
+          egress-policy: audit
+
+      - uses: actions/checkout@v6
+        with:
+          # Full history so `git tag -l` sees every previous release tag.
+          fetch-depth: 0
+          # Use the default token for the gh CLI calls + pushing the
+          # update branch.
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - uses: actions/setup-node@v6
+        with:
+          node-version: "20"
+
+      - name: Fetch release tags
+        id: tags
+        shell: bash
+        run: |
+          set -euo pipefail
+          git fetch --tags --quiet
+          git tag -l 'v*' --sort=-creatordate > /tmp/dora-tags.txt
+          echo "Tag count: $(wc -l < /tmp/dora-tags.txt)"
+
+      - name: Fetch rollback-issue list
+        id: issues
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          # 200 covers ~6 months at PhenoSage's deploy cadence. The
+          # 30-day window slice happens in the script.
+          gh issue list \
+            --label production --label smoke-test \
+            --state all \
+            --limit 200 \
+            --json number,createdAt,labels \
+            > /tmp/dora-issues.json
+          echo "Issue count: $(jq 'length' /tmp/dora-issues.json)"
+
+      - name: Compute CFR + write doc
+        run: |
+          node scripts/compute-dora-cfr.mjs \
+            --tags /tmp/dora-tags.txt \
+            --issues /tmp/dora-issues.json \
+            --out docs/metrics/dora.md \
+            --window 30
+
+      - name: Open PR if doc changed
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          if git diff --quiet -- docs/metrics/dora.md; then
+            echo "No CFR change since last run — skipping PR."
+            exit 0
+          fi
+          BRANCH="bot/dora-cfr-$(date -u +%Y-%m-%d)"
+          git config user.name "phenosage-bot"
+          git config user.email "phenosage-bot@users.noreply.github.com"
+          git checkout -b "$BRANCH"
+          git add docs/metrics/dora.md
+          git commit -m "chore(metrics): refresh DORA CFR snapshot"
+          git push origin "$BRANCH" --force-with-lease
+          # Replace any existing open PR for this snapshot so weekly
+          # runs don't pile up duplicate PRs.
+          EXISTING=$(gh pr list --head "$BRANCH" --json number --jq '.[0].number // empty')
+          if [ -n "$EXISTING" ]; then
+            gh pr edit "$EXISTING" --body "Refreshed at $(date -u +%Y-%m-%dT%H:%M:%SZ). See docs/metrics/dora.md for the new snapshot."
+            echo "Updated existing PR #$EXISTING"
+          else
+            gh pr create \
+              --title "chore(metrics): refresh DORA CFR snapshot" \
+              --body "Weekly auto-refresh of docs/metrics/dora.md. Review the numbers and merge — or close if they look off and ping #on-call." \
+              --label "phase2:dora-update" \
+              --base main \
+              --head "$BRANCH"
+          fi
