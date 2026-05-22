@@ -27,6 +27,8 @@
 // credentials and runs from `.github/workflows/supabase-advisors.yml`
 // on a nightly schedule + workflow_dispatch.
 
+import { fileURLToPath } from "node:url";
+
 const SUPABASE_API_BASE = "https://api.supabase.com/v1";
 
 /**
@@ -173,7 +175,10 @@ export async function runAdvisorsCheck({
   return { ok: false, reason: "errors-present", errors: errs.length };
 }
 
-if (import.meta.url === `file://${process.argv[1]}`) {
+// CLI entry guard using fileURLToPath so paths with spaces / Windows
+// separators compare correctly. Matches the pattern in
+// scripts/check-migration-parity.mjs.
+if (process.argv[1] && fileURLToPath(import.meta.url) === process.argv[1]) {
   const result = await runAdvisorsCheck({ env: process.env });
   process.exit(result.ok ? 0 : 1);
 }
