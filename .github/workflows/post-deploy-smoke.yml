@@ -78,28 +78,57 @@ jobs:
 
       # ─── Phase 2 (a): post-smoke error-rate probe ─────────────────────────
       # After endpoint smoke passes, sample the last 5 minutes of runtime
-      # logs from Vercel (or fall back to Sentry events). If 5xx ratio
-      # exceeds 1% AND absolute 5xx count >= 5, this step exits non-zero
-      # — which triggers the same auto-rollback path that a failed smoke
-      # would. The probe never re-checks the smoke we already passed; it
-      # checks the deploy under real production load.
+      # events from Vercel for THIS deployment. If 5xx ratio exceeds 1%
+      # AND absolute 5xx count >= 5, the probe exits non-zero — which
+      # triggers the same auto-rollback path that a failed smoke would.
       #
-      # Graceful degradation: when VERCEL_TOKEN / SENTRY_AUTH_TOKEN are
-      # both absent, the script writes "probe skipped: ..." and exits 0
-      # so a missing secret can't take prod down with a phantom rollback.
-      - name: Post-smoke error-rate probe
-        id: errorRateProbe
+      # Two steps because the GitHub `deployment.id` is GitHub's own ID,
+      # not Vercel's deployment UID — we must look up the UID first by
+      # querying Vercel's /v6/deployments filtered to the commit SHA.
+      # Both steps degrade gracefully on missing secrets: a missing
+      # VERCEL_TOKEN can't take prod down with a phantom rollback.
+      - name: Resolve Vercel deployment UID
+        id: vercelDpl
         if: success() && steps.smoke.conclusion == 'success' && github.event_name == 'deployment_status'
         shell: bash
         env:
           VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
           VERCEL_PROJECT_ID: ${{ secrets.VERCEL_PROJECT_ID }}
           VERCEL_TEAM_ID: ${{ secrets.VERCEL_TEAM_ID }}
-          DEPLOYMENT_ID: ${{ github.event.deployment.id }}
-          SENTRY_AUTH_TOKEN: ${{ secrets.SENTRY_AUTH_TOKEN }}
-          SENTRY_ORG_SLUG: ${{ secrets.SENTRY_ORG_SLUG }}
-          SENTRY_PROJECT_SLUG: ${{ secrets.SENTRY_PROJECT_SLUG }}
-          SENTRY_RELEASE: ${{ github.event.deployment.sha }}
+          DEPLOY_SHA: ${{ github.event.deployment.sha }}
+        run: |
+          set -euo pipefail
+          if [ -z "${VERCEL_TOKEN:-}" ] || [ -z "${VERCEL_PROJECT_ID:-}" ] || [ -z "${DEPLOY_SHA:-}" ]; then
+            echo "::notice::Vercel UID lookup skipped — VERCEL_TOKEN/VERCEL_PROJECT_ID/sha missing; probe will skip"
+            echo "uid=" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          TEAM_QS=""
+          if [ -n "${VERCEL_TEAM_ID:-}" ]; then
+            TEAM_QS="&teamId=${VERCEL_TEAM_ID}"
+          fi
+          DEPS_URL="https://api.vercel.com/v6/deployments?projectId=${VERCEL_PROJECT_ID}&target=production&state=READY&limit=10${TEAM_QS}"
+          PAYLOAD=$(curl -fsS -H "Authorization: Bearer ${VERCEL_TOKEN}" "${DEPS_URL}" 2>/dev/null || echo '{"deployments":[]}')
+          UID=$(echo "$PAYLOAD" | jq -r --arg sha "$DEPLOY_SHA" '
+            .deployments
+            | map(select(.meta.githubCommitSha == $sha))
+            | .[0].uid // empty
+          ')
+          if [ -z "$UID" ]; then
+            echo "::notice::No Vercel deployment UID found for SHA ${DEPLOY_SHA} — probe will skip"
+          else
+            echo "Resolved Vercel UID: $UID"
+          fi
+          echo "uid=$UID" >> "$GITHUB_OUTPUT"
+
+      - name: Post-smoke error-rate probe
+        id: errorRateProbe
+        if: success() && steps.smoke.conclusion == 'success' && github.event_name == 'deployment_status'
+        shell: bash
+        env:
+          VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
+          VERCEL_TEAM_ID: ${{ secrets.VERCEL_TEAM_ID }}
+          VERCEL_DEPLOYMENT_UID: ${{ steps.vercelDpl.outputs.uid }}
           WINDOW_MIN: "5"
           ERROR_RATE_THRESHOLD: "0.01"
           ERROR_ABSOLUTE_FLOOR: "5"
