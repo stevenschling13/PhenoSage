@@ -1,0 +1,107 @@
+name: Supabase advisors
+
+# Nightly check against Supabase's Performance + Security advisors
+# (https://api.supabase.com/v1/projects/{ref}/advisors/{kind}).
+# Fails the run when any ERROR-level lint exists — typical examples:
+#
+#   * RLS disabled on a new public-schema table
+#   * SECURITY DEFINER function with mutable search_path
+#   * Auth password protection drift
+#   * Critical missing index on a hot FK
+#
+# WARN / INFO findings are logged for visibility but never gate.
+#
+# NOT wired into `pnpm run validate` — needs network + cloud creds. The
+# script bails out with a clear error when run locally without env.
+#
+# Required secrets:
+#   SUPABASE_ACCESS_TOKEN  — personal / CI token from Supabase Dashboard
+#   SUPABASE_PROJECT_REF   — production project ref
+#
+# Manual run: `workflow_dispatch`. The check is read-only.
+
+on:
+  schedule:
+    # 06:30 UTC daily — before the migration-parity check at 08:00, so an
+    # operator sees both nightly results in their morning queue.
+    - cron: "30 6 * * *"
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+  issues: write
+
+concurrency:
+  group: supabase-advisors
+  cancel-in-progress: true
+
+jobs:
+  advisors:
+    name: Check advisors
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    environment: production
+    env:
+      SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
+      SUPABASE_PROJECT_REF: ${{ secrets.SUPABASE_PROJECT_REF }}
+    steps:
+      - uses: step-security/harden-runner@ab7a9404c0f3da075243ca237b5fac12c98deaa5 # v2
+        with:
+          egress-policy: audit
+
+      - uses: actions/checkout@v6
+
+      - uses: actions/setup-node@v6
+        with:
+          node-version: "20"
+
+      - name: Run advisor check
+        id: advisors
+        run: node scripts/check-supabase-advisors.mjs
+
+      - name: Open issue on advisor regression
+        if: failure() && github.event_name == 'schedule'
+        uses: actions/github-script@v9
+        with:
+          script: |
+            const runUrl = `${context.serverUrl}/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId}`;
+            const title = `Supabase advisors: new ERROR-level finding`;
+            // Dedupe: re-use an open issue with the same title to avoid
+            // a fresh issue every night if the same finding sticks
+            // around. The `track-followups` precedent matches.
+            const existing = await github.rest.search.issuesAndPullRequests({
+              q: `repo:${context.repo.owner}/${context.repo.repo} is:issue is:open in:title "${title}"`,
+            });
+            if (existing.data.total_count > 0) {
+              const num = existing.data.items[0].number;
+              await github.rest.issues.createComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: num,
+                body: [
+                  `Still failing as of ${new Date().toISOString().slice(0, 16)}Z.`,
+                  ``,
+                  `Run: ${runUrl}`,
+                ].join("\n"),
+              });
+              return;
+            }
+            await github.rest.issues.create({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              title,
+              body: [
+                `**Workflow run:** ${runUrl}`,
+                ``,
+                "The nightly Supabase advisor check found at least one ERROR-level lint.",
+                "Open the run log for the full list with categories + remediation URLs.",
+                "",
+                "**Next steps:**",
+                "1. Review each ERROR-level finding in the run summary.",
+                "2. Fix the underlying RLS / function / index issue and ship a migration.",
+                "3. Re-trigger the workflow manually to confirm the regression is cleared.",
+                "",
+                "See https://supabase.com/docs/guides/database/database-advisor for advisor docs.",
+              ].join("\n"),
+              labels: ["bug", "supabase", "advisors"],
+            });
