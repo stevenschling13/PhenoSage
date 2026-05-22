@@ -3,6 +3,7 @@ import type { AnalysisJobStatus } from "@phenosage/shared";
 import { createSupabaseServerClient } from "./auth";
 import { getDbClient } from "./db";
 import { getAuthorizedPlantContext } from "./plant-access";
+import { rateLimit } from "./rate-limit";
 
 type AnalysisJobRow = {
   id: string;
@@ -124,7 +125,21 @@ const TERMINAL_STATUSES: ReadonlySet<AnalysisJobStatus> = new Set([
 
 export type EnqueueByStoragePathOutcome =
   | { kind: "image_not_found"; storagePath: string }
+  | { kind: "rate_limited"; userId: string; resetAt: number }
   | { kind: "enqueued"; job: AnalysisJob };
+
+// Per-user ceiling on auto-analyzed uploads. Sized so a grower with a
+// frantic morning photo session can still get every image analyzed, but
+// a runaway script (someone scripting 500 uploads) hits the brake before
+// burning through OpenAI quota. Each analysis job triggers one vision
+// call downstream. Bump this if real users hit the cap in production
+// — see logs for `storage webhook: rate-limited` warnings. Exported so
+// tests can reference the canonical values instead of duplicating
+// magic numbers.
+export const ANALYSIS_ENQUEUE_LIMIT_PER_HOUR = 20;
+export const ANALYSIS_ENQUEUE_WINDOW_MS = 60 * 60 * 1000;
+
+const STORAGE_WEBHOOK_IDEMPOTENCY_PREFIX = "storage-webhook:";
 
 /**
  * Enqueue an analysis job for an image identified by its storage path,
@@ -134,7 +149,18 @@ export type EnqueueByStoragePathOutcome =
  * plant_id / grow_id / user_id rather than re-checking auth.uid().
  *
  * Idempotent via `idempotency_key = storage-webhook:<imageId>`. Repeated
- * webhook deliveries for the same upload return the same job row.
+ * webhook deliveries for the same upload short-circuit to the existing
+ * `analysis_jobs` row WITHOUT consuming a rate-limit token — see the
+ * dedup check below. The RPC itself is also idempotent through the
+ * partial unique index, so even if a duplicate delivery races past the
+ * dedup, the RPC returns the same row.
+ *
+ * Rate-limited per `plant_images.user_id` at
+ * `ANALYSIS_ENQUEUE_LIMIT_PER_HOUR` (20/hr default). When the cap is
+ * hit, returns `{ kind: "rate_limited" }` — the storage webhook
+ * acknowledges the delivery with 200 so Supabase doesn't retry, and a
+ * subsequent user-triggered `/api/plants/[plantId]/analyze` (which has
+ * its own session-scoped path) still works.
  */
 export async function enqueueAnalysisJobByStoragePath(params: {
   storagePath: string;
@@ -152,12 +178,62 @@ export async function enqueueAnalysisJobByStoragePath(params: {
     return { kind: "image_not_found", storagePath: params.storagePath };
   }
 
+  // Dedup BEFORE the rate-limit check. Duplicate Supabase Database
+  // Webhook deliveries (same image_id) are the common-case retry path
+  // — without this check, each retry burns a token even though only
+  // one job will ever exist for the image. The partial unique index
+  // `idx_analysis_jobs_image_idem` (image_id, idempotency_key) on the
+  // analysis_jobs table makes this lookup cheap and exact.
+  const idempotencyKey = `${STORAGE_WEBHOOK_IDEMPOTENCY_PREFIX}${image.id}`;
+  const { data: existing, error: existingError } = await db
+    .from("analysis_jobs")
+    .select(
+      "id,plant_id,image_id,grow_id,requested_by,status,attempt_count,max_attempts,queued_at,started_at,finished_at,error_code,error_message,result_analysis_id",
+    )
+    .eq("image_id", image.id)
+    .eq("idempotency_key", idempotencyKey)
+    .maybeSingle();
+  if (existingError) {
+    throw new Error(
+      `Failed to look up existing analysis job: ${existingError.message}`,
+    );
+  }
+  if (existing) {
+    return { kind: "enqueued", job: mapJob(existing as AnalysisJobRow) };
+  }
+
+  // Per-user ceiling on auto-enqueued analyses. We rate-limit BEFORE the
+  // RPC so a runaway upload script can't both burn vision quota AND fill
+  // analysis_jobs with rows that will never be drained. The limiter
+  // fails open on a Redis outage (see rateLimit() docstring) — that's
+  // the right tradeoff because the failure mode of fail-closed here is
+  // "growers' uploads silently stop being analyzed", which is worse
+  // than the cost overrun the limiter is defending against.
+  //
+  // Caveat: if the enqueue RPC below fails (e.g. transient DB error),
+  // the token is already spent and Supabase will retry. The retry will
+  // either hit the dedup above (if the RPC partially succeeded) or burn
+  // another token. Sliding-window limiters don't support refund; a
+  // refundable-token design is a follow-up.
+  const rate = await rateLimit({
+    key: `analysis-enqueue:${image.user_id}`,
+    limit: ANALYSIS_ENQUEUE_LIMIT_PER_HOUR,
+    windowMs: ANALYSIS_ENQUEUE_WINDOW_MS,
+  });
+  if (!rate.ok) {
+    return {
+      kind: "rate_limited",
+      userId: image.user_id,
+      resetAt: rate.resetAt,
+    };
+  }
+
   const { data, error } = await db.rpc("enqueue_analysis_job", {
     p_plant_id: image.plant_id,
     p_image_id: image.id,
     p_grow_id: image.grow_id,
     p_requested_by: image.user_id,
-    p_idempotency_key: `storage-webhook:${image.id}`,
+    p_idempotency_key: idempotencyKey,
     p_max_attempts: 3,
   });
   if (error) {

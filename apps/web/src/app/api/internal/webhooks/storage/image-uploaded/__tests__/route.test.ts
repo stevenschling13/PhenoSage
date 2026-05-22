@@ -113,6 +113,21 @@ describe("POST /api/internal/webhooks/storage/image-uploaded", () => {
     expect(body.data.reason).toBe("image_not_found");
   });
 
+  it("returns 200 with rate_limited when the per-user analysis cap is hit", async () => {
+    const resetAt = Date.now() + 30 * 60 * 1000;
+    enqueueAnalysisJobByStoragePath.mockResolvedValue({
+      kind: "rate_limited",
+      userId: "user-1",
+      resetAt,
+    });
+    const res = await POST(buildRequest(envelope()));
+    expect(res.status).toBe(200);
+    const body = await res.json();
+    expect(body.data.enqueued).toBe(false);
+    expect(body.data.reason).toBe("rate_limited");
+    expect(body.data.reset_at).toBe(resetAt);
+  });
+
   it("enqueues an analysis job for a matching plant_images row", async () => {
     enqueueAnalysisJobByStoragePath.mockResolvedValue({
       kind: "enqueued",
