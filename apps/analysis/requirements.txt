@@ -8,9 +8,9 @@ openai==2.37.0
 Pillow==12.2.0
 
 # Linting & type checking (dev)
-ruff==0.15.13
+ruff==0.15.15
 mypy==2.1.0
 pytest==9.0.3
-pytest-asyncio==1.3.0
+pytest-asyncio==1.4.0
 pytest-cov==7.1.0
 pip-audit==2.10.0
