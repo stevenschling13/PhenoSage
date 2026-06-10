@@ -603,9 +603,29 @@ export async function runAndPersistPlantAnalysisForContext(
   }
 
   const images = (imageRows ?? []) as PlantImageRow[];
-  const currentImage = params.imageId
-    ? (images.find((row) => row.id === params.imageId) ?? null)
-    : (images[0] ?? null);
+  // An explicitly requested image may have aged out of the 10-most-recent
+  // window by the time a queued job runs (burst uploads) — fall back to a
+  // direct lookup, still scoped to the authorized plant.
+  let currentImage: PlantImageRow | null;
+  if (params.imageId) {
+    currentImage = images.find((row) => row.id === params.imageId) ?? null;
+    if (!currentImage) {
+      const { data: directImage, error: directError } = await db
+        .from("plant_images")
+        .select("*")
+        .eq("id", params.imageId)
+        .eq("plant_id", context.plantId)
+        .maybeSingle();
+      if (directError) {
+        throw new Error(
+          `Failed to load analysis image: ${directError.message}`,
+        );
+      }
+      currentImage = (directImage as PlantImageRow | null) ?? null;
+    }
+  } else {
+    currentImage = images[0] ?? null;
+  }
 
   if (!currentImage) {
     return { context, analysis: null };
