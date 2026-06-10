@@ -1,0 +1,27 @@
+-- Migration: reconcile_onboarding_missing_rpc (parity marker)
+--
+-- On 2026-05-21 an emergency connector-applied migration with this exact
+-- version was run directly against production to create
+-- `public.find_users_without_default_grow(integer)` before the canonical
+-- migration (20260521190000_find_users_without_default_grow.sql) had been
+-- applied there. Production's schema_migrations history therefore records
+-- version 20260521214403 with no matching file in this repo, which the
+-- nightly migration-parity check correctly reports as orphan drift.
+-- See docs/runbooks/supabase-migration-drift.md and issue #255.
+--
+-- This file restores parity by giving that recorded version a committed
+-- counterpart. It is intentionally a no-op:
+--   * On production the version is already recorded, so this file is
+--     never executed there.
+--   * On fresh databases the canonical 20260521190000 migration has
+--     already created the function in its desired `returns setof uuid`
+--     shape by the time this version runs, so there is nothing to do.
+--
+-- The production function still carries the emergency row-object return
+-- shape. `apps/web/src/lib/server/onboarding.ts` tolerates both shapes;
+-- aligning production to the canonical signature stays a separate,
+-- deliberately reviewed migration per the drift runbook's repair policy.
+--
+-- Rollback: none required (no schema change).
+
+select 1;
