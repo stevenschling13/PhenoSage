@@ -10,10 +10,28 @@ import {
 import { NextRequest } from "next/server";
 
 const enqueueAnalysisJobByStoragePath = vi.fn();
+const executeAnalysisJob = vi.fn();
+const afterTasks: Array<() => unknown> = [];
+
+// `after()` requires a live request scope, which vitest's direct handler
+// invocation does not provide — capture tasks so tests can run them.
+vi.mock("next/server", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("next/server")>();
+  return {
+    ...actual,
+    after: (task: () => unknown) => {
+      afterTasks.push(task);
+    },
+  };
+});
 
 vi.mock("@/lib/server/analysis-jobs", () => ({
   enqueueAnalysisJobByStoragePath: (...args: unknown[]) =>
     enqueueAnalysisJobByStoragePath(...args),
+}));
+
+vi.mock("@/lib/server/analysis-job-runner", () => ({
+  executeAnalysisJob: (...args: unknown[]) => executeAnalysisJob(...args),
 }));
 
 import { POST } from "../route";
@@ -54,6 +72,8 @@ describe("POST /api/internal/webhooks/storage/image-uploaded", () => {
 
   beforeEach(() => {
     (enqueueAnalysisJobByStoragePath as Mock).mockReset();
+    (executeAnalysisJob as Mock).mockReset();
+    afterTasks.length = 0;
     process.env["SUPABASE_STORAGE_WEBHOOK_SECRET"] = SECRET;
   });
 
@@ -142,6 +162,30 @@ describe("POST /api/internal/webhooks/storage/image-uploaded", () => {
     expect(enqueueAnalysisJobByStoragePath).toHaveBeenCalledWith({
       storagePath: STORAGE_PATH,
     });
+  });
+
+  it("schedules background execution of the enqueued job via after()", async () => {
+    const job = { id: "job-99", status: "queued" };
+    enqueueAnalysisJobByStoragePath.mockResolvedValue({
+      kind: "enqueued",
+      job,
+    });
+    const res = await POST(buildRequest(envelope()));
+    expect(res.status).toBe(200);
+
+    expect(afterTasks).toHaveLength(1);
+    expect(executeAnalysisJob).not.toHaveBeenCalled();
+    await afterTasks[0]?.();
+    expect(executeAnalysisJob).toHaveBeenCalledWith(job, expect.any(String));
+  });
+
+  it("does not schedule execution for rate-limited or missing-image outcomes", async () => {
+    enqueueAnalysisJobByStoragePath.mockResolvedValue({
+      kind: "image_not_found",
+      storagePath: STORAGE_PATH,
+    });
+    await POST(buildRequest(envelope()));
+    expect(afterTasks).toHaveLength(0);
   });
 
   it("accepts the flat { storage_path, bucket } payload", async () => {

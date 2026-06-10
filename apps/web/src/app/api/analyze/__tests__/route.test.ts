@@ -6,6 +6,24 @@ const getServerUser = vi.fn();
 const enqueueAnalysisJob = vi.fn();
 const rateLimit = vi.fn();
 const rateLimitKeyFromRequest = vi.fn();
+const executeAnalysisJob = vi.fn();
+const afterTasks: Array<() => unknown> = [];
+
+// `after()` requires a live request scope, which vitest's direct handler
+// invocation does not provide — capture tasks so tests can run them.
+vi.mock("next/server", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("next/server")>();
+  return {
+    ...actual,
+    after: (task: () => unknown) => {
+      afterTasks.push(task);
+    },
+  };
+});
+
+vi.mock("@/lib/server/analysis-job-runner", () => ({
+  executeAnalysisJob: (...args: unknown[]) => executeAnalysisJob(...args),
+}));
 
 vi.mock("@/lib/server/auth", () => ({
   getServerSession: (...args: unknown[]) => getServerSession(...args),
@@ -41,6 +59,8 @@ describe("POST /api/analyze", () => {
     (enqueueAnalysisJob as Mock).mockReset();
     (rateLimit as Mock).mockReset();
     (rateLimitKeyFromRequest as Mock).mockReset();
+    (executeAnalysisJob as Mock).mockReset();
+    afterTasks.length = 0;
     getServerUser.mockResolvedValue({ id: "u1" });
     rateLimit.mockResolvedValue({ ok: true });
     rateLimitKeyFromRequest.mockReturnValue("k");
@@ -75,5 +95,31 @@ describe("POST /api/analyze", () => {
       plantId: PLANT_ID,
       imageId: IMAGE_ID,
     });
+  });
+
+  it("schedules background execution of the enqueued job via after()", async () => {
+    getServerSession.mockResolvedValue({ user: { id: "u1" } });
+    const job = {
+      id: JOB_ID,
+      plantId: PLANT_ID,
+      imageId: IMAGE_ID,
+      status: "queued",
+    };
+    enqueueAnalysisJob.mockResolvedValue(job);
+    const res = await POST(request({ plant_id: PLANT_ID, image_id: IMAGE_ID }));
+    expect(res.status).toBe(202);
+
+    expect(afterTasks).toHaveLength(1);
+    expect(executeAnalysisJob).not.toHaveBeenCalled();
+    await afterTasks[0]?.();
+    expect(executeAnalysisJob).toHaveBeenCalledWith(job, expect.any(String));
+  });
+
+  it("does not schedule execution when enqueue fails", async () => {
+    getServerSession.mockResolvedValue({ user: { id: "u1" } });
+    enqueueAnalysisJob.mockResolvedValue(null);
+    const res = await POST(request({ plant_id: PLANT_ID, image_id: IMAGE_ID }));
+    expect(res.status).toBe(404);
+    expect(afterTasks).toHaveLength(0);
   });
 });

@@ -26,10 +26,12 @@ vi.mock("../rate-limit", () => ({
 import {
   ANALYSIS_ENQUEUE_LIMIT_PER_HOUR,
   ANALYSIS_ENQUEUE_WINDOW_MS,
+  claimQueuedAnalysisJob,
   completeAnalysisJob,
   enqueueAnalysisJob,
   enqueueAnalysisJobByStoragePath,
   getAnalysisJob,
+  isTerminalAnalysisJobStatus,
 } from "../analysis-jobs";
 
 const JOB_ROW = {
@@ -595,5 +597,72 @@ describe("enqueueAnalysisJobByStoragePath", () => {
     getDbClient.mockReturnValue(db);
     await enqueueAnalysisJobByStoragePath({ storagePath: "plant-1/foo.jpg" });
     expect(rateLimit).not.toHaveBeenCalled();
+  });
+});
+
+describe("isTerminalAnalysisJobStatus", () => {
+  it("classifies terminal vs non-terminal statuses", () => {
+    expect(isTerminalAnalysisJobStatus("succeeded")).toBe(true);
+    expect(isTerminalAnalysisJobStatus("failed")).toBe(true);
+    expect(isTerminalAnalysisJobStatus("cancelled")).toBe(true);
+    expect(isTerminalAnalysisJobStatus("queued")).toBe(false);
+    expect(isTerminalAnalysisJobStatus("running")).toBe(false);
+    expect(isTerminalAnalysisJobStatus("retrying")).toBe(false);
+  });
+});
+
+describe("claimQueuedAnalysisJob", () => {
+  function makeClaimClient(result: {
+    data:
+      | (Omit<typeof JOB_ROW, "status" | "started_at"> & {
+          status: string;
+          started_at: string | null;
+        })
+      | null;
+    error: { message: string } | null;
+  }) {
+    const maybeSingle = vi.fn().mockResolvedValue(result);
+    const select = vi.fn(() => ({ maybeSingle }));
+    const eqStatus = vi.fn(() => ({ select }));
+    const eqId = vi.fn(() => ({ eq: eqStatus }));
+    const update = vi.fn(() => ({ eq: eqId }));
+    const from = vi.fn(() => ({ update }));
+    return { from, update, eqId, eqStatus };
+  }
+
+  it("claims a queued job with a compare-and-set on status", async () => {
+    const claimedRow = {
+      ...JOB_ROW,
+      status: "running" as const,
+      attempt_count: 1,
+      started_at: "2026-06-10T00:00:01Z",
+    };
+    const db = makeClaimClient({ data: claimedRow, error: null });
+    getDbClient.mockReturnValue(db);
+
+    const job = await claimQueuedAnalysisJob({ id: "job-1", attemptCount: 0 });
+
+    expect(job?.status).toBe("running");
+    expect(job?.attemptCount).toBe(1);
+    expect(db.update).toHaveBeenCalledWith(
+      expect.objectContaining({ status: "running", attempt_count: 1 }),
+    );
+    expect(db.eqId).toHaveBeenCalledWith("id", "job-1");
+    expect(db.eqStatus).toHaveBeenCalledWith("status", "queued");
+  });
+
+  it("returns null when the job was already claimed", async () => {
+    const db = makeClaimClient({ data: null, error: null });
+    getDbClient.mockReturnValue(db);
+    const job = await claimQueuedAnalysisJob({ id: "job-1", attemptCount: 0 });
+    expect(job).toBeNull();
+  });
+
+  it("throws on a database error", async () => {
+    const db = makeClaimClient({ data: null, error: { message: "boom" } });
+    getDbClient.mockReturnValue(db);
+    await expect(
+      claimQueuedAnalysisJob({ id: "job-1", attemptCount: 0 }),
+    ).rejects.toThrow("Failed to claim analysis job: boom");
   });
 });

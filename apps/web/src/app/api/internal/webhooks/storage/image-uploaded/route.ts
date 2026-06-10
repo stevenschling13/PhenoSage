@@ -1,12 +1,17 @@
-import { NextRequest } from "next/server";
+import { NextRequest, after } from "next/server";
 import { z } from "zod";
 
+import { executeAnalysisJob } from "@/lib/server/analysis-job-runner";
 import { enqueueAnalysisJobByStoragePath } from "@/lib/server/analysis-jobs";
 import { apiError, apiSuccess } from "@/lib/server/api-errors";
 import { getOrCreateRequestId, logServerEvent } from "@/lib/server/request-id";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
+// The enqueued job is executed in this same invocation via after(), so
+// the function must outlive the 200 ack long enough for the vision call
+// (analysis proxy timeout, default 30s) plus persistence.
+export const maxDuration = 60;
 
 // POST /api/internal/webhooks/storage/image-uploaded
 //
@@ -170,6 +175,10 @@ export async function POST(request: NextRequest) {
       jobId: outcome.job.id,
       jobStatus: outcome.job.status,
     });
+    // Run the job after the 200 ack. Duplicate webhook deliveries replay
+    // the same (terminal or claimed) row and are skipped inside the runner.
+    const job = outcome.job;
+    after(() => executeAnalysisJob(job, requestId));
     return apiSuccess(
       200,
       {

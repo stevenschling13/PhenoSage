@@ -1,5 +1,6 @@
-import { NextRequest } from "next/server";
+import { NextRequest, after } from "next/server";
 import { z } from "zod";
+import { executeAnalysisJob } from "@/lib/server/analysis-job-runner";
 import { enqueueAnalysisJob } from "@/lib/server/analysis-jobs";
 import { apiError, apiSuccess } from "@/lib/server/api-errors";
 import { getServerSession, getServerUser } from "@/lib/server/auth";
@@ -7,6 +8,11 @@ import { rateLimit, rateLimitKeyFromRequest } from "@/lib/server/rate-limit";
 import { getOrCreateRequestId, logServerEvent } from "@/lib/server/request-id";
 import { withRouteLogging } from "@/lib/server/route-logging";
 import { parseJsonBody } from "@/lib/server/validate";
+
+// The enqueued job is executed in this same invocation via after(), so
+// the function must outlive the 202 response long enough for the vision
+// call (analysis proxy timeout, default 30s) plus persistence.
+export const maxDuration = 60;
 
 const AnalyzeJobRequestSchema = z.object({
   plant_id: z.string().uuid(),
@@ -67,6 +73,9 @@ export const POST = withRouteLogging(
           requestId,
         );
       }
+      // Run the job after the response is sent. Idempotent replays of an
+      // existing (possibly terminal) job are skipped inside the runner.
+      after(() => executeAnalysisJob(job, requestId));
       return apiSuccess(
         202,
         {

@@ -6,7 +6,10 @@ import type {
 } from "@phenosage/shared";
 import { analyzeImage, type AnalyzeGrowContext } from "./analysis-proxy";
 import { createSupabaseServerClient } from "./auth";
-import { getAuthorizedPlantContext } from "./plant-access";
+import {
+  getAuthorizedPlantContext,
+  type AuthorizedPlantContext,
+} from "./plant-access";
 import { getDbClient } from "./db";
 import { persistFindingEmbeddings } from "./embeddings";
 import { logServerEvent } from "./request-id";
@@ -565,6 +568,26 @@ export async function runAndPersistPlantAnalysis(params: {
     return null;
   }
 
+  return runAndPersistPlantAnalysisForContext(context, {
+    ...(params.imageId ? { imageId: params.imageId } : {}),
+    requestId: params.requestId,
+  });
+}
+
+/**
+ * Session-free core of `runAndPersistPlantAnalysis`. The caller is
+ * responsible for having authorized `context` — either via
+ * `getAuthorizedPlantContext` (session flows) or from an
+ * `analysis_jobs` row whose identifiers were ownership-checked at
+ * enqueue time (the background job runner).
+ */
+export async function runAndPersistPlantAnalysisForContext(
+  context: AuthorizedPlantContext,
+  params: {
+    imageId?: string;
+    requestId: string;
+  },
+) {
   const db = getDbClient();
   const { data: imageRows, error: imageError } = await db
     .from("plant_images")
