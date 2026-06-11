@@ -237,12 +237,24 @@ describe("signInAction", () => {
 });
 
 describe("signUpAction", () => {
+  it("rejects sign-up without the age / legal acknowledgment", async () => {
+    withGoodEnv();
+    const result = await signUpAction(
+      null,
+      fd({ email: "a@b.co", password: "longenough" }),
+    );
+    expect(result?.ok).toBe(false);
+    expect(result?.message).toMatch(/legal age/i);
+    expect(applyAuthRateLimit).not.toHaveBeenCalled();
+    expect(signUp).not.toHaveBeenCalled();
+  });
+
   it("returns the confirmation message when no session is created", async () => {
     withGoodEnv();
     signUp.mockResolvedValueOnce({ data: { session: null }, error: null });
     const result = await signUpAction(
       null,
-      fd({ email: "a@b.co", password: "longenough" }),
+      fd({ email: "a@b.co", password: "longenough", legal_ack: "on" }),
     );
     expect(result?.ok).toBe(true);
     expect(result?.email).toBe("a@b.co");
@@ -256,7 +268,10 @@ describe("signUpAction", () => {
       error: null,
     });
     await expect(
-      signUpAction(null, fd({ email: "a@b.co", password: "longenough" })),
+      signUpAction(
+        null,
+        fd({ email: "a@b.co", password: "longenough", legal_ack: "on" }),
+      ),
     ).rejects.toMatchObject({
       digest: expect.stringContaining("NEXT_REDIRECT"),
     });
@@ -268,7 +283,7 @@ describe("signUpAction", () => {
     signUp.mockRejectedValueOnce(new TypeError("fetch failed"));
     const result = await signUpAction(
       null,
-      fd({ email: "a@b.co", password: "longenough" }),
+      fd({ email: "a@b.co", password: "longenough", legal_ack: "on" }),
     );
     expect(result?.message).toBe(AUTH_SERVICE_UNREACHABLE);
   });
@@ -283,7 +298,7 @@ describe("signUpAction", () => {
     });
     const result = await signUpAction(
       null,
-      fd({ email: "a@b.co", password: "longenough" }),
+      fd({ email: "a@b.co", password: "longenough", legal_ack: "on" }),
     );
     expect(result?.ok).toBe(false);
     expect(applyAuthRateLimit).toHaveBeenCalledWith({

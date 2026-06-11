@@ -228,9 +228,16 @@ export default function LandingPage() {
         >
           <p>
             © {new Date().getFullYear()} PhenoSage. Web-first,
-            privacy-respecting.
+            privacy-respecting. For legal cultivation only — know your local
+            laws.
           </p>
           <div className="flex items-center gap-4">
+            <Link href="/legal/terms" className="hover:text-foreground">
+              Terms
+            </Link>
+            <Link href="/legal/privacy" className="hover:text-foreground">
+              Privacy
+            </Link>
             <Link href="/auth" className="hover:text-foreground">
               Sign in
             </Link>
