@@ -61,6 +61,9 @@ begin
         and c.conrelid = format('public.%I', spec.table_name)::regclass
         and c.confrelid = 'auth.users'::regclass
         and a.attname = spec.column_name
+        -- Single-column FKs only: never silently rewrite a composite
+        -- key that merely happens to include this column.
+        and array_length(c.conkey, 1) = 1
     loop
       execute format(
         'alter table public.%I drop constraint %I',
