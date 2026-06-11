@@ -156,7 +156,7 @@ export async function deleteAccount(
   if (paths.size > 0) {
     const storage = getStorageClient();
     for (const batch of chunk([...paths], STORAGE_REMOVE_BATCH)) {
-      const { error: removeError } = await storage
+      const { data: removed, error: removeError } = await storage
         .from(PLANT_IMAGES_BUCKET)
         .remove(batch);
       if (removeError) {
@@ -168,7 +168,9 @@ export async function deleteAccount(
           error: removeError.message,
         });
       } else {
-        deletedStorageObjects += batch.length;
+        // remove() reports the objects it actually deleted; count those
+        // rather than the requested batch so the API never overstates.
+        deletedStorageObjects += (removed ?? []).length;
       }
     }
   }

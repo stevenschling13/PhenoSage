@@ -128,7 +128,11 @@ describe("deleteAccount", () => {
     deleteUser.mockReset();
     remove.mockReset();
     deleteUser.mockResolvedValue({ error: null });
-    remove.mockResolvedValue({ error: null });
+    // Mirror the real Storage API: remove() resolves with the list of
+    // objects it actually deleted.
+    remove.mockImplementation((paths: string[]) =>
+      Promise.resolve({ data: paths.map((name) => ({ name })), error: null }),
+    );
     getStorageClient.mockReturnValue({ from: vi.fn(() => ({ remove })) });
   });
 

@@ -9,10 +9,18 @@
 --   * grow_events.user_id        (001:254)
 --
 -- and migration 003 added nullable audit columns (created_by /
--- updated_by on grows, plants, plant_observations, grow_events) that
--- also default to NO ACTION. Rows a user created inside ANOTHER
--- user's grow (grow_members) are not reached by the ownership cascade,
--- so deleting that user would abort with an FK violation.
+-- updated_by on grows and plants; updated_by on plant_observations
+-- and grow_events) that also default to NO ACTION. Rows a user created
+-- inside ANOTHER user's grow (grow_members) are not reached by the
+-- ownership cascade, so deleting that user would abort with an FK
+-- violation.
+--
+-- Apply window: this DO block is one transaction; each ADD CONSTRAINT
+-- takes ACCESS EXCLUSIVE on the content table and SHARE ROW EXCLUSIVE
+-- on auth.users while validating, so signups/logins block for the
+-- duration. Fine at current table sizes — apply in a low-traffic
+-- window. If the tables grow large, switch to ADD CONSTRAINT NOT VALID
+-- followed by VALIDATE CONSTRAINT.
 --
 -- Policy:
 --   * Content authored by the departing user (images, observations,
