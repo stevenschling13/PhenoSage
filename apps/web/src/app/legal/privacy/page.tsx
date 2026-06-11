@@ -68,13 +68,14 @@ export default function PrivacyPage() {
         only as needed to serve your requests.
       </p>
 
-      <h2>5. Retention and deletion</h2>
+      <h2>5. Retention, export, and deletion</h2>
       <p>
-        Your data is kept while your account is active. To delete your account
-        and all associated data, contact the operator via the address published
-        on the project repository; deletion requests are honored within 30 days.
-        An in-app self-service deletion and export flow is planned and will
-        replace this manual process.
+        Your data is kept while your account is active. From Settings you can
+        download a complete JSON export of your data at any time, and you can
+        permanently delete your account — deletion removes your database records
+        and stored photos immediately and cannot be undone. You can also contact
+        the operator via the address published on the project repository for
+        assistance.
       </p>
 
       <h2>6. Sensitivity of cultivation data</h2>

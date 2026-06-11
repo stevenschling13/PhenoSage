@@ -4,6 +4,33 @@ Handoff log between sessions. Keep entries short. Newest at top.
 
 ---
 
+## 2026-06-11 — Account deletion + data export (Claude)
+
+**On `claude/production-readiness-review-uf2jv7`** (continues PR #285)
+
+Last code-shaped launch blocker from the production-readiness review.
+
+- **Migration `20260611160000_account_deletion_fk_cascade.sql`** — makes
+  every auth.users reference cascade (content: plant_images /
+  plant_observations / grow_events user_id) or set-null (audit
+  created_by/updated_by from 003), discovering existing constraint
+  names from pg_constraint instead of guessing defaults. After this,
+  `auth.admin.deleteUser()` removes all rows atomically.
+- **`lib/server/account.ts`** — `exportAccountData()` (session client,
+  RLS-scoped, 13 tables, 5000-row cap) and `deleteAccount()` (collect
+  plant-image storage paths for owned grows + own uploads → batch
+  remove from the private bucket best-effort → delete auth user).
+- **Routes** — `GET /api/account/export` (JSON attachment, 5/hr) and
+  `POST /api/account/delete` (zod literal `confirm:"DELETE"`, 3/hr).
+- **Settings** — new "Your data" card with export download and a
+  type-DELETE-to-confirm deletion flow; privacy policy §5 now describes
+  the self-service flow instead of the manual interim process.
+- Validation: `pnpm run validate` ✅, 1092/1092 web tests (+18),
+  `security:routes` ✅. CI still billing-locked (see operator item 0
+  below) — local gate only.
+
+---
+
 ## 2026-06-10 — Production-readiness review: analysis queue had no consumer (Claude)
 
 **On `claude/production-readiness-review-uf2jv7`**

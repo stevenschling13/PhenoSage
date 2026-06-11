@@ -17,6 +17,7 @@ import {
   loadUserPreferences,
 } from "@/lib/server/user-preferences";
 import { signOutAction } from "@/app/auth/actions";
+import { AccountDangerZone } from "./account-danger-zone";
 import { SettingsProfileForm } from "./settings-profile-form";
 import { SettingsEmailForm } from "./settings-email-form";
 import { SettingsTimezoneForm } from "./settings-timezone-form";
@@ -136,6 +137,19 @@ export default async function SettingsPage() {
                   Sign out securely
                 </Button>
               </form>
+            </CardContent>
+          </Card>
+
+          <Card>
+            <CardHeader>
+              <CardTitle>Your data</CardTitle>
+              <CardDescription>
+                Export everything you own, or permanently delete the account and
+                all associated data.
+              </CardDescription>
+            </CardHeader>
+            <CardContent>
+              <AccountDangerZone />
             </CardContent>
           </Card>
         </div>
