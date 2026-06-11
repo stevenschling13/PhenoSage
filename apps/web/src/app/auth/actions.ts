@@ -113,6 +113,16 @@ export async function signUpAction(
   const problem = validate(email, password, true);
   if (problem) return fail(email, problem);
 
+  // Server-side gate for the age / legal-compliance acknowledgment. The
+  // checkbox is required markup-wise too, but never trust the client —
+  // a crafted POST without it must not create an account.
+  if (formData.get("legal_ack") !== "on") {
+    return fail(
+      email,
+      "Confirm you are of legal age and agree to the Terms and Privacy Policy.",
+    );
+  }
+
   if (getAuthConfigViolations().length > 0) {
     console.error("[auth] missing env:", getAuthConfigViolations().join(", "));
     return fail(email, AUTH_MISCONFIGURED);

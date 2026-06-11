@@ -1,11 +1,21 @@
-import { NextRequest } from "next/server";
-import { enqueueAnalysisJob } from "@/lib/server/analysis-jobs";
+import { NextRequest, after } from "next/server";
+import { executeAnalysisJob } from "@/lib/server/analysis-job-runner";
+import {
+  ANALYSIS_DAILY_LIMIT_PER_USER,
+  ANALYSIS_DAILY_WINDOW_MS,
+  enqueueAnalysisJob,
+} from "@/lib/server/analysis-jobs";
 import { getServerSession, getServerUser } from "@/lib/server/auth";
 import { apiError, apiSuccess } from "@/lib/server/api-errors";
 import { rateLimit, rateLimitKeyFromRequest } from "@/lib/server/rate-limit";
 import { getOrCreateRequestId, logServerEvent } from "@/lib/server/request-id";
 import { AnalyzeRequestSchema } from "@/lib/server/schemas";
 import { parseJsonBody } from "@/lib/server/validate";
+
+// The enqueued job is executed in this same invocation via after(), so
+// the function must outlive the 202 response long enough for the vision
+// call (analysis proxy timeout, default 30s) plus persistence.
+export const maxDuration = 60;
 
 interface RouteParams {
   params: Promise<{ plantId: string }>;
@@ -31,6 +41,25 @@ export async function POST(request: NextRequest, { params }: RouteParams) {
       "Too many analysis requests. Try again shortly.",
       requestId,
       { retryAfterSeconds: 30 },
+    );
+  }
+
+  // Daily spend cap per account, layered on the burst limit above —
+  // each enqueued job triggers one vision call downstream. Shares the
+  // `analyze-daily:` bucket with /api/analyze so the cap is per user,
+  // not per endpoint.
+  const dailyRate = await rateLimit({
+    key: `analyze-daily:${rateLimitKeyFromRequest(request, user?.id ?? null)}`,
+    limit: ANALYSIS_DAILY_LIMIT_PER_USER,
+    windowMs: ANALYSIS_DAILY_WINDOW_MS,
+  });
+  if (!dailyRate.ok) {
+    return apiError(
+      429,
+      "RATE_LIMITED",
+      "Daily analysis limit reached. Try again tomorrow.",
+      requestId,
+      { retryAfterSeconds: 3600 },
     );
   }
 
@@ -62,6 +91,10 @@ export async function POST(request: NextRequest, { params }: RouteParams) {
         requestId,
       );
     }
+
+    // Run the job after the response is sent. Idempotent replays of an
+    // existing (possibly terminal) job are skipped inside the runner.
+    after(() => executeAnalysisJob(job, requestId));
 
     return apiSuccess(
       202,

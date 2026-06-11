@@ -4,6 +4,102 @@ Handoff log between sessions. Keep entries short. Newest at top.
 
 ---
 
+## 2026-06-11 — Account deletion + data export (Claude)
+
+**On `claude/production-readiness-review-uf2jv7`** (continues PR #285)
+
+Last code-shaped launch blocker from the production-readiness review.
+
+- **Migration `20260611160000_account_deletion_fk_cascade.sql`** — makes
+  every auth.users reference cascade (content: plant_images /
+  plant_observations / grow_events user_id) or set-null (audit
+  created_by/updated_by from 003), discovering existing constraint
+  names from pg_constraint instead of guessing defaults. After this,
+  `auth.admin.deleteUser()` removes all rows atomically.
+- **`lib/server/account.ts`** — `exportAccountData()` (session client,
+  RLS-scoped, 13 tables, 5000-row cap) and `deleteAccount()` (collect
+  plant-image storage paths for owned grows + own uploads → batch
+  remove from the private bucket best-effort → delete auth user).
+- **Routes** — `GET /api/account/export` (JSON attachment, 5/hr) and
+  `POST /api/account/delete` (zod literal `confirm:"DELETE"`, 3/hr).
+- **Settings** — new "Your data" card with export download and a
+  type-DELETE-to-confirm deletion flow; privacy policy §5 now describes
+  the self-service flow instead of the manual interim process.
+- Validation: `pnpm run validate` ✅, 1092/1092 web tests (+18),
+  `security:routes` ✅. CI still billing-locked (see operator item 0
+  below) — local gate only.
+
+---
+
+## 2026-06-10 — Production-readiness review: analysis queue had no consumer (Claude)
+
+**On `claude/production-readiness-review-uf2jv7`**
+
+Full production-readiness audit, then fixed the highest-severity code finding.
+
+- **P0 product bug — enqueued analysis jobs were never executed.** Both
+  `/api/analyze` and `/api/plants/[plantId]/analyze` plus the storage
+  webhook only INSERT `analysis_jobs` rows; nothing dispatched them. The
+  FastAPI service is synchronous request/response with no job awareness,
+  and the `analysis-complete` webhook receiver had no sender. Upload →
+  "queued for analysis" → nothing, forever. The only working analysis
+  path was the chat tool's synchronous `runAndPersistPlantAnalysis`.
+- **Fix:** new `apps/web/src/lib/server/analysis-job-runner.ts` executes
+  the job in the enqueuing invocation via `next/server` `after()` —
+  202/200 response semantics unchanged, `maxDuration = 60` added to the
+  three enqueue routes. Compare-and-set claim (`claimQueuedAnalysisJob`,
+  queued→running) makes duplicate webhook deliveries race-safe.
+  `runAndPersistPlantAnalysis` split into session wrapper + session-free
+  `runAndPersistPlantAnalysisForContext`; new service-role
+  `getServiceRolePlantContext` builds context from the (already
+  ownership-checked) job row. `/api/analysis_jobs/[id]` now lazily reaps
+  non-terminal jobs older than 15 min to `failed/stale_timeout`, which
+  also drains all pre-fix stuck rows as they're polled.
+- **Migration parity drift fixed:** committed no-op marker
+  `20260521214403_reconcile_onboarding_missing_rpc.sql` matching the
+  emergency migration applied directly to prod on 2026-05-21 (issue
+  #255); nightly migration-parity check fails on this orphan since
+  June 9. Note: the parity workflow's own issue-creation step has never
+  fired — investigate separately.
+- **CI:** pinned `supabase/setup-cli` in `db-migrations.yml` to the SHA
+  already used by `migration-parity.yml` (`pnpm run validate` was red on
+  `check:action-pins` before this).
+- **Verified non-issues:** the audit-flagged "IDOR" on
+  `/api/analysis_jobs/[id]` is covered by the `analysis_jobs` RLS read
+  policy (005) + session-scoped client.
+- Validation: `pnpm run validate` ✅, `pnpm turbo run type-check lint
+test` ✅ (1070 web tests), `pnpm run security:routes` ✅ (pre-existing
+  what-changed advisory only).
+
+**Operator actions still open (highest value, no code needed)**
+
+0. **BILLING LOCK — blocks everything below.** GitHub Actions jobs fail
+   at startup with "The job was not started because your account is
+   locked due to a billing issue" (verified on PR #285's run page; all
+   nightly workflows dead since ~June 9, logs 404 because jobs never
+   ran). Vercel builds have errored ~600 ms after creation with zero
+   build events since June 2 — every preview, including trivial
+   dependabot bumps; production still serves the May 22 deploy. Likely
+   one expired card on both platforms. Fix GitHub Settings → Billing and
+   Vercel billing, then re-run the failed checks on PR #285. Until CI
+   runs again, local validation (`pnpm run validate` + turbo
+   type-check/lint/test + `security:routes`) is the only gate — all
+   green on this branch.
+1. Supabase advisor ERROR — real findings logged nightly 2026-05-23 →
+   2026-06-08 (issue #267; comments stopped when Actions died, not
+   because it was fixed). Read the finding in the dashboard and fix.
+2. `SENTRY_DSN` into Vercel + Railway (code is ready; prod error
+   blindness since April).
+3. `VERCEL_TOKEN`/`VERCEL_PROJECT_ID` into GitHub Actions so post-deploy
+   auto-rollback actually arms (issues #189/#219/#222 show it skipping).
+4. Confirm `UPSTASH_REDIS_REST_*` set in prod (else rate limiting is
+   per-instance in-memory — the new daily analysis quota depends on it
+   to be meaningful across serverless instances).
+5. Dependabot backlog (12 PRs; the June 2 preview "failures" were the
+   billing lock, not the bumps — re-run after billing is fixed).
+
+---
+
 ## 2026-05-17 — Phase 2 slice (e): pre-deploy checklist gate (Copilot)
 
 **Landed on `copilot/phase-2-implementation`** alongside Step 0.

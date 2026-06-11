@@ -107,10 +107,19 @@ Vercel Cron is configured in `apps/web/vercel.json`:
     {
       "path": "/api/internal/cron/daily-summary",
       "schedule": "0 8 * * *"
+    },
+    {
+      "path": "/api/internal/cron/reconcile-onboarding",
+      "schedule": "30 7 * * *"
     }
   ]
 }
 ```
+
+Both crons authenticate with `Authorization: Bearer ${CRON_SECRET}`. After
+a production deploy, confirm both appear under Vercel → `pheno-sage-web` →
+Settings → Cron Jobs (the Hobby plan caps projects at two cron jobs, so
+both slots are in use).
 
 ---
 

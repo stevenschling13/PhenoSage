@@ -6,7 +6,10 @@ import type {
 } from "@phenosage/shared";
 import { analyzeImage, type AnalyzeGrowContext } from "./analysis-proxy";
 import { createSupabaseServerClient } from "./auth";
-import { getAuthorizedPlantContext } from "./plant-access";
+import {
+  getAuthorizedPlantContext,
+  type AuthorizedPlantContext,
+} from "./plant-access";
 import { getDbClient } from "./db";
 import { persistFindingEmbeddings } from "./embeddings";
 import { logServerEvent } from "./request-id";
@@ -565,6 +568,26 @@ export async function runAndPersistPlantAnalysis(params: {
     return null;
   }
 
+  return runAndPersistPlantAnalysisForContext(context, {
+    ...(params.imageId ? { imageId: params.imageId } : {}),
+    requestId: params.requestId,
+  });
+}
+
+/**
+ * Session-free core of `runAndPersistPlantAnalysis`. The caller is
+ * responsible for having authorized `context` — either via
+ * `getAuthorizedPlantContext` (session flows) or from an
+ * `analysis_jobs` row whose identifiers were ownership-checked at
+ * enqueue time (the background job runner).
+ */
+export async function runAndPersistPlantAnalysisForContext(
+  context: AuthorizedPlantContext,
+  params: {
+    imageId?: string;
+    requestId: string;
+  },
+) {
   const db = getDbClient();
   const { data: imageRows, error: imageError } = await db
     .from("plant_images")
@@ -580,9 +603,29 @@ export async function runAndPersistPlantAnalysis(params: {
   }
 
   const images = (imageRows ?? []) as PlantImageRow[];
-  const currentImage = params.imageId
-    ? (images.find((row) => row.id === params.imageId) ?? null)
-    : (images[0] ?? null);
+  // An explicitly requested image may have aged out of the 10-most-recent
+  // window by the time a queued job runs (burst uploads) — fall back to a
+  // direct lookup, still scoped to the authorized plant.
+  let currentImage: PlantImageRow | null;
+  if (params.imageId) {
+    currentImage = images.find((row) => row.id === params.imageId) ?? null;
+    if (!currentImage) {
+      const { data: directImage, error: directError } = await db
+        .from("plant_images")
+        .select("*")
+        .eq("id", params.imageId)
+        .eq("plant_id", context.plantId)
+        .maybeSingle();
+      if (directError) {
+        throw new Error(
+          `Failed to load analysis image: ${directError.message}`,
+        );
+      }
+      currentImage = (directImage as PlantImageRow | null) ?? null;
+    }
+  } else {
+    currentImage = images[0] ?? null;
+  }
 
   if (!currentImage) {
     return { context, analysis: null };

@@ -81,20 +81,32 @@ function makeSelectOrderResult(data: unknown[] | null, message?: string) {
   return { eq, limit, order, select };
 }
 
-function makeImagesLimitResult(data: unknown[] | null, message?: string) {
+function makeImagesLimitResult(
+  data: unknown[] | null,
+  message?: string,
+  direct?: { data: unknown | null; error?: string },
+) {
   const limit = vi.fn().mockResolvedValue({
     data,
     error: message ? { message } : null,
   });
   const order = vi.fn(() => ({ limit }));
-  const eq = vi.fn(() => ({ order }));
+  // Second chain shape: the out-of-window direct image lookup
+  // (.select("*").eq("id", ...).eq("plant_id", ...).maybeSingle()).
+  const maybeSingle = vi.fn().mockResolvedValue({
+    data: direct?.data ?? null,
+    error: direct?.error ? { message: direct.error } : null,
+  });
+  const eq2 = vi.fn(() => ({ maybeSingle }));
+  const eq = vi.fn(() => ({ order, eq: eq2 }));
   const select = vi.fn(() => ({ eq }));
-  return { eq, limit, order, select };
+  return { eq, eq2, limit, maybeSingle, order, select };
 }
 
 function makeAnalysisPersistenceDb(params?: {
   imageRows?: unknown[] | null;
   imageError?: string;
+  directImage?: { data: unknown | null; error?: string };
   upsertError?: string;
   deleteError?: string;
   findingError?: string;
@@ -114,6 +126,7 @@ function makeAnalysisPersistenceDb(params?: {
       },
     ],
     params?.imageError,
+    params?.directImage,
   );
   const single = vi.fn().mockResolvedValue({
     data: params?.upsertError ? null : { id: "analysis-1" },
@@ -1033,6 +1046,67 @@ describe("plants server helpers", () => {
       }),
     ).resolves.toEqual({ context: PLANT_CONTEXT, analysis: null });
     expect(analyzeImage).not.toHaveBeenCalled();
+  });
+
+  it("falls back to a direct lookup when the requested image is outside the recent window", async () => {
+    analyzeImage.mockResolvedValue({
+      analysisMode: "model",
+      analyzedAt: "2026-05-11T00:00:00Z",
+      findings: [],
+      imageId: "image-old",
+      isFallback: false,
+      modelVersion: "gpt-4o-mini-vision",
+      overallHealthScore: 80,
+      plantId: "plant-1",
+      requestId: "analysis-req",
+      summary: "Older capture analyzed.",
+    });
+    const db = makeAnalysisPersistenceDb({
+      imageRows: [
+        {
+          created_at: "2026-05-11T00:00:00Z",
+          grow_id: "grow-1",
+          id: "image-current",
+          notes: null,
+          plant_id: "plant-1",
+          source: "upload",
+          storage_path: "plant-1/current.jpg",
+          taken_at: null,
+          user_id: "user-1",
+        },
+      ],
+      directImage: {
+        data: {
+          created_at: "2026-05-01T00:00:00Z",
+          grow_id: "grow-1",
+          id: "image-old",
+          notes: null,
+          plant_id: "plant-1",
+          source: "upload",
+          storage_path: "plant-1/old.jpg",
+          taken_at: null,
+          user_id: "user-1",
+        },
+      },
+    });
+    getDbClient.mockReturnValue({ from: db.from });
+
+    await expect(
+      runAndPersistPlantAnalysis({
+        imageId: "image-old",
+        plantId: "plant-1",
+        requestId: "req-1",
+      }),
+    ).resolves.toMatchObject({
+      analysis: { summary: "Older capture analyzed." },
+    });
+    expect(analyzeImage).toHaveBeenCalledWith(
+      expect.objectContaining({
+        imageId: "image-old",
+        storagePath: "plant-1/old.jpg",
+        previousImageId: "image-current",
+      }),
+    );
   });
 
   it("throws when loading candidate images for analysis fails", async () => {

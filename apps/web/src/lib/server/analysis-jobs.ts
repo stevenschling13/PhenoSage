@@ -123,6 +123,42 @@ const TERMINAL_STATUSES: ReadonlySet<AnalysisJobStatus> = new Set([
   "cancelled",
 ]);
 
+export function isTerminalAnalysisJobStatus(
+  status: AnalysisJobStatus,
+): boolean {
+  return TERMINAL_STATUSES.has(status);
+}
+
+/**
+ * Atomically transition a job from `queued` to `running` using the
+ * service-role client. Returns the claimed row, or null when another
+ * invocation already claimed it (the `.eq("status", "queued")` predicate
+ * makes the update a compare-and-set, so duplicate webhook deliveries or
+ * double-submits never run the same job twice).
+ */
+export async function claimQueuedAnalysisJob(
+  job: Pick<AnalysisJob, "id" | "attemptCount">,
+): Promise<AnalysisJob | null> {
+  const db = getDbClient();
+  const { data, error } = await db
+    .from("analysis_jobs")
+    .update({
+      status: "running",
+      started_at: new Date().toISOString(),
+      attempt_count: job.attemptCount + 1,
+    })
+    .eq("id", job.id)
+    .eq("status", "queued")
+    .select(
+      "id,plant_id,image_id,grow_id,requested_by,status,attempt_count,max_attempts,queued_at,started_at,finished_at,error_code,error_message,result_analysis_id",
+    )
+    .maybeSingle();
+  if (error) {
+    throw new Error(`Failed to claim analysis job: ${error.message}`);
+  }
+  return data ? mapJob(data as AnalysisJobRow) : null;
+}
+
 export type EnqueueByStoragePathOutcome =
   | { kind: "image_not_found"; storagePath: string }
   | { kind: "rate_limited"; userId: string; resetAt: number }
@@ -138,6 +174,15 @@ export type EnqueueByStoragePathOutcome =
 // magic numbers.
 export const ANALYSIS_ENQUEUE_LIMIT_PER_HOUR = 20;
 export const ANALYSIS_ENQUEUE_WINDOW_MS = 60 * 60 * 1000;
+
+// Daily ceiling for user-triggered analyses (/api/analyze and
+// /api/plants/[plantId]/analyze), layered on top of the per-minute burst
+// limit those routes already enforce. The burst limit slows a runaway
+// click loop; this cap bounds the worst-case daily OpenAI vision spend
+// per account. 50/day comfortably covers a grower photographing a full
+// tent twice a day; an abuser is capped at ~$1/day of vision calls.
+export const ANALYSIS_DAILY_LIMIT_PER_USER = 50;
+export const ANALYSIS_DAILY_WINDOW_MS = 24 * 60 * 60 * 1000;
 
 const STORAGE_WEBHOOK_IDEMPOTENCY_PREFIX = "storage-webhook:";
 

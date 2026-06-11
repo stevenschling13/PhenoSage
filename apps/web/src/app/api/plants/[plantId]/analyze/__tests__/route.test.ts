@@ -6,12 +6,32 @@ const getServerUser = vi.fn();
 const enqueueAnalysisJob = vi.fn();
 const rateLimit = vi.fn();
 const rateLimitKeyFromRequest = vi.fn();
+const executeAnalysisJob = vi.fn();
+const afterTasks: Array<() => unknown> = [];
+
+// `after()` requires a live request scope, which vitest's direct handler
+// invocation does not provide — capture tasks so tests can run them.
+vi.mock("next/server", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("next/server")>();
+  return {
+    ...actual,
+    after: (task: () => unknown) => {
+      afterTasks.push(task);
+    },
+  };
+});
+
+vi.mock("@/lib/server/analysis-job-runner", () => ({
+  executeAnalysisJob: (...args: unknown[]) => executeAnalysisJob(...args),
+}));
 
 vi.mock("@/lib/server/auth", () => ({
   getServerSession: (...args: unknown[]) => getServerSession(...args),
   getServerUser: (...args: unknown[]) => getServerUser(...args),
 }));
 vi.mock("@/lib/server/analysis-jobs", () => ({
+  ANALYSIS_DAILY_LIMIT_PER_USER: 50,
+  ANALYSIS_DAILY_WINDOW_MS: 24 * 60 * 60 * 1000,
   enqueueAnalysisJob: (...args: unknown[]) => enqueueAnalysisJob(...args),
 }));
 vi.mock("@/lib/server/rate-limit", () => ({
@@ -54,6 +74,8 @@ describe("POST /api/plants/[plantId]/analyze", () => {
     (enqueueAnalysisJob as Mock).mockReset();
     (rateLimit as Mock).mockReset();
     (rateLimitKeyFromRequest as Mock).mockReset();
+    (executeAnalysisJob as Mock).mockReset();
+    afterTasks.length = 0;
     rateLimit.mockReturnValue({ ok: true });
     rateLimitKeyFromRequest.mockReturnValue("k");
     getServerUser.mockResolvedValue({ id: "u1" });
@@ -86,6 +108,27 @@ describe("POST /api/plants/[plantId]/analyze", () => {
     expect(body.error.code).toBe("RATE_LIMITED");
     expect(body.error.message).toMatch(/Too many/);
     expect(res.headers.get("Retry-After")).toBe("30");
+    expect(enqueueAnalysisJob).not.toHaveBeenCalled();
+  });
+
+  it("returns 429 with daily-cap copy when the daily quota is exhausted", async () => {
+    getServerSession.mockResolvedValue(SESSION_OK);
+    rateLimit
+      .mockReturnValueOnce({ ok: true }) // burst window
+      .mockReturnValueOnce({ ok: false }); // daily window
+    const res = await POST(
+      jsonRequest({ imageId: IMAGE_ID }),
+      makeParams(PLANT_ID),
+    );
+    expect(res.status).toBe(429);
+    const body = await res.json();
+    expect(body.error.message).toMatch(/Daily analysis limit/);
+    expect(rateLimit).toHaveBeenNthCalledWith(
+      2,
+      expect.objectContaining({
+        key: expect.stringMatching(/^analyze-daily:/),
+      }),
+    );
     expect(enqueueAnalysisJob).not.toHaveBeenCalled();
   });
 
@@ -130,6 +173,38 @@ describe("POST /api/plants/[plantId]/analyze", () => {
       plantId: PLANT_ID,
       imageId: IMAGE_ID,
     });
+  });
+
+  it("schedules background execution of the enqueued job via after()", async () => {
+    getServerSession.mockResolvedValue(SESSION_OK);
+    const job = {
+      id: JOB_ID,
+      status: "queued",
+      plantId: PLANT_ID,
+      imageId: IMAGE_ID,
+    };
+    enqueueAnalysisJob.mockResolvedValue(job);
+    const res = await POST(
+      jsonRequest({ imageId: IMAGE_ID }),
+      makeParams(PLANT_ID),
+    );
+    expect(res.status).toBe(202);
+
+    expect(afterTasks).toHaveLength(1);
+    expect(executeAnalysisJob).not.toHaveBeenCalled();
+    await afterTasks[0]?.();
+    expect(executeAnalysisJob).toHaveBeenCalledWith(job, expect.any(String));
+  });
+
+  it("does not schedule execution when access is denied", async () => {
+    getServerSession.mockResolvedValue(SESSION_OK);
+    enqueueAnalysisJob.mockResolvedValue(null);
+    const res = await POST(
+      jsonRequest({ imageId: IMAGE_ID }),
+      makeParams(PLANT_ID),
+    );
+    expect(res.status).toBe(404);
+    expect(afterTasks).toHaveLength(0);
   });
 
   it("returns 400 for malformed JSON", async () => {

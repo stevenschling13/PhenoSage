@@ -214,6 +214,41 @@ export function SignInForm({
         >
           <EmailField defaultValue={signUpState?.email ?? ""} />
           <PasswordField autoComplete="new-password" />
+          <div className="flex items-start gap-2">
+            <input
+              type="checkbox"
+              id="legal-ack"
+              name="legal_ack"
+              required
+              className="mt-0.5 h-4 w-4 shrink-0 accent-primary"
+            />
+            <Label
+              htmlFor="legal-ack"
+              className="text-xs font-normal leading-snug text-muted-foreground"
+            >
+              I confirm I am of legal age to cultivate cannabis in my
+              jurisdiction (21+ where required), my use complies with local law,
+              and I agree to the{" "}
+              <a
+                href="/legal/terms"
+                target="_blank"
+                rel="noreferrer"
+                className="font-medium text-primary underline-offset-2 hover:underline"
+              >
+                Terms
+              </a>{" "}
+              and{" "}
+              <a
+                href="/legal/privacy"
+                target="_blank"
+                rel="noreferrer"
+                className="font-medium text-primary underline-offset-2 hover:underline"
+              >
+                Privacy Policy
+              </a>
+              .
+            </Label>
+          </div>
           <Feedback state={signUpState} />
           <SubmitButton label="Create account" />
         </form>
