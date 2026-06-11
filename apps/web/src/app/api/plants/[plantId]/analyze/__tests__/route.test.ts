@@ -30,6 +30,8 @@ vi.mock("@/lib/server/auth", () => ({
   getServerUser: (...args: unknown[]) => getServerUser(...args),
 }));
 vi.mock("@/lib/server/analysis-jobs", () => ({
+  ANALYSIS_DAILY_LIMIT_PER_USER: 50,
+  ANALYSIS_DAILY_WINDOW_MS: 24 * 60 * 60 * 1000,
   enqueueAnalysisJob: (...args: unknown[]) => enqueueAnalysisJob(...args),
 }));
 vi.mock("@/lib/server/rate-limit", () => ({
@@ -106,6 +108,27 @@ describe("POST /api/plants/[plantId]/analyze", () => {
     expect(body.error.code).toBe("RATE_LIMITED");
     expect(body.error.message).toMatch(/Too many/);
     expect(res.headers.get("Retry-After")).toBe("30");
+    expect(enqueueAnalysisJob).not.toHaveBeenCalled();
+  });
+
+  it("returns 429 with daily-cap copy when the daily quota is exhausted", async () => {
+    getServerSession.mockResolvedValue(SESSION_OK);
+    rateLimit
+      .mockReturnValueOnce({ ok: true }) // burst window
+      .mockReturnValueOnce({ ok: false }); // daily window
+    const res = await POST(
+      jsonRequest({ imageId: IMAGE_ID }),
+      makeParams(PLANT_ID),
+    );
+    expect(res.status).toBe(429);
+    const body = await res.json();
+    expect(body.error.message).toMatch(/Daily analysis limit/);
+    expect(rateLimit).toHaveBeenNthCalledWith(
+      2,
+      expect.objectContaining({
+        key: expect.stringMatching(/^analyze-daily:/),
+      }),
+    );
     expect(enqueueAnalysisJob).not.toHaveBeenCalled();
   });
 

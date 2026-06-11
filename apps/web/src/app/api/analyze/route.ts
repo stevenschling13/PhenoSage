@@ -1,7 +1,11 @@
 import { NextRequest, after } from "next/server";
 import { z } from "zod";
 import { executeAnalysisJob } from "@/lib/server/analysis-job-runner";
-import { enqueueAnalysisJob } from "@/lib/server/analysis-jobs";
+import {
+  ANALYSIS_DAILY_LIMIT_PER_USER,
+  ANALYSIS_DAILY_WINDOW_MS,
+  enqueueAnalysisJob,
+} from "@/lib/server/analysis-jobs";
 import { apiError, apiSuccess } from "@/lib/server/api-errors";
 import { getServerSession, getServerUser } from "@/lib/server/auth";
 import { rateLimit, rateLimitKeyFromRequest } from "@/lib/server/rate-limit";
@@ -42,6 +46,23 @@ export const POST = withRouteLogging(
         "Too many analysis requests. Try again shortly.",
         requestId,
         { retryAfterSeconds: 30 },
+      );
+    }
+
+    // Daily spend cap per account, layered on the burst limit above —
+    // each enqueued job triggers one vision call downstream.
+    const dailyRate = await rateLimit({
+      key: `analyze-daily:${rateLimitKeyFromRequest(request, user?.id ?? null)}`,
+      limit: ANALYSIS_DAILY_LIMIT_PER_USER,
+      windowMs: ANALYSIS_DAILY_WINDOW_MS,
+    });
+    if (!dailyRate.ok) {
+      return apiError(
+        429,
+        "RATE_LIMITED",
+        "Daily analysis limit reached. Try again tomorrow.",
+        requestId,
+        { retryAfterSeconds: 3600 },
       );
     }
 

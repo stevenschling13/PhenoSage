@@ -46,16 +46,30 @@ test` ✅ (1070 web tests), `pnpm run security:routes` ✅ (pre-existing
 
 **Operator actions still open (highest value, no code needed)**
 
-1. Supabase advisor ERROR firing nightly since 2026-05-23 (issue #267) —
-   read the finding in the dashboard and fix.
+0. **BILLING LOCK — blocks everything below.** GitHub Actions jobs fail
+   at startup with "The job was not started because your account is
+   locked due to a billing issue" (verified on PR #285's run page; all
+   nightly workflows dead since ~June 9, logs 404 because jobs never
+   ran). Vercel builds have errored ~600 ms after creation with zero
+   build events since June 2 — every preview, including trivial
+   dependabot bumps; production still serves the May 22 deploy. Likely
+   one expired card on both platforms. Fix GitHub Settings → Billing and
+   Vercel billing, then re-run the failed checks on PR #285. Until CI
+   runs again, local validation (`pnpm run validate` + turbo
+   type-check/lint/test + `security:routes`) is the only gate — all
+   green on this branch.
+1. Supabase advisor ERROR — real findings logged nightly 2026-05-23 →
+   2026-06-08 (issue #267; comments stopped when Actions died, not
+   because it was fixed). Read the finding in the dashboard and fix.
 2. `SENTRY_DSN` into Vercel + Railway (code is ready; prod error
    blindness since April).
 3. `VERCEL_TOKEN`/`VERCEL_PROJECT_ID` into GitHub Actions so post-deploy
    auto-rollback actually arms (issues #189/#219/#222 show it skipping).
 4. Confirm `UPSTASH_REDIS_REST_*` set in prod (else rate limiting is
-   per-instance in-memory).
-5. Dependabot backlog (12 PRs; June 2 preview builds all ERRORED — check
-   build logs when merging).
+   per-instance in-memory — the new daily analysis quota depends on it
+   to be meaningful across serverless instances).
+5. Dependabot backlog (12 PRs; the June 2 preview "failures" were the
+   billing lock, not the bumps — re-run after billing is fixed).
 
 ---
 

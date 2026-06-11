@@ -175,6 +175,15 @@ export type EnqueueByStoragePathOutcome =
 export const ANALYSIS_ENQUEUE_LIMIT_PER_HOUR = 20;
 export const ANALYSIS_ENQUEUE_WINDOW_MS = 60 * 60 * 1000;
 
+// Daily ceiling for user-triggered analyses (/api/analyze and
+// /api/plants/[plantId]/analyze), layered on top of the per-minute burst
+// limit those routes already enforce. The burst limit slows a runaway
+// click loop; this cap bounds the worst-case daily OpenAI vision spend
+// per account. 50/day comfortably covers a grower photographing a full
+// tent twice a day; an abuser is capped at ~$1/day of vision calls.
+export const ANALYSIS_DAILY_LIMIT_PER_USER = 50;
+export const ANALYSIS_DAILY_WINDOW_MS = 24 * 60 * 60 * 1000;
+
 const STORAGE_WEBHOOK_IDEMPOTENCY_PREFIX = "storage-webhook:";
 
 /**
