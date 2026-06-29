@@ -29,7 +29,7 @@ jobs:
       - uses: step-security/harden-runner@v2
         with:
           egress-policy: audit
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
         with:
           fetch-depth: 0
       - uses: pnpm/action-setup@v6
@@ -70,7 +70,7 @@ jobs:
       - uses: step-security/harden-runner@v2
         with:
           egress-policy: audit
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
       - uses: pnpm/action-setup@v6
       - uses: actions/setup-node@v6
         with:
@@ -79,7 +79,7 @@ jobs:
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
       - name: Next.js build cache
-        uses: actions/cache@v5
+        uses: actions/cache@v6
         with:
           path: apps/web/.next/cache
           key: ${{ runner.os }}-nextjs-${{ hashFiles('pnpm-lock.yaml') }}-${{ hashFiles('apps/web/**/*.[jt]s', 'apps/web/**/*.[jt]sx') }}
@@ -135,7 +135,7 @@ jobs:
       - uses: step-security/harden-runner@v2
         with:
           egress-policy: audit
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
       - uses: pnpm/action-setup@v6
       - uses: actions/setup-node@v6
         with:
@@ -160,21 +160,21 @@ jobs:
       - uses: step-security/harden-runner@v2
         with:
           egress-policy: audit
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
       - uses: actions/setup-python@v6
         with:
           python-version: ${{ env.PYTHON_VERSION }}
           cache: "pip"
           cache-dependency-path: apps/analysis/requirements.txt
       - name: Cache ruff
-        uses: actions/cache@v5
+        uses: actions/cache@v6
         with:
           path: ~/.cache/ruff
           key: ${{ runner.os }}-ruff-${{ env.PYTHON_VERSION }}-${{ hashFiles('apps/analysis/requirements.txt', 'apps/analysis/pyproject.toml') }}
           restore-keys: |
             ${{ runner.os }}-ruff-${{ env.PYTHON_VERSION }}-
       - name: Cache mypy
-        uses: actions/cache@v5
+        uses: actions/cache@v6
         with:
           path: apps/analysis/.mypy_cache
           key: ${{ runner.os }}-mypy-${{ env.PYTHON_VERSION }}-${{ hashFiles('apps/analysis/requirements.txt', 'apps/analysis/pyproject.toml') }}-${{ hashFiles('apps/analysis/app/**/*.py') }}
@@ -212,9 +212,9 @@ jobs:
       - uses: step-security/harden-runner@ab7a9404c0f3da075243ca237b5fac12c98deaa5 # v2
         with:
           egress-policy: audit
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
       - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@4d04d5d9486b7bd6fa91e7baf45bbb4f8b9deedd # v4.0.0
+        uses: docker/setup-buildx-action@d7f5e7f509e45cec5c76c4d5afdd7de93d0b3df5 # v4.1.0
       # `load: true` puts the image in the local docker daemon so the
       # subsequent `docker compose up` and SBOM steps can use it by tag.
       # `cache-to: type=gha,mode=max` exports BOTH image layers AND the
@@ -223,7 +223,7 @@ jobs:
       # `cache-from`. `scope=` partitions the cache per image so the two
       # builds don't fight for the same key.
       - name: Build web image
-        uses: docker/build-push-action@bcafcacb16a39f128d818304e6c9c0c18556b85f # v7.1.0
+        uses: docker/build-push-action@f9f3042f7e2789586610d6e8b85c8f03e5195baf # v7.2.0
         with:
           context: .
           file: Dockerfile.web
@@ -232,7 +232,7 @@ jobs:
           cache-from: type=gha,scope=web
           cache-to: type=gha,mode=max,scope=web
       - name: Build analysis image
-        uses: docker/build-push-action@bcafcacb16a39f128d818304e6c9c0c18556b85f # v7.1.0
+        uses: docker/build-push-action@f9f3042f7e2789586610d6e8b85c8f03e5195baf # v7.2.0
         with:
           context: .
           file: Dockerfile.analysis
