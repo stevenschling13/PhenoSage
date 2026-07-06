@@ -5,7 +5,7 @@ pydantic-settings==2.14.1
 httpx==0.28.1
 python-multipart==0.0.29
 openai==2.37.0
-Pillow==12.2.0
+Pillow==12.3.0
 
 # Linting & type checking (dev)
 ruff==0.15.13
