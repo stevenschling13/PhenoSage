@@ -140,7 +140,7 @@ jobs:
     needs: gate
     if: needs.gate.outputs.run == '1'
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
 
       - name: Resolve target URL
         id: target
@@ -159,7 +159,7 @@ jobs:
 
       - uses: pnpm/action-setup@v6
 
-      - uses: actions/setup-node@v6
+      - uses: actions/setup-node@v7
         with:
           node-version: "20"
           cache: "pnpm"
