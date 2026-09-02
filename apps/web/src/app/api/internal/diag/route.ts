@@ -7,6 +7,7 @@ import {
 } from "@/lib/server/auth-errors";
 import { getCronSecret, hasServiceRoleConfigured } from "@/lib/server/db";
 import { logServerEvent } from "@/lib/server/request-id";
+import { verifyBearerToken } from "@/lib/server/shared-secret";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
@@ -49,7 +50,7 @@ export async function GET(request: NextRequest) {
   // free of direct `process.env` access — same env-contract pattern
   // the service-role probe above uses.
   const cronSecret = getCronSecret();
-  if (!cronSecret || authHeader !== `Bearer ${cronSecret}`) {
+  if (!verifyBearerToken(authHeader, cronSecret)) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
 

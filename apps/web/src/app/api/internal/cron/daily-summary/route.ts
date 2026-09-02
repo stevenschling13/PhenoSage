@@ -10,6 +10,7 @@ import {
 } from "@/lib/server/daily-digest";
 import { dispatchDailySummaryEmail } from "@/lib/server/email-dispatch";
 import { logServerEvent } from "@/lib/server/request-id";
+import { verifyBearerToken } from "@/lib/server/shared-secret";
 import { formatOccurredOnInZone } from "@/lib/server/timezone";
 import {
   DEFAULT_USER_PREFERENCES,
@@ -58,7 +59,7 @@ const TIME_BUDGET_MS = 45_000;
 export async function GET(request: NextRequest) {
   const authHeader = request.headers.get("authorization");
   const cronSecret = process.env["CRON_SECRET"];
-  if (!cronSecret || authHeader !== `Bearer ${cronSecret}`) {
+  if (!verifyBearerToken(authHeader, cronSecret)) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
 
