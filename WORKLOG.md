@@ -30,11 +30,15 @@ real findings were supply-chain / CI-gate drift. Fixed, one commit each:
 - **Turbo**: `test` task no longer declares `coverage/**` outputs it
   never writes (kills the two perpetual CI warnings).
 
-**Held for approval** (touches auth code paths): the six internal
-routes comparing static bearers with `!==` (both Supabase webhooks,
-diag, internal/ready, both crons) should share a `timingSafeEqual`
-helper like the HMAC verifiers already do. Low severity; proposed in
-the PR description.
+**Approved and landed after review**: the six internal routes comparing
+static bearers with `!==` (both Supabase webhooks, diag, internal/ready,
+both crons) now share `apps/web/src/lib/server/shared-secret.ts`
+(`verifyBearerToken` / `verifySharedSecret`). Both sides are hashed to a
+SHA-256 digest before `timingSafeEqual` rather than length-checked first
+— these secrets are operator-chosen and arbitrary-length, so an early
+return on length would leak it. Accept/reject semantics unchanged,
+including each route's existing 401-vs-503 split and the
+`/api/internal/ready` query-param fallback. +16 tests (1049 → 1065).
 
 **Validation**: `pnpm run validate`, `pnpm turbo run type-check lint
 test` (1049 web + 7 shared), `pnpm run security:routes`,
