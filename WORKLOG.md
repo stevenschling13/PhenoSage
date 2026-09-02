@@ -4,6 +4,53 @@ Handoff log between sessions. Keep entries short. Newest at top.
 
 ---
 
+## 2026-07-07 — Full audit + supply-chain remediation (Claude)
+
+**Landed on `claude/phenosage-audit-remediation-95qk2i`**
+
+Full 8-category audit (security, correctness, architecture, frontend,
+perf, data integrity, testing/CI, deps). App code came back clean; all
+real findings were supply-chain / CI-gate drift. Fixed, one commit each:
+
+- **Restored SHA pin** on `supabase/setup-cli` in `db-migrations.yml` —
+  Dependabot #213 replaced the pin with the bare `@v2` tag, which had
+  `pnpm run validate` red on main (`check:action-pins`).
+- **CI gate parity**: `ci.yml`'s validate job ran only 3 of the 8
+  `pnpm run validate` checks (that's how #213 slipped through). It now
+  runs the canonical script, so local and CI gates can't drift.
+- **Python CVEs**: `python-multipart` 0.0.29→0.0.31 (3 CVEs),
+  `pydantic-settings` 2.14.1→2.14.2. `pip-audit` is a blocking CI step,
+  so main's next run would have gone red without this.
+- **npm advisories → zero**: overrides for `ws>=8.21.0` (high, prod via
+  openai), `@opentelemetry/core>=2.8.0` (traceparent parsing — reachable),
+  `vite>=6.4.3`, `js-yaml`, `brace-expansion`, `@babel/core`. Note:
+  vitest 4 has vite as a _peer_ dep and pnpm 9 auto-installed peers
+  ignore overrides — fixed by declaring `vite` explicitly in web
+  devDependencies.
+- **Turbo**: `test` task no longer declares `coverage/**` outputs it
+  never writes (kills the two perpetual CI warnings).
+
+**Approved and landed after review**: the six internal routes comparing
+static bearers with `!==` (both Supabase webhooks, diag, internal/ready,
+both crons) now share `apps/web/src/lib/server/shared-secret.ts`
+(`verifyBearerToken` / `verifySharedSecret`). Both sides are hashed to a
+SHA-256 digest before `timingSafeEqual` rather than length-checked first
+— these secrets are operator-chosen and arbitrary-length, so an early
+return on length would leak it. Accept/reject semantics unchanged,
+including each route's existing 401-vs-503 split and the
+`/api/internal/ready` query-param fallback. +16 tests (1049 → 1065).
+
+**Validation**: `pnpm run validate`, `pnpm turbo run type-check lint
+test` (1049 web + 7 shared), `pnpm run security:routes`,
+`pnpm run security:audit` (pnpm audit now ✓), `pnpm --filter web build`
+(12/12), analysis `ruff` + `mypy` + `pytest` 149/149 + `pip-audit`
+clean.
+
+**Dead end**: local `mypy` on PATH is an isolated uv tool without the
+project deps and reports 21 bogus errors — use `python3 -m mypy app/`.
+
+---
+
 ## 2026-05-17 — Phase 2 slice (e): pre-deploy checklist gate (Copilot)
 
 **Landed on `copilot/phase-2-implementation`** alongside Step 0.

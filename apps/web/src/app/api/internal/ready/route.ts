@@ -1,6 +1,10 @@
 import { NextRequest, NextResponse } from "next/server";
 import { apiError } from "@/lib/server/api-errors";
 import { getOrCreateRequestId } from "@/lib/server/request-id";
+import {
+  verifyBearerToken,
+  verifySharedSecret,
+} from "@/lib/server/shared-secret";
 
 type Check = { name: string; ok: boolean };
 
@@ -8,8 +12,8 @@ function authorized(request: NextRequest): boolean {
   const secret = process.env["READINESS_PROBE_SECRET"];
   if (!secret) return false;
   const bearer = request.headers.get("authorization");
-  if (bearer === `Bearer ${secret}`) return true;
-  return request.nextUrl.searchParams.get("secret") === secret;
+  if (verifyBearerToken(bearer, secret)) return true;
+  return verifySharedSecret(request.nextUrl.searchParams.get("secret"), secret);
 }
 
 export function GET(request: NextRequest) {

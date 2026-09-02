@@ -39,12 +39,13 @@ jobs:
           cache: "pnpm"
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
-      - name: Env contract
-        run: pnpm run check:env
-      - name: Route / server boundary
-        run: pnpm run check:routes
-      - name: Import / smoke
-        run: pnpm run check:imports
+      # Run the canonical guardrail chain from package.json so CI can never
+      # drift from `pnpm run validate` (env contract, route boundaries,
+      # imports, code-scanning patterns, file budgets, action pins, server
+      # actions, smoke-script tests). A hand-maintained subset here is how
+      # an unpinned third-party action slipped onto main in #213.
+      - name: Guardrails (pnpm run validate)
+        run: pnpm run validate
       - name: Route security audit
         run: pnpm run security:routes
       - name: Changed-scope (advisory)

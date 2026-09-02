@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 
 import { reconcileOnboarding } from "@/lib/server/onboarding";
 import { getOrCreateRequestId, logServerEvent } from "@/lib/server/request-id";
+import { verifyBearerToken } from "@/lib/server/shared-secret";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
@@ -34,7 +35,7 @@ export async function GET(request: NextRequest) {
   }
 
   const authHeader = request.headers.get("authorization");
-  if (authHeader !== `Bearer ${cronSecret}`) {
+  if (!verifyBearerToken(authHeader, cronSecret)) {
     return NextResponse.json(
       { error: "Unauthorized", requestId },
       { status: 401 },

@@ -4,6 +4,7 @@ import { z } from "zod";
 import { enqueueAnalysisJobByStoragePath } from "@/lib/server/analysis-jobs";
 import { apiError, apiSuccess } from "@/lib/server/api-errors";
 import { getOrCreateRequestId, logServerEvent } from "@/lib/server/request-id";
+import { verifyBearerToken } from "@/lib/server/shared-secret";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
@@ -78,7 +79,7 @@ export async function POST(request: NextRequest) {
   }
 
   const authHeader = request.headers.get("authorization");
-  if (authHeader !== `Bearer ${secret}`) {
+  if (!verifyBearerToken(authHeader, secret)) {
     logServerEvent("warn", "storage webhook: bearer rejected", { requestId });
     return apiError(401, "UNAUTHORIZED", "Invalid credentials", requestId);
   }
