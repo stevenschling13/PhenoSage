@@ -47,11 +47,11 @@ importers:
         specifier: workspace:*
         version: link:../../packages/shared
       '@supabase/ssr':
-        specifier: ^0.10.3
-        version: 0.10.3(@supabase/supabase-js@2.106.0)
+        specifier: ^0.12.6
+        version: 0.12.6(@supabase/supabase-js@2.115.0(@opentelemetry/api@1.9.1))
       '@supabase/supabase-js':
-        specifier: ^2.106.0
-        version: 2.106.0
+        specifier: ^2.115.0
+        version: 2.115.0(@opentelemetry/api@1.9.1)
       '@upstash/ratelimit':
         specifier: ^2.0.8
         version: 2.0.8(@upstash/redis@1.38.0)
@@ -842,8 +842,8 @@ packages:
     resolution: {integrity: sha512-gLyJlPHPZYdAk1JENA9LeHejZe1Ti77/pTeFm/nMXmQH/HFZlcS/O2XJB+L8fkbrNSqhdtlvjBVjxwUYanNH5Q==}
     engines: {node: '>=8.0.0'}
 
-  '@opentelemetry/core@2.9.0':
-    resolution: {integrity: sha512-m2nckMT80NnmjTYSPjJQObBJ+8dgkoajEOUbznL8AHZ3T3yHRk2P7gI1PhEBc1+lOnrYE9UWrWHqJDsmqjmNbw==}
+  '@opentelemetry/core@2.11.0':
+    resolution: {integrity: sha512-7YP44XH0tV6+Mb54x2YGf84i7yi+31MBZlE8JwvozkxyTvXbSp10X7cI7YE49ChJ3shMJoBmCJF3+1QFBJctGA==}
     engines: {node: ^18.19.0 || >=20.6.0}
     peerDependencies:
       '@opentelemetry/api': '>=1.0.0 <1.10.0'
@@ -878,8 +878,8 @@ packages:
     peerDependencies:
       '@opentelemetry/api': '>=1.3.0 <1.10.0'
 
-  '@opentelemetry/semantic-conventions@1.42.0':
-    resolution: {integrity: sha512-icc5xCzndZfhuJMy5oqk5AvloWquR7jtae74qzpkKkhGp8BivK+oCcEXgGnjCdTfp8hA44l+w8gE8yYJbocJJw==}
+  '@opentelemetry/semantic-conventions@1.43.0':
+    resolution: {integrity: sha512-eSYWTm620tTk45EKSedaUL8MFYI8hW164hIXsgIHyxu3VobUB3fFCu5t0hQby6OoWRPsG1KkKUG2M5UadiLiVg==}
     engines: {node: '>=14'}
 
   '@rolldown/pluginutils@1.0.0-beta.27':
@@ -1027,37 +1027,42 @@ packages:
   '@standard-schema/spec@1.1.0':
     resolution: {integrity: sha512-l2aFy5jALhniG5HgqrD6jXLi/rUWrKvqN/qJx6yoJsgKhblVd+iqqU4RCXavm/jPityDo5TCvKMnpjKnOriy0w==}
 
-  '@supabase/auth-js@2.106.0':
-    resolution: {integrity: sha512-JY7602OvjK2l3BjsQkpePpxR+6P0iG37gCrZNWAMhAuNh1iFnhGRwj/y5EshUG0INMPGFrj0UA9MErQ/kOEKFg==}
-    engines: {node: '>=20.0.0'}
+  '@supabase/auth-js@2.115.0':
+    resolution: {integrity: sha512-YNQlQWm1H0gsXHSY8Jd/xepBhjO0Zhwx04iW17A83/joQ5kFiUin6iPj9s9kZZvupnwLjXVP/diTFiLz2jUbwQ==}
+    engines: {node: '>=22.0.0'}
 
-  '@supabase/functions-js@2.106.0':
-    resolution: {integrity: sha512-ADIkJYH5w7HbnGVAAlCbyKoLF5QdfyezBLfYXpUqhxZOacK6YepOvnP/8p4p+50bhTPWp6VhDxu19KO7e/qU2g==}
-    engines: {node: '>=20.0.0'}
+  '@supabase/functions-js@2.115.0':
+    resolution: {integrity: sha512-p97V6/YFcdp+zblFDVJaE8f9rGKTNz0PRzyJ2d1w/EYIU5lwidKuc3l/wM+u27ACmAC62albvoGiUGzLPSg7Aw==}
+    engines: {node: '>=22.0.0'}
 
-  '@supabase/phoenix@0.4.2':
-    resolution: {integrity: sha512-YSAGnmDAfuleFCVt3CeurQZAhxRfXWeZIIkwp7NhYzQ1UwW6ePSnzsFAiUm/mbCkfoCf70QQHKW/K6RKh52a4A==}
+  '@supabase/phoenix@0.4.5':
+    resolution: {integrity: sha512-aAn9H9ovVyeApKy11OWOrrOGq8DV68yWeH4ud2lN9fzn4aO8Zb5GLL9m1pUg9nLqIcT+ZDfAcsZe0E/nqdv2lw==}
 
-  '@supabase/postgrest-js@2.106.0':
-    resolution: {integrity: sha512-vNKFAXQrtmUn7J3LbN+uMlt0jciAwRIBpdy6Do4DKrpf1xj0kJhbqXTX4y8ziewWUEEx8G5GPnDmprXXaO9f3w==}
-    engines: {node: '>=20.0.0'}
+  '@supabase/postgrest-js@2.115.0':
+    resolution: {integrity: sha512-DdERcurLh5t84pgSywDg2LjLR5le7XAzl52/iQhC7FdboWDqGfDPMfaWJV3MHvhyxSlSNzbpSQG+RiQOBSn/4w==}
+    engines: {node: '>=22.0.0'}
 
-  '@supabase/realtime-js@2.106.0':
-    resolution: {integrity: sha512-mYZoaYpkyjlecixbvxCu0h3jw12uHfEcUqNdaRATNI8zQVI5arels+VJzAGcHwNiD+/Juv0OXIuk+M7SHsdI4A==}
-    engines: {node: '>=20.0.0'}
+  '@supabase/realtime-js@2.115.0':
+    resolution: {integrity: sha512-5HyBkvlA/IUV2v8jX3uLTdy15jmTPRVXwXKoxvH2SKw5jZMNURxCxt+VpCEukscXQlY7pUpH8Cy4NH6io4iaRw==}
+    engines: {node: '>=22.0.0'}
 
-  '@supabase/ssr@0.10.3':
-    resolution: {integrity: sha512-ux2CJgX89h0Fz2lY7ZNafNG2SkXpyRc5dz77K9eKeBLPdtywQixKwIuetDeIViAJBp/buOUVmgj8PVesOklNpw==}
+  '@supabase/ssr@0.12.6':
+    resolution: {integrity: sha512-JQ/hwN71p0HXWiETjCAY4sn51NeXCFj1s9l7/WQDp5O9yuF2HSja+rtjR6NWK4G3HigyNxYGwGKXabb4eYZy+Q==}
     peerDependencies:
-      '@supabase/supabase-js': ^2.105.3
+      '@supabase/supabase-js': ^2.114.0
 
-  '@supabase/storage-js@2.106.0':
-    resolution: {integrity: sha512-BHc3nIjD3zfdDxBenphXrLJSoQ+qwo24VD96cVzmjBFbQVk5krvwRNUXrA5ozPplA3Vhlst2d/hy9R9ViqH2lg==}
-    engines: {node: '>=20.0.0'}
+  '@supabase/storage-js@2.115.0':
+    resolution: {integrity: sha512-dLyIxzbO+MCcKHhcce8rVUCQX1iyqXqQ8ytgkOVYJ7D+Zp0qKylPtQH3hamgxrGSxtDjaw47Urpzw2iK9PsKdA==}
+    engines: {node: '>=22.0.0'}
 
-  '@supabase/supabase-js@2.106.0':
-    resolution: {integrity: sha512-OOoo3sLj9iVXNp6b+fkyOfFeQrvvNy7nQbaONNf72dOaictUeS39hFDS9argIRTag6M3ZxIypNWcrDAwLgUihQ==}
-    engines: {node: '>=20.0.0'}
+  '@supabase/supabase-js@2.115.0':
+    resolution: {integrity: sha512-PYJSxtCo37R7tTZW6pAqsxUeSx/dlhA7zn8RzKEUSCqyTxCUhG+iHrDTb04UyVBYbttaUbhwkNTvb8h5HW+uZA==}
+    engines: {node: '>=22.0.0'}
+    peerDependencies:
+      '@opentelemetry/api': '>=1.0.0'
+    peerDependenciesMeta:
+      '@opentelemetry/api':
+        optional: true
 
   '@swc/helpers@0.5.15':
     resolution: {integrity: sha512-JQ5TuMi45Owi4/BIMAJBoSQoOJu12oOk/gADqlcUL9JEdHB8vyjUSsxqeNXnmXHjYKMi2WcYtezGEEhqUI/E2g==}
@@ -1710,8 +1715,8 @@ packages:
     resolution: {integrity: sha512-oKnbhFyRIXpUuez8iBMmyEa4nbj4IOQyuhc/wy9kY7/WVPcwIO9VA668Pu8RkO7+0G76SLROeyw9CpQ061i4mA==}
     engines: {node: '>=10'}
 
-  cjs-module-lexer@2.2.0:
-    resolution: {integrity: sha512-4bHTS2YuzUvtoLjdy+98ykbNB5jS0+07EvFNXerqZQJ89F7DI6ET7OQo/HJuW6K0aVsKA9hj9/RVb2kQVOrPDQ==}
+  cjs-module-lexer@2.2.1:
+    resolution: {integrity: sha512-Ca8swihM+/4yKecYHY52kgJd300hi2lADU/a1RxNTRe+RJ9jvqQlESpbz9DnG9mowez8qwXHB8qYdIUw9e+F5Q==}
 
   cli-cursor@5.0.0:
     resolution: {integrity: sha512-aCj4O5wKyszjMmDT4tZj93kxyydN/K5zPWSCe6/0AV/AA1pqe5ZBIw0a2ZfPQV7lL5/yb5HsUreJ6UFAF1tEQw==}
@@ -1915,8 +1920,8 @@ packages:
   es-module-lexer@2.1.0:
     resolution: {integrity: sha512-n27zTYMjYu1aj4MjCWzSP7G9r75utsaoc8m61weK+W8JMBGGQybd43GstCXZ3WNmSFtGT9wi59qQTW6mhTR5LQ==}
 
-  es-module-lexer@2.3.0:
-    resolution: {integrity: sha512-KLdwQm2NvGLDkQDCGvmiQrhkd0JbMzXthwQAUgWjQuQdBLFa3eiBP5arXZyA+f8x+x7OXgud6bq2rxjGtHV2tw==}
+  es-module-lexer@2.3.2:
+    resolution: {integrity: sha512-poHGpORABojJJucnV9KbOavETW8lBVnphkW77ER5/BQ5Fz7oXSoCNek7IH3vR5nRjdsEz926ibFYX8KtLQmdyw==}
 
   es-object-atoms@1.1.1:
     resolution: {integrity: sha512-FGgH2h8zKNim9ljj7dankFPcICIK9Cp5bm+c2gQSYePhpaG5+esrLODihIorn+Pe6FGJzWhXQotPv73jTaldXA==}
@@ -2043,6 +2048,7 @@ packages:
   eslint@9.39.4:
     resolution: {integrity: sha512-XoMjdBOwe/esVgEvLmNsD3IRHkm7fbKIUGvrleloJXUZgDHig2IPWNniv+GwjyJXzuNqVjlr5+4yVUZjycJwfQ==}
     engines: {node: ^18.18.0 || ^20.9.0 || >=21.1.0}
+    deprecated: This version is no longer supported. Please see https://eslint.org/version-support for other options.
     hasBin: true
     peerDependencies:
       jiti: '*'
@@ -2293,8 +2299,8 @@ packages:
     resolution: {integrity: sha512-TR3KfrTZTYLPB6jUjfx6MF9WcWrHL9su5TObK4ZkYgBdWKPOFoSoQIdEuTuR82pmtxH2spWG9h6etwfr1pLBqQ==}
     engines: {node: '>=6'}
 
-  import-in-the-middle@3.3.1:
-    resolution: {integrity: sha512-0rymlHSFLwZ0ixx8DaQkoIyZojJPY2a0K2nEYslhKJ6jIYO/m0IcCb7iQsFPmS7WmKwISZiIrv5Icstrw/CmqA==}
+  import-in-the-middle@3.4.0:
+    resolution: {integrity: sha512-Xfjwfarhe+LGmoaof+sexeNo3sGRysb5x56WrZLwHtmqT0OilSKtVWkv0lrCcMgSKyKP9oBogBAisHZvtJH0aw==}
     engines: {node: '>=18'}
 
   imurmurhash@0.1.4:
@@ -4068,16 +4074,16 @@ snapshots:
 
   '@opentelemetry/api@1.9.1': {}
 
-  '@opentelemetry/core@2.9.0(@opentelemetry/api@1.9.1)':
+  '@opentelemetry/core@2.11.0(@opentelemetry/api@1.9.1)':
     dependencies:
       '@opentelemetry/api': 1.9.1
-      '@opentelemetry/semantic-conventions': 1.42.0
+      '@opentelemetry/semantic-conventions': 1.43.0
 
   '@opentelemetry/instrumentation@0.218.0(@opentelemetry/api@1.9.1)':
     dependencies:
       '@opentelemetry/api': 1.9.1
       '@opentelemetry/api-logs': 0.218.0
-      import-in-the-middle: 3.3.1
+      import-in-the-middle: 3.4.0
       require-in-the-middle: 8.0.1
     transitivePeerDependencies:
       - supports-color
@@ -4085,31 +4091,31 @@ snapshots:
   '@opentelemetry/resources@2.7.1(@opentelemetry/api@1.9.1)':
     dependencies:
       '@opentelemetry/api': 1.9.1
-      '@opentelemetry/core': 2.9.0(@opentelemetry/api@1.9.1)
-      '@opentelemetry/semantic-conventions': 1.42.0
+      '@opentelemetry/core': 2.11.0(@opentelemetry/api@1.9.1)
+      '@opentelemetry/semantic-conventions': 1.43.0
 
   '@opentelemetry/sdk-logs@0.218.0(@opentelemetry/api@1.9.1)':
     dependencies:
       '@opentelemetry/api': 1.9.1
       '@opentelemetry/api-logs': 0.218.0
-      '@opentelemetry/core': 2.9.0(@opentelemetry/api@1.9.1)
+      '@opentelemetry/core': 2.11.0(@opentelemetry/api@1.9.1)
       '@opentelemetry/resources': 2.7.1(@opentelemetry/api@1.9.1)
-      '@opentelemetry/semantic-conventions': 1.42.0
+      '@opentelemetry/semantic-conventions': 1.43.0
 
   '@opentelemetry/sdk-metrics@2.7.1(@opentelemetry/api@1.9.1)':
     dependencies:
       '@opentelemetry/api': 1.9.1
-      '@opentelemetry/core': 2.9.0(@opentelemetry/api@1.9.1)
+      '@opentelemetry/core': 2.11.0(@opentelemetry/api@1.9.1)
       '@opentelemetry/resources': 2.7.1(@opentelemetry/api@1.9.1)
 
   '@opentelemetry/sdk-trace-base@2.7.1(@opentelemetry/api@1.9.1)':
     dependencies:
       '@opentelemetry/api': 1.9.1
-      '@opentelemetry/core': 2.9.0(@opentelemetry/api@1.9.1)
+      '@opentelemetry/core': 2.11.0(@opentelemetry/api@1.9.1)
       '@opentelemetry/resources': 2.7.1(@opentelemetry/api@1.9.1)
-      '@opentelemetry/semantic-conventions': 1.42.0
+      '@opentelemetry/semantic-conventions': 1.43.0
 
-  '@opentelemetry/semantic-conventions@1.42.0': {}
+  '@opentelemetry/semantic-conventions@1.43.0': {}
 
   '@rolldown/pluginutils@1.0.0-beta.27': {}
 
@@ -4200,42 +4206,44 @@ snapshots:
 
   '@standard-schema/spec@1.1.0': {}
 
-  '@supabase/auth-js@2.106.0':
+  '@supabase/auth-js@2.115.0':
     dependencies:
       tslib: 2.8.1
 
-  '@supabase/functions-js@2.106.0':
+  '@supabase/functions-js@2.115.0':
     dependencies:
       tslib: 2.8.1
 
-  '@supabase/phoenix@0.4.2': {}
+  '@supabase/phoenix@0.4.5': {}
 
-  '@supabase/postgrest-js@2.106.0':
+  '@supabase/postgrest-js@2.115.0':
     dependencies:
       tslib: 2.8.1
 
-  '@supabase/realtime-js@2.106.0':
+  '@supabase/realtime-js@2.115.0':
     dependencies:
-      '@supabase/phoenix': 0.4.2
+      '@supabase/phoenix': 0.4.5
       tslib: 2.8.1
 
-  '@supabase/ssr@0.10.3(@supabase/supabase-js@2.106.0)':
+  '@supabase/ssr@0.12.6(@supabase/supabase-js@2.115.0(@opentelemetry/api@1.9.1))':
     dependencies:
-      '@supabase/supabase-js': 2.106.0
+      '@supabase/supabase-js': 2.115.0(@opentelemetry/api@1.9.1)
       cookie: 1.1.1
 
-  '@supabase/storage-js@2.106.0':
+  '@supabase/storage-js@2.115.0':
     dependencies:
       iceberg-js: 0.8.1
       tslib: 2.8.1
 
-  '@supabase/supabase-js@2.106.0':
+  '@supabase/supabase-js@2.115.0(@opentelemetry/api@1.9.1)':
     dependencies:
-      '@supabase/auth-js': 2.106.0
-      '@supabase/functions-js': 2.106.0
-      '@supabase/postgrest-js': 2.106.0
-      '@supabase/realtime-js': 2.106.0
-      '@supabase/storage-js': 2.106.0
+      '@supabase/auth-js': 2.115.0
+      '@supabase/functions-js': 2.115.0
+      '@supabase/postgrest-js': 2.115.0
+      '@supabase/realtime-js': 2.115.0
+      '@supabase/storage-js': 2.115.0
+    optionalDependencies:
+      '@opentelemetry/api': 1.9.1
 
   '@swc/helpers@0.5.15':
     dependencies:
@@ -4866,7 +4874,7 @@ snapshots:
       ansi-styles: 4.3.0
       supports-color: 7.2.0
 
-  cjs-module-lexer@2.2.0: {}
+  cjs-module-lexer@2.2.1: {}
 
   cli-cursor@5.0.0:
     dependencies:
@@ -5120,7 +5128,7 @@ snapshots:
 
   es-module-lexer@2.1.0: {}
 
-  es-module-lexer@2.3.0: {}
+  es-module-lexer@2.3.2: {}
 
   es-object-atoms@1.1.1:
     dependencies:
@@ -5597,10 +5605,10 @@ snapshots:
       parent-module: 1.0.1
       resolve-from: 4.0.0
 
-  import-in-the-middle@3.3.1:
+  import-in-the-middle@3.4.0:
     dependencies:
-      cjs-module-lexer: 2.2.0
-      es-module-lexer: 2.3.0
+      cjs-module-lexer: 2.2.1
+      es-module-lexer: 2.3.2
       module-details-from-path: 1.0.4
 
   imurmurhash@0.1.4: {}
