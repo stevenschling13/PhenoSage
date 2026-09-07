@@ -37,7 +37,7 @@ jobs:
       github.event.deployment_status.state == 'success' &&
       github.event.deployment_status.environment == 'Production'
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
         with:
           # Full history so we can compute "changed since last tag".
           fetch-depth: 0
